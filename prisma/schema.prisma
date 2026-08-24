@@ -58,31 +58,31 @@ enum MarketPriceUnit {
 }
 
 model Asset {
-  id           String        @id @default(cuid())
-  symbol       String        @unique
+  id           String              @id @default(cuid())
+  symbol       String              @unique
   name         String
   assetClass   AssetClass
   assetType    AssetType
   currency     String
   externalId   String?
   metadata     Json?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
   transactions Transaction[]
   cachedPrices CachedMarketPrice[]
   manualPrices ManualMarketPrice[]
 }
 
 model CachedMarketPrice {
-  id           String   @id @default(cuid())
-  assetId      String
-  currency     String
-  price        Decimal  @db.Decimal(28, 8)
-  timestamp    DateTime
-  fetchedAt    DateTime @default(now())
-  source       String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id        String   @id @default(cuid())
+  assetId   String
+  currency  String
+  price     Decimal  @db.Decimal(28, 8)
+  timestamp DateTime
+  fetchedAt DateTime @default(now())
+  source    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
@@ -139,14 +139,30 @@ model Transaction {
 }
 
 model Strategy {
-  id             String               @id @default(cuid())
-  name           String
-  objective      String
-  baseCurrency   String
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
-  allocations    StrategyAllocation[]
-  portfolioRules PortfolioRule[]
+  id               String               @id @default(cuid())
+  name             String
+  objective        String
+  baseCurrency     String
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  allocations      StrategyAllocation[]
+  portfolioRules   PortfolioRule[]
+  contributionPlan ContributionPlan?
+}
+
+model ContributionPlan {
+  id                 String   @id @default(cuid())
+  strategyId         String   @unique
+  contributionAmount Decimal  @db.Decimal(28, 2)
+  currency           String
+  allocations        Json
+  isCustomized       Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+
+  @@index([updatedAt])
 }
 
 model StrategyAllocation {

@@ -6,6 +6,8 @@ import {
   compareAllocationToStrategy,
   evaluateStrategyCompliance,
   planContribution,
+  buildContributionProjection,
+  projectCustomContribution,
   simulateContribution,
   simulateTransaction,
   validateStrategy,
@@ -272,6 +274,86 @@ describe("portfolio engine contribution planning and simulation", () => {
 
     expect(plan.allocations.reduce((sum, allocation) => sum + Math.round(Number(allocation.amount) * 100), 0)).toBe(5);
     expect(plan.allocations.every((allocation) => /^\d+\.\d{2}$/.test(allocation.amount))).toBe(true);
+  });
+
+  it("projects an exact custom contribution without changing the source portfolio", () => {
+    const portfolio = calculatePortfolio({
+      assets,
+      marketPrices: prices,
+      transactions: [transaction({ assetId: "etf", accountId: "broker", type: TransactionType.INITIAL_BALANCE, quantity: "1000" })],
+    });
+    const projection = projectCustomContribution({
+      portfolio,
+      strategy,
+      contributionAmount: "100.00",
+      allocations: [
+        { assetClass: AssetClass.ETF, amount: "70.00" },
+        { assetClass: AssetClass.CRYPTO, amount: "20.00" },
+        { assetClass: AssetClass.GOLD, amount: "10.00" },
+        { assetClass: AssetClass.CASH, amount: "0.00" },
+      ],
+    });
+
+    expect(projection.plan.projectedAfter.totalValue).toBe("1100.00");
+    expect(projection.plan.before.totalValue).toBe("1000.00");
+    expect(projection.plan.allocations.reduce((sum, item) => sum + Math.round(Number(item.amount) * 100), 0)).toBe(10_000);
+    expect(projection.isCustomized).toBe(true);
+  });
+
+  it("rejects invalid custom totals, duplicate classes, sub-cent amounts, and non-finite inputs", () => {
+    const portfolio = calculatePortfolio({ assets, marketPrices: prices, transactions: [] });
+    const valid = [
+      { assetClass: AssetClass.ETF, amount: "70.00" },
+      { assetClass: AssetClass.CRYPTO, amount: "20.00" },
+      { assetClass: AssetClass.GOLD, amount: "10.00" },
+      { assetClass: AssetClass.CASH, amount: "0.00" },
+    ];
+
+    expect(() => projectCustomContribution({ portfolio, strategy, contributionAmount: "101.00", allocations: valid })).toThrow("equal the contribution amount");
+    expect(() => projectCustomContribution({ portfolio, strategy, contributionAmount: "100.00", allocations: [...valid.slice(0, 3), { assetClass: AssetClass.GOLD, amount: "0.00" }] })).toThrow("exactly one GOLD");
+    expect(() => projectCustomContribution({ portfolio, strategy, contributionAmount: "100.001", allocations: valid })).toThrow("at most two decimal places");
+    expect(() => planContribution({ portfolio, strategy, contributionAmount: Number.NaN })).toThrow("finite amount");
+    expect(() => planContribution({ portfolio, strategy, contributionAmount: "-1" })).toThrow("cannot be negative");
+  });
+
+  it("returns advisory warnings when custom crypto remains above maximum", () => {
+    const portfolio = calculatePortfolio({
+      assets,
+      marketPrices: prices,
+      transactions: [
+        transaction({ assetId: "btc", accountId: "bybit", type: TransactionType.INITIAL_BALANCE, quantity: "0.2" }),
+        transaction({ assetId: "etf", accountId: "broker", type: TransactionType.INITIAL_BALANCE, quantity: "8000" }),
+      ],
+    });
+    const projection = projectCustomContribution({
+      portfolio,
+      strategy,
+      contributionAmount: "1000.00",
+      allocations: [
+        { assetClass: AssetClass.ETF, amount: "500.00" },
+        { assetClass: AssetClass.CRYPTO, amount: "500.00" },
+        { assetClass: AssetClass.GOLD, amount: "0.00" },
+        { assetClass: AssetClass.CASH, amount: "0.00" },
+      ],
+    });
+
+    expect(projection.warnings.some((warning) => warning.code === "CRYPTO_ABOVE_MAX")).toBe(true);
+    expect(projection.reasons).toContainEqual({ code: "CUSTOM_ALLOCATION_ABOVE_MAX", assetClass: AssetClass.CRYPTO });
+  });
+
+  it("adds contextual deterministic reasons to recommendations for partial portfolios", () => {
+    const portfolio = calculatePortfolio({
+      assets,
+      marketPrices: { ETF: "1" },
+      transactions: [
+        transaction({ assetId: "btc", accountId: "bybit", type: TransactionType.INITIAL_BALANCE, quantity: "1" }),
+        transaction({ assetId: "etf", accountId: "broker", type: TransactionType.INITIAL_BALANCE, quantity: "1000" }),
+      ],
+    });
+    const projection = buildContributionProjection({ portfolio, strategy, contributionAmount: "1000" });
+
+    expect(projection.plan.before.missingPriceSymbols).toContain("BTC");
+    expect(projection.reasons).toContainEqual({ code: "ASSET_CLASS_UNDERWEIGHT", assetClass: AssetClass.GOLD });
   });
 
   it("simulates buying BTC without creating a database transaction", () => {

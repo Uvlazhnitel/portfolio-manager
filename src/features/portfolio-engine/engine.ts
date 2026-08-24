@@ -14,11 +14,14 @@ import type {
   CalculatePortfolioInput,
   ContributionAllocation,
   ContributionPlan,
+  ContributionProjection,
+  ContributionReason,
   EngineAsset,
   EngineStrategyAllocation,
   EngineTransaction,
   Holding,
   PlanContributionInput,
+  ProjectContributionInput,
   PortfolioSnapshot,
   ReasonCode,
   SimulatedTransactionInput,
@@ -211,7 +214,7 @@ export function evaluateStrategyCompliance(
 export function planContribution(input: PlanContributionInput): ContributionPlan {
   validateStrategy(input.strategy);
 
-  const contributionAmount = decimal(input.contributionAmount);
+  const contributionAmount = requireMoney(input.contributionAmount, "Contribution amount");
 
   if (contributionAmount.lessThan(ZERO)) {
     throw new Error("Contribution amount cannot be negative.");
@@ -238,6 +241,66 @@ export function planContribution(input: PlanContributionInput): ContributionPlan
     projectedAfter,
     reasons: ["CONTRIBUTION_MOVES_TOWARD_TARGET", "NO_SELL_REQUIRED"],
   };
+}
+
+export function buildContributionProjection(input: PlanContributionInput): ContributionProjection {
+  const plan = planContribution(input);
+  return analyzeContributionProjection(plan, input.strategy, false);
+}
+
+export function projectCustomContribution(input: ProjectContributionInput): ContributionProjection {
+  validateStrategy(input.strategy);
+  const contributionAmount = requireMoney(input.contributionAmount, "Contribution amount");
+
+  if (contributionAmount.lessThan(ZERO)) {
+    throw new Error("Contribution amount cannot be negative.");
+  }
+
+  const classes = new Set<AssetClass>();
+  const allocations = input.allocations.map((allocation) => {
+    if (!allocationClasses.includes(allocation.assetClass as (typeof allocationClasses)[number])) {
+      throw new Error(`Unsupported contribution asset class: ${allocation.assetClass}.`);
+    }
+    if (classes.has(allocation.assetClass)) {
+      throw new Error(`Contribution must contain exactly one ${allocation.assetClass} allocation.`);
+    }
+    classes.add(allocation.assetClass);
+    const amount = requireMoney(allocation.amount, `${allocation.assetClass} amount`);
+    if (amount.lessThan(ZERO)) {
+      throw new Error(`${allocation.assetClass} amount cannot be negative.`);
+    }
+    return { assetClass: allocation.assetClass, amount };
+  });
+
+  if (classes.size !== allocationClasses.length || allocationClasses.some((assetClass) => !classes.has(assetClass))) {
+    throw new Error("Contribution must contain exactly one ETF, CRYPTO, GOLD, and CASH allocation.");
+  }
+
+  const allocationTotal = allocations.reduce((sum, allocation) => sum.plus(allocation.amount), ZERO);
+  if (!allocationTotal.equals(contributionAmount)) {
+    throw new Error("Custom allocation must equal the contribution amount exactly.");
+  }
+
+  const normalizedAllocations: ContributionAllocation[] = allocations
+    .sort((left, right) => (allocationClassOrder.get(left.assetClass) ?? 0) - (allocationClassOrder.get(right.assetClass) ?? 0))
+    .map((allocation) => ({
+      assetClass: allocation.assetClass,
+      amount: toDecimalString(allocation.amount),
+      percentOfContribution: contributionAmount.equals(ZERO)
+        ? toDecimalString(ZERO)
+        : toDecimalString(allocation.amount.div(contributionAmount).mul(ONE_HUNDRED)),
+    }));
+  const plan: ContributionPlan = {
+    contributionAmount: toDecimalString(contributionAmount),
+    allocations: normalizedAllocations,
+    before: input.portfolio,
+    projectedAfter: projectContribution(input.portfolio, normalizedAllocations),
+    reasons: contributionAmount.equals(ZERO)
+      ? ["NO_CONTRIBUTION", "NO_SELL_REQUIRED"]
+      : ["CONTRIBUTION_MOVES_TOWARD_TARGET", "NO_SELL_REQUIRED"],
+  };
+
+  return analyzeContributionProjection(plan, input.strategy, true);
 }
 
 export function simulateContribution(input: SimulateContributionInput) {
@@ -429,6 +492,45 @@ function projectContribution(portfolio: PortfolioSnapshot, allocations: Contribu
     totalValue: toDecimalString(totalValue),
     allocation,
   };
+}
+
+function analyzeContributionProjection(
+  plan: ContributionPlan,
+  strategy: EngineStrategyAllocation[],
+  isCustomized: boolean,
+): ContributionProjection {
+  const beforeComparison = compareAllocationToStrategy(plan.before, strategy);
+  const afterComparison = compareAllocationToStrategy(plan.projectedAfter, strategy);
+  const warnings = evaluateStrategyCompliance(plan.projectedAfter, strategy);
+  const amountByClass = new Map(plan.allocations.map((allocation) => [allocation.assetClass, decimal(allocation.amount)]));
+  const reasons: ContributionReason[] = plan.reasons.map((code) => ({ code }));
+
+  for (const comparison of beforeComparison) {
+    if (comparison.status === "UNDERWEIGHT") {
+      reasons.push({ code: "ASSET_CLASS_UNDERWEIGHT", assetClass: comparison.assetClass });
+    }
+    if (comparison.status === "OVERWEIGHT" && (amountByClass.get(comparison.assetClass) ?? ZERO).equals(ZERO)) {
+      reasons.push({ code: "OVERWEIGHT_CLASS_RECEIVES_NO_CONTRIBUTION", assetClass: comparison.assetClass });
+    }
+  }
+
+  if (isCustomized) {
+    for (const warning of warnings) {
+      if (warning.code.endsWith("_ABOVE_MAX")) {
+        reasons.push({ code: "CUSTOM_ALLOCATION_ABOVE_MAX", assetClass: warning.assetClass });
+      }
+    }
+  }
+
+  return { plan, beforeComparison, afterComparison, warnings, reasons, isCustomized };
+}
+
+function requireMoney(value: Parameters<typeof decimal>[0], label: string) {
+  const amount = decimal(value);
+  if (!amount.isFinite() || amount.decimalPlaces() > 2) {
+    throw new Error(`${label} must be a finite amount with at most two decimal places.`);
+  }
+  return amount;
 }
 
 function requireAsset(assetById: Map<string, EngineAsset>, assetId: string) {

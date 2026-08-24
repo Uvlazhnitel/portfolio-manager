@@ -67,7 +67,14 @@ export type ReasonCode =
   | "CONTRIBUTION_MOVES_TOWARD_TARGET"
   | "NO_SELL_REQUIRED"
   | "NO_CONTRIBUTION"
-  | "MISSING_MARKET_PRICE";
+  | "MISSING_MARKET_PRICE"
+  | "OVERWEIGHT_CLASS_RECEIVES_NO_CONTRIBUTION"
+  | "CUSTOM_ALLOCATION_ABOVE_MAX";
+
+export type ContributionReason = {
+  code: ReasonCode;
+  assetClass?: AssetClass;
+};
 
 export type ViolationCode = `${AssetClass}_ABOVE_MAX` | `${AssetClass}_BELOW_MIN`;
 
@@ -111,6 +118,22 @@ export type PlanContributionInput = {
   portfolio: PortfolioSnapshot;
   strategy: EngineStrategyAllocation[];
   contributionAmount: DecimalLike;
+};
+
+export type ContributionProjection = {
+  plan: ContributionPlan;
+  beforeComparison: AllocationComparison[];
+  afterComparison: AllocationComparison[];
+  warnings: StrategyWarning[];
+  reasons: ContributionReason[];
+  isCustomized: boolean;
+};
+
+export type ProjectContributionInput = PlanContributionInput & {
+  allocations: Array<{
+    assetClass: AssetClass;
+    amount: DecimalLike;
+  }>;
 };
 
 export type SimulateContributionInput = CalculatePortfolioInput & {

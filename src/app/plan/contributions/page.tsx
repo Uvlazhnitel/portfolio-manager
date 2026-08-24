@@ -1,16 +1,15 @@
-import { PiggyBank } from "lucide-react";
-import { EmptyState } from "@/components/ui/empty-state";
+import { ContributionPlanner } from "@/app/plan/contributions/_components/contribution-planner";
 import { PageHeader } from "@/components/ui/page-header";
+import { getContributionPlannerModel } from "@/features/contributions/read-model";
 
-export default function ContributionsPage() {
+export const dynamic = "force-dynamic";
+
+export default async function ContributionsPage() {
+  const model = await getContributionPlannerModel();
   return (
     <>
-      <PageHeader title="Contributions" description="Plan future investments without assuming forced selling." />
-      <EmptyState
-        title="Contribution planner is queued"
-        description="This page will suggest future buys that move allocation toward target ranges."
-        icon={<PiggyBank className="h-5 w-5" aria-hidden="true" />}
-      />
+      <PageHeader title="Plan Contribution" description="Invest new money toward your strategy without selling existing assets." />
+      <ContributionPlanner model={model} />
     </>
   );
 }
