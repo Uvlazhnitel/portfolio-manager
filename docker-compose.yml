@@ -29,7 +29,7 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
     command: sh -c "pnpm db:migrate && pnpm db:seed && pnpm start"
     ports:
-      - "3000:3000"
+      - "3010:3000"
 
 volumes:
   portfolio_manager_postgres:

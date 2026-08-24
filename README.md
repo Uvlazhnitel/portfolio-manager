@@ -70,4 +70,4 @@ Build and run the app with PostgreSQL:
 docker compose up -d --build
 ```
 
-The app starts on [http://localhost:3000](http://localhost:3000). On container start it runs Prisma migrations and the seed script before starting Next.js.
+The app starts on [http://localhost:3010](http://localhost:3010). On container start it runs Prisma migrations and the seed script before starting Next.js.
