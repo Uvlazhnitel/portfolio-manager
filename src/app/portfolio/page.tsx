@@ -1,16 +1,27 @@
-import { Landmark } from "lucide-react";
-import { EmptyState } from "@/components/ui/empty-state";
+import { Plus } from "lucide-react";
+import { PortfolioClient } from "@/app/portfolio/_components/portfolio-client";
+import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
+import { getPortfolioReadModel } from "@/features/portfolio/read-model";
 
-export default function PortfolioPage() {
+export const dynamic = "force-dynamic";
+
+export default async function PortfolioPage() {
+  const portfolio = await getPortfolioReadModel();
+
   return (
     <>
-      <PageHeader title="Portfolio" description="Positions, instruments, and transaction history will live here." />
-      <EmptyState
-        title="Portfolio tracking is next"
-        description="This foundation is ready for assets, prices, transactions, and deterministic calculations."
-        icon={<Landmark className="h-5 w-5" aria-hidden="true" />}
+      <PageHeader
+        title="Portfolio"
+        description="Real holdings, accounts, and transactions from PostgreSQL."
+        action={
+          <Button form="open-add-transaction" type="submit">
+            <Plus className="mr-2 h-4 w-4" aria-hidden="true" />
+            Add
+          </Button>
+        }
       />
+      <PortfolioClient portfolio={portfolio} />
     </>
   );
 }
