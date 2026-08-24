@@ -1,7 +1,14 @@
 import { AssetClass, PortfolioRuleType } from "@prisma/client";
 import { z } from "zod";
 
-const decimalLikeSchema = z.union([z.string(), z.number()]).transform((value) => String(value));
+export const editableAssetClasses = [
+  AssetClass.ETF,
+  AssetClass.CRYPTO,
+  AssetClass.GOLD,
+  AssetClass.CASH,
+] as const;
+
+const decimalLikeSchema = z.union([z.string(), z.number()]).transform((value) => String(value).trim());
 
 export const strategyAllocationInputSchema = z.object({
   assetClass: z.enum(AssetClass),
@@ -11,10 +18,24 @@ export const strategyAllocationInputSchema = z.object({
 });
 
 export const strategyInputSchema = z.object({
-  name: z.string().min(1),
-  objective: z.string().min(1),
-  baseCurrency: z.string().min(3).max(12),
+  name: z.string().trim().min(1),
+  objective: z.string().trim().min(1),
+  baseCurrency: z.string().trim().min(3).max(12),
   allocations: z.array(strategyAllocationInputSchema).min(1),
+});
+
+export const strategyRulesInputSchema = z.object({
+  preferContributionsOverSelling: z.boolean(),
+  challengeStrategyViolations: z.boolean(),
+  preferNoActionWhenEvidenceWeak: z.boolean(),
+  minimumRebalanceDrift: decimalLikeSchema,
+});
+
+export const updateStrategyInputSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1, "Strategy name is required."),
+  allocations: z.array(strategyAllocationInputSchema),
+  rules: strategyRulesInputSchema,
 });
 
 export const portfolioRuleInputSchema = z.object({
@@ -26,6 +47,15 @@ export const portfolioRuleInputSchema = z.object({
 export type StrategyAllocationInput = z.infer<typeof strategyAllocationInputSchema>;
 export type StrategyInput = z.infer<typeof strategyInputSchema>;
 export type PortfolioRuleInput = z.infer<typeof portfolioRuleInputSchema>;
+export type UpdateStrategyInput = z.input<typeof updateStrategyInputSchema>;
+export type ParsedUpdateStrategyInput = z.infer<typeof updateStrategyInputSchema>;
+
+export type StrategyDraftAnalysis = {
+  isValid: boolean;
+  totalBasisPoints: number;
+  totalPercent: string;
+  errors: string[];
+};
 
 export class StrategyAllocationValidationError extends Error {
   constructor(message: string) {
@@ -34,31 +64,148 @@ export class StrategyAllocationValidationError extends Error {
   }
 }
 
-export function validateStrategyAllocations(allocations: StrategyAllocationInput[]) {
-  const parsed = z.array(strategyAllocationInputSchema).min(1).parse(allocations);
-  let targetTotal = 0;
+export function parsePercentToBasisPoints(value: string | number) {
+  const normalized = String(value).trim();
 
-  for (const allocation of parsed) {
-    const target = Number(allocation.targetPercent);
-    const min = Number(allocation.minPercent);
-    const max = Number(allocation.maxPercent);
-
-    if (!Number.isFinite(target) || !Number.isFinite(min) || !Number.isFinite(max)) {
-      throw new StrategyAllocationValidationError("Allocation percentages must be valid numbers.");
-    }
-
-    if (min > target || target > max) {
-      throw new StrategyAllocationValidationError(
-        `${allocation.assetClass} must satisfy minPercent <= targetPercent <= maxPercent.`,
-      );
-    }
-
-    targetTotal += target;
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) {
+    throw new StrategyAllocationValidationError("Percentages must have at most two decimal places.");
   }
 
-  if (Math.abs(targetTotal - 100) > 0.000001) {
-    throw new StrategyAllocationValidationError("Strategy target allocations must total 100%.");
+  const [whole, fraction = ""] = normalized.split(".");
+  const basisPoints = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+
+  if (!Number.isSafeInteger(basisPoints)) {
+    throw new StrategyAllocationValidationError("Allocation percentages must be valid numbers.");
+  }
+
+  return basisPoints;
+}
+
+export function formatBasisPoints(basisPoints: number) {
+  return (basisPoints / 100).toFixed(2);
+}
+
+export function analyzeStrategyDraft(input: {
+  name: string;
+  allocations: StrategyAllocationInput[];
+  minimumRebalanceDrift: string | number;
+}): StrategyDraftAnalysis {
+  const errors: string[] = [];
+  const classCounts = new Map<AssetClass, number>();
+  let totalBasisPoints = 0;
+
+  if (!input.name.trim()) {
+    errors.push("Strategy name is required.");
+  }
+
+  for (const allocation of input.allocations) {
+    classCounts.set(allocation.assetClass, (classCounts.get(allocation.assetClass) ?? 0) + 1);
+
+    try {
+      const min = parsePercentToBasisPoints(allocation.minPercent);
+      const target = parsePercentToBasisPoints(allocation.targetPercent);
+      const max = parsePercentToBasisPoints(allocation.maxPercent);
+
+      if (min < 0 || max > 10_000) {
+        errors.push(`${allocation.assetClass} percentages must be between 0 and 100.`);
+      } else if (min > target || target > max) {
+        errors.push(`${allocation.assetClass} must satisfy minimum ≤ target ≤ maximum.`);
+      }
+
+      totalBasisPoints += target;
+    } catch (error) {
+      errors.push(error instanceof Error ? `${allocation.assetClass}: ${error.message}` : `${allocation.assetClass} is invalid.`);
+    }
+  }
+
+  for (const assetClass of editableAssetClasses) {
+    if (classCounts.get(assetClass) !== 1) {
+      errors.push(`Strategy must contain exactly one ${assetClass} allocation.`);
+    }
+  }
+
+  if ([...classCounts.keys()].some((assetClass) => !editableAssetClasses.includes(assetClass as (typeof editableAssetClasses)[number]))) {
+    errors.push("Only ETF, CRYPTO, GOLD, and CASH allocations are editable.");
+  }
+
+  if (totalBasisPoints !== 10_000) {
+    errors.push("Strategy target allocations must total exactly 100.00%.");
+  }
+
+  try {
+    const drift = parsePercentToBasisPoints(input.minimumRebalanceDrift);
+    if (drift < 0 || drift > 10_000) {
+      errors.push("Minimum rebalance drift must be between 0 and 100.");
+    }
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : "Minimum rebalance drift is invalid.");
+  }
+
+  return {
+    isValid: errors.length === 0,
+    totalBasisPoints,
+    totalPercent: formatBasisPoints(totalBasisPoints),
+    errors: [...new Set(errors)],
+  };
+}
+
+export function validateStrategyAllocations(allocations: StrategyAllocationInput[]) {
+  const parsed = z.array(strategyAllocationInputSchema).min(1).parse(allocations);
+  const analysis = analyzeStrategyDraft({
+    name: "Existing strategy",
+    allocations: parsed,
+    minimumRebalanceDrift: "0",
+  });
+
+  if (!analysis.isValid) {
+    throw new StrategyAllocationValidationError(analysis.errors[0]);
   }
 
   return parsed;
+}
+
+export function validateUpdateStrategyInput(input: UpdateStrategyInput) {
+  const parsed = updateStrategyInputSchema.parse(input);
+  const analysis = analyzeStrategyDraft({
+    name: parsed.name,
+    allocations: parsed.allocations,
+    minimumRebalanceDrift: parsed.rules.minimumRebalanceDrift,
+  });
+
+  if (!analysis.isValid) {
+    throw new StrategyAllocationValidationError(analysis.errors[0]);
+  }
+
+  return parsed;
+}
+
+export function strategyDraftFingerprint(input: {
+  name: string;
+  allocations: StrategyAllocationInput[];
+  rules: z.infer<typeof strategyRulesInputSchema>;
+}) {
+  return JSON.stringify({
+    name: input.name,
+    allocations: editableAssetClasses.map((assetClass) => {
+      const allocation = input.allocations.find((item) => item.assetClass === assetClass);
+      return allocation ? {
+        assetClass,
+        targetPercent: fingerprintPercent(allocation.targetPercent),
+        minPercent: fingerprintPercent(allocation.minPercent),
+        maxPercent: fingerprintPercent(allocation.maxPercent),
+      } : null;
+    }),
+    rules: {
+      ...input.rules,
+      minimumRebalanceDrift: fingerprintPercent(input.rules.minimumRebalanceDrift),
+    },
+  });
+}
+
+function fingerprintPercent(value: string | number) {
+  try {
+    return parsePercentToBasisPoints(value);
+  } catch {
+    return String(value);
+  }
 }

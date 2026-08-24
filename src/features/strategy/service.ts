@@ -1,5 +1,10 @@
 import type { Prisma } from "@prisma/client";
-import { validateStrategyAllocations, type StrategyInput } from "@/features/strategy/validation";
+import {
+  validateStrategyAllocations,
+  validateUpdateStrategyInput,
+  type StrategyInput,
+  type UpdateStrategyInput,
+} from "@/features/strategy/validation";
 import { serializeDecimal } from "@/lib/db/decimal";
 import { StrategyRepository } from "@/features/strategy/repository";
 
@@ -26,6 +31,11 @@ export class StrategyService {
         })),
       },
     });
+  }
+
+  async updateStrategy(input: UpdateStrategyInput) {
+    const parsed = validateUpdateStrategyInput(input);
+    return await this.repository.updateStrategy(parsed);
   }
 }
 

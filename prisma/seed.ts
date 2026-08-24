@@ -82,11 +82,7 @@ async function main() {
 
   const strategy = await prisma.strategy.upsert({
     where: { id: "default-strategy" },
-    update: {
-      name: "Long-term capital growth",
-      objective: "Grow long-term capital while keeping allocations close to configurable target ranges.",
-      baseCurrency: "EUR",
-    },
+    update: {},
     create: {
       id: "default-strategy",
       name: "Long-term capital growth",
@@ -103,11 +99,7 @@ async function main() {
           assetClass: allocation.assetClass,
         },
       },
-      update: {
-        targetPercent: allocation.targetPercent,
-        minPercent: allocation.minPercent,
-        maxPercent: allocation.maxPercent,
-      },
+      update: {},
       create: {
         strategyId: strategy.id,
         ...allocation,
@@ -118,8 +110,8 @@ async function main() {
   const rules = [
     { type: PortfolioRuleType.PREFER_CONTRIBUTIONS_OVER_SELLING, config: { enabledByDefault: true } },
     { type: PortfolioRuleType.CHALLENGE_STRATEGY_VIOLATIONS, config: { severity: "medium" } },
-    { type: PortfolioRuleType.CRYPTO_MAX_ALLOCATION, config: { maxPercent: "15" } },
-    { type: PortfolioRuleType.MIN_REBALANCE_DRIFT, config: { minDriftPercent: "5" } },
+    { type: PortfolioRuleType.PREFER_NO_ACTION_WHEN_EVIDENCE_WEAK, config: {} },
+    { type: PortfolioRuleType.MIN_REBALANCE_DRIFT, config: { minDriftPercent: "2" } },
   ];
 
   for (const rule of rules) {
@@ -130,10 +122,7 @@ async function main() {
           type: rule.type,
         },
       },
-      update: {
-        enabled: true,
-        config: rule.config,
-      },
+      update: {},
       create: {
         strategyId: strategy.id,
         enabled: true,

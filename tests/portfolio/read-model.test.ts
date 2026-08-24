@@ -59,6 +59,7 @@ describe("priced portfolio read models", () => {
     resetMarketDataRuntimeCacheForTests();
     const model = await getPortfolioReadModel({
       repository: new PortfolioRepository(testDb.prisma),
+      strategyRepository: new StrategyRepository(testDb.prisma),
       marketDataService,
     });
     const btc = model.holdings.find((holding) => holding.symbol === "BTC");
@@ -66,6 +67,7 @@ describe("priced portfolio read models", () => {
 
     expect(model.valuation.totalValue).toBe("51000.00");
     expect(model.valuation.isPartial).toBe(false);
+    expect(model.strategyStatus?.totalCount).toBe(4);
     expect(btc).toEqual(expect.objectContaining({ currentValue: "50000.00", pnl: "10000.00", portfolioWeight: "98.04" }));
     expect(gold).toEqual(expect.objectContaining({ quantityLabel: "10 g", currentValue: "1000.00", pnl: "200.00", priceSource: "MANUAL" }));
   });

@@ -1,8 +1,9 @@
 import { AssetType, TransactionType, type Prisma } from "@prisma/client";
-import { calculatePortfolio } from "@/features/portfolio-engine";
+import { calculatePortfolio, compareAllocationToStrategy } from "@/features/portfolio-engine";
 import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/service";
 import { PortfolioRepository } from "@/features/portfolio/repository";
+import { StrategyRepository } from "@/features/strategy/repository";
 import { serializeDecimal, serializeNullableDecimal } from "@/lib/db/decimal";
 
 type TransactionWithRelations = Awaited<ReturnType<PortfolioRepository["listTransactions"]>>[number];
@@ -68,21 +69,37 @@ export type PortfolioReadModel = {
     hasStalePrices: boolean;
     warning: string | null;
   };
+  strategyStatus: {
+    name: string;
+    inRangeCount: number;
+    totalCount: number;
+    comparisons: Array<{
+      assetClass: string;
+      currentPercent: string;
+      targetPercent: string;
+      minPercent: string;
+      maxPercent: string;
+      status: "UNDERWEIGHT" | "IN_RANGE" | "OVERWEIGHT";
+    }>;
+  } | null;
 };
 
 export async function getPortfolioReadModel({
   repository = new PortfolioRepository(),
+  strategyRepository = new StrategyRepository(),
   marketDataService = new MarketDataService(),
   baseCurrency = "EUR",
 }: {
   repository?: PortfolioRepository;
+  strategyRepository?: StrategyRepository;
   marketDataService?: MarketDataService;
   baseCurrency?: string;
 } = {}): Promise<PortfolioReadModel> {
-  const [assets, accounts, transactions] = await Promise.all([
+  const [assets, accounts, transactions, strategy] = await Promise.all([
     repository.listAssets(),
     repository.listAccounts(),
     repository.listTransactions(),
+    strategyRepository.findActiveStrategy(),
   ]);
   const marketData = await marketDataService.getCurrentPrices({ assets, baseCurrency });
   const portfolio = calculatePortfolio({
@@ -91,6 +108,9 @@ export async function getPortfolioReadModel({
     marketPrices: toEngineMarketPrices(marketData),
   });
   const holdings = buildHoldingRows(assets, accounts, transactions, portfolio, marketData.prices);
+  const strategyComparisons = strategy
+    ? compareAllocationToStrategy(portfolio, strategy.allocations)
+    : [];
 
   return {
     assets: assets.map((asset) => ({
@@ -117,6 +137,21 @@ export async function getPortfolioReadModel({
       hasStalePrices: marketData.hasStalePrices,
       warning: marketData.warning,
     },
+    strategyStatus: strategy
+      ? {
+          name: strategy.name,
+          inRangeCount: strategyComparisons.filter((comparison) => comparison.status === "IN_RANGE").length,
+          totalCount: strategyComparisons.length,
+          comparisons: strategyComparisons.map((comparison) => ({
+            assetClass: comparison.assetClass,
+            currentPercent: comparison.currentPercent,
+            targetPercent: comparison.targetPercent,
+            minPercent: comparison.minPercent,
+            maxPercent: comparison.maxPercent,
+            status: comparison.status,
+          })),
+        }
+      : null,
   };
 }
 

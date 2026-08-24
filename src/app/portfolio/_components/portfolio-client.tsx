@@ -83,6 +83,33 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
         </p>
       ) : null}
 
+      {portfolio.strategyStatus ? (
+        <Card>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm text-muted">Portfolio status · {portfolio.strategyStatus.name}</p>
+              <p className="mt-1 text-xl font-semibold text-foreground">
+                {portfolio.strategyStatus.inRangeCount}/{portfolio.strategyStatus.totalCount} classes in range
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {portfolio.strategyStatus.comparisons.map((comparison) => (
+                <Badge
+                  key={comparison.assetClass}
+                  tone={comparison.status === "IN_RANGE" ? "success" : "warning"}
+                  title={`${Number(comparison.currentPercent).toFixed(1)}% current · ${Number(comparison.targetPercent).toFixed(1)}% target`}
+                >
+                  {comparison.assetClass}: {comparison.status}
+                </Badge>
+              ))}
+            </div>
+          </div>
+          {portfolio.valuation.isPartial ? (
+            <p className="mt-3 text-sm text-warning">Status is partial until all holding prices are available.</p>
+          ) : null}
+        </Card>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-2">
         {(["holdings", "accounts", "transactions"] as const).map((tab) => (
           <button

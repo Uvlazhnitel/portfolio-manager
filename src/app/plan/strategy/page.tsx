@@ -1,16 +1,16 @@
-import { ChartNoAxesCombined } from "lucide-react";
-import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
+import { StrategyEditor } from "@/app/plan/strategy/_components/strategy-editor";
+import { getStrategyEditorModel } from "@/features/strategy/read-model";
 
-export default function StrategyPage() {
+export const dynamic = "force-dynamic";
+
+export default async function StrategyPage() {
+  const strategy = await getStrategyEditorModel();
+
   return (
     <>
-      <PageHeader title="Strategy" description="Configurable target allocation and allowed ranges." />
-      <EmptyState
-        title="Strategy editor will land here"
-        description="Targets will be user-configurable and validated before the portfolio engine uses them."
-        icon={<ChartNoAxesCombined className="h-5 w-5" aria-hidden="true" />}
-      />
+      <PageHeader title="Strategy" description={strategy.name} />
+      <StrategyEditor key={strategy.updatedAt} strategy={strategy} />
     </>
   );
 }
