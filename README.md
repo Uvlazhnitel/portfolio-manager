@@ -1,36 +1,63 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Portfolio Manager
 
-## Getting Started
+Personal investment portfolio manager and wealth copilot. The MVP is single-user, dark-first, and focused on long-term allocation rather than trading.
 
-First, run the development server:
+## Development setup
+
+Install dependencies:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Create a local environment file:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+cp .env.example .env
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Set `DATABASE_URL` in `.env` to your PostgreSQL database.
 
-## Learn More
+Create the local PostgreSQL database if it does not exist yet:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+createdb portfolio_manager
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Run Prisma migrations:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+pnpm db:migrate
+```
 
-## Deploy on Vercel
+Seed the MVP data:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+pnpm db:seed
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Open Prisma Studio when you want to inspect the database:
+
+```bash
+pnpm db:studio
+```
+
+Run the development server:
+
+```bash
+pnpm dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). The root route redirects to `/dashboard`.
+
+Run checks:
+
+```bash
+pnpm prisma:validate
+pnpm test
+pnpm lint
+pnpm typecheck
+pnpm build
+```
+
+The dashboard still uses temporary demo values. Database-backed portfolio data will be wired into the UI in a later task.

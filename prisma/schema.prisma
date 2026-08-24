@@ -1,0 +1,137 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum AssetClass {
+  ETF
+  CRYPTO
+  GOLD
+  CASH
+  OTHER
+}
+
+enum AssetType {
+  CRYPTO
+  ETF
+  PHYSICAL_GOLD
+  TOKENIZED_GOLD
+  FIAT
+  STABLECOIN
+  OTHER
+}
+
+enum AccountType {
+  EXCHANGE
+  BROKER
+  WALLET
+  PHYSICAL
+  BANK
+  OTHER
+}
+
+enum TransactionType {
+  INITIAL_BALANCE
+  BUY
+  SELL
+  DEPOSIT
+  WITHDRAWAL
+  TRANSFER_IN
+  TRANSFER_OUT
+}
+
+enum PortfolioRuleType {
+  PREFER_CONTRIBUTIONS_OVER_SELLING
+  CHALLENGE_STRATEGY_VIOLATIONS
+  CRYPTO_MAX_ALLOCATION
+  MIN_REBALANCE_DRIFT
+}
+
+model Asset {
+  id           String        @id @default(cuid())
+  symbol       String        @unique
+  name         String
+  assetClass   AssetClass
+  assetType    AssetType
+  currency     String
+  externalId   String?
+  metadata     Json?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  transactions Transaction[]
+}
+
+model Account {
+  id           String        @id @default(cuid())
+  name         String        @unique
+  type         AccountType
+  description  String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  transactions Transaction[]
+}
+
+model Transaction {
+  id           String          @id @default(cuid())
+  assetId      String
+  accountId    String
+  type         TransactionType
+  quantity     Decimal         @db.Decimal(36, 18)
+  pricePerUnit Decimal?        @db.Decimal(28, 8)
+  fee          Decimal?        @db.Decimal(28, 8)
+  currency     String
+  executedAt   DateTime
+  note         String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  asset   Asset   @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  account Account @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([assetId])
+  @@index([accountId])
+  @@index([executedAt])
+}
+
+model Strategy {
+  id             String               @id @default(cuid())
+  name           String
+  objective      String
+  baseCurrency   String
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  allocations    StrategyAllocation[]
+  portfolioRules PortfolioRule[]
+}
+
+model StrategyAllocation {
+  id            String     @id @default(cuid())
+  strategyId    String
+  assetClass    AssetClass
+  targetPercent Decimal    @db.Decimal(5, 2)
+  minPercent    Decimal    @db.Decimal(5, 2)
+  maxPercent    Decimal    @db.Decimal(5, 2)
+
+  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+
+  @@unique([strategyId, assetClass])
+  @@index([strategyId])
+}
+
+model PortfolioRule {
+  id         String            @id @default(cuid())
+  strategyId String
+  type       PortfolioRuleType
+  enabled    Boolean           @default(true)
+  config     Json
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+
+  @@unique([strategyId, type])
+  @@index([strategyId])
+}
