@@ -61,3 +61,13 @@ pnpm build
 ```
 
 The dashboard still uses temporary demo values. Database-backed portfolio data will be wired into the UI in a later task.
+
+## Docker deployment
+
+Build and run the app with PostgreSQL:
+
+```bash
+docker compose up -d --build
+```
+
+The app starts on [http://localhost:3000](http://localhost:3000). On container start it runs Prisma migrations and the seed script before starting Next.js.

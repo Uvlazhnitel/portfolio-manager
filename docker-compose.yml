@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: portfolio-manager-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: portfolio_manager
+      POSTGRES_USER: portfolio_manager
+      POSTGRES_PASSWORD: portfolio_manager
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U portfolio_manager -d portfolio_manager"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - portfolio_manager_postgres:/var/lib/postgresql/data
+
+  app:
+    build:
+      context: .
+    container_name: portfolio-manager-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://portfolio_manager:portfolio_manager@postgres:5432/portfolio_manager?schema=public
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: sh -c "pnpm db:migrate && pnpm db:seed && pnpm start"
+    ports:
+      - "3000:3000"
+
+volumes:
+  portfolio_manager_postgres:
