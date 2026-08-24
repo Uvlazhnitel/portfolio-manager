@@ -25,6 +25,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://portfolio_manager:portfolio_manager@postgres:5432/portfolio_manager?schema=public
+      COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: "1"
     command: sh -c "pnpm db:migrate && pnpm db:seed && pnpm start"

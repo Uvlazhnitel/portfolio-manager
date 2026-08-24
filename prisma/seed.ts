@@ -50,18 +50,18 @@ async function main() {
   await Promise.all([
     prisma.asset.upsert({
       where: { symbol: "BTC" },
-      update: {},
-      create: { symbol: "BTC", name: "Bitcoin", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "BTC" },
+      update: { externalId: "bitcoin" },
+      create: { symbol: "BTC", name: "Bitcoin", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "BTC", externalId: "bitcoin" },
     }),
     prisma.asset.upsert({
       where: { symbol: "ETH" },
-      update: {},
-      create: { symbol: "ETH", name: "Ethereum", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "ETH" },
+      update: { externalId: "ethereum" },
+      create: { symbol: "ETH", name: "Ethereum", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "ETH", externalId: "ethereum" },
     }),
     prisma.asset.upsert({
       where: { symbol: "XAUT" },
-      update: {},
-      create: { symbol: "XAUT", name: "Tether Gold", assetClass: AssetClass.GOLD, assetType: AssetType.TOKENIZED_GOLD, currency: "XAUT" },
+      update: { externalId: "tether-gold" },
+      create: { symbol: "XAUT", name: "Tether Gold", assetClass: AssetClass.GOLD, assetType: AssetType.TOKENIZED_GOLD, currency: "XAUT", externalId: "tether-gold" },
     }),
     prisma.asset.upsert({
       where: { symbol: "PHYSICAL_GOLD" },
@@ -75,8 +75,8 @@ async function main() {
     }),
     prisma.asset.upsert({
       where: { symbol: "USDT" },
-      update: {},
-      create: { symbol: "USDT", name: "Tether USD", assetClass: AssetClass.CASH, assetType: AssetType.STABLECOIN, currency: "USDT" },
+      update: { externalId: "tether" },
+      create: { symbol: "USDT", name: "Tether USD", assetClass: AssetClass.CASH, assetType: AssetType.STABLECOIN, currency: "USDT", externalId: "tether" },
     }),
   ]);
 

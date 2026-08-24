@@ -1,0 +1,76 @@
+"use server";
+
+import { MarketPriceUnit } from "@prisma/client";
+import { revalidatePath } from "next/cache";
+import { MarketDataService } from "@/features/market-data/service";
+import { saveManualMarketPriceMutation } from "@/features/market-data/mutations";
+import { PortfolioRepository } from "@/features/portfolio/repository";
+
+export type MarketDataActionState = {
+  ok: boolean;
+  message: string;
+  refreshBlockedUntil?: string | null;
+};
+
+const initialState: MarketDataActionState = { ok: false, message: "" };
+
+export async function refreshPricesAction(
+  previousState: MarketDataActionState = initialState,
+): Promise<MarketDataActionState> {
+  void previousState;
+
+  try {
+    const assets = await new PortfolioRepository().listAssets();
+    const snapshot = await new MarketDataService().getCurrentPrices({
+      assets,
+      baseCurrency: "EUR",
+      forceRefresh: true,
+    });
+    revalidateMarketDataPages();
+
+    return {
+      ok: snapshot.wasRefreshed || snapshot.prices.length > 0,
+      message: snapshot.warning
+        ? `Using cached prices. ${snapshot.warning}`
+        : snapshot.wasRefreshed
+          ? "Prices refreshed."
+          : "Prices are already fresh. Please wait before refreshing again.",
+      refreshBlockedUntil: snapshot.refreshBlockedUntil,
+    };
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
+export async function saveManualMarketPriceAction(
+  previousState: MarketDataActionState = initialState,
+  formData: FormData,
+): Promise<MarketDataActionState> {
+  void previousState;
+
+  try {
+    const result = await saveManualMarketPriceMutation({
+      assetId: String(formData.get("assetId") ?? ""),
+      price: String(formData.get("price") ?? ""),
+      currency: String(formData.get("currency") ?? "EUR"),
+      unit: String(formData.get("unit") ?? MarketPriceUnit.ASSET_UNIT) as MarketPriceUnit,
+    });
+    revalidateMarketDataPages();
+    return result;
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
+function revalidateMarketDataPages() {
+  revalidatePath("/portfolio");
+  revalidatePath("/dashboard");
+  revalidatePath("/settings");
+}
+
+function toActionError(error: unknown): MarketDataActionState {
+  return {
+    ok: false,
+    message: error instanceof Error ? error.message : "Something went wrong.",
+  };
+}

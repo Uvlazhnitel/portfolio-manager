@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
@@ -19,13 +19,16 @@ export async function createTestDatabase(): Promise<TestDatabase> {
 
   execFileSync("createdb", [databaseName], { stdio: "ignore" });
 
-  const migrationSql = readFileSync(
-    path.join(process.cwd(), "prisma/migrations/20260824231000_init_portfolio_mvp/migration.sql"),
-    "utf8",
-  );
   const client = new pg.Client({ connectionString: databaseUrl });
   await client.connect();
-  await client.query(migrationSql);
+  const migrationsDirectory = path.join(process.cwd(), "prisma/migrations");
+  for (const migration of readdirSync(migrationsDirectory).sort()) {
+    const migrationPath = path.join(migrationsDirectory, migration, "migration.sql");
+    if (!existsSync(migrationPath)) {
+      continue;
+    }
+    await client.query(readFileSync(migrationPath, "utf8"));
+  }
   await client.end();
 
   const prisma = new PrismaClient({ adapter: new PrismaPg(databaseUrl) });

@@ -59,6 +59,30 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
     <div className="space-y-4">
       <form id="open-add-transaction" action={() => setIsAddOpen(true)} />
 
+      <Card className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm text-muted">Valued portfolio</p>
+          <p className="mt-1 text-2xl font-semibold text-foreground">
+            {formatCurrency(portfolio.valuation.totalValue)}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+          {portfolio.valuation.isPartial ? (
+            <Badge tone="warning">Partial valuation</Badge>
+          ) : (
+            <Badge tone="success">All prices available</Badge>
+          )}
+          {portfolio.valuation.hasStalePrices ? <Badge tone="warning">Stale prices</Badge> : null}
+          <span className="text-xs text-muted">Last updated {formatTimestamp(portfolio.valuation.lastUpdated)}</span>
+        </div>
+      </Card>
+
+      {portfolio.valuation.warning ? (
+        <p className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
+          {portfolio.valuation.warning}
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-2">
         {(["holdings", "accounts", "transactions"] as const).map((tab) => (
           <button
@@ -322,7 +346,12 @@ function HoldingsSection({ portfolio }: PortfolioClientProps) {
                 </td>
                 <td className="py-4 pr-4 text-muted">{holding.accountName}</td>
                 <td className="py-4 pr-4 text-foreground">{holding.quantityLabel}</td>
-                <td className="py-4 pr-4">{formatMoneyOrUnavailable(holding.currentValue)}</td>
+                <td className="py-4 pr-4">
+                  <div className="flex items-center gap-2">
+                    {formatMoneyOrUnavailable(holding.currentValue)}
+                    <PriceBadge holding={holding} />
+                  </div>
+                </td>
                 <td className="py-4 pr-4">{formatMoneyOrDash(holding.averageAcquisitionPrice)}</td>
                 <td className="py-4 pr-4">{formatMoneyOrUnavailable(holding.pnl)}</td>
                 <td className="py-4 pr-4">
@@ -350,6 +379,10 @@ function HoldingsSection({ portfolio }: PortfolioClientProps) {
               <Info label="Value" value={formatMoneyOrUnavailableText(holding.currentValue)} />
               <Info label="Avg price" value={formatMoneyOrDashText(holding.averageAcquisitionPrice)} />
               <Info label="P&L" value={formatMoneyOrUnavailableText(holding.pnl)} />
+              <Info
+                label="Price status"
+                value={holding.currentPrice ? `${holding.priceSource}${holding.isPriceStale ? " · stale" : ""}` : "Unavailable"}
+              />
             </dl>
           </div>
         ))}
@@ -481,24 +514,48 @@ function ActionMessage({ state }: { state: { ok: boolean; message: string } }) {
   );
 }
 
+function PriceBadge({ holding }: { holding: PortfolioReadModel["holdings"][number] }) {
+  if (!holding.currentPrice) {
+    return <Badge>Unavailable</Badge>;
+  }
+
+  if (holding.isPriceStale) {
+    return <Badge tone="warning">Stale</Badge>;
+  }
+
+  return <Badge tone={holding.priceSource === "MANUAL" ? "primary" : "success"}>{holding.priceSource}</Badge>;
+}
+
 function formatType(type: string) {
   return type.replaceAll("_", " ").toLowerCase().replace(/^\w/, (letter) => letter.toUpperCase());
 }
 
 function formatMoneyOrUnavailable(value: string | null) {
-  return value ? <span className="text-foreground">€{value}</span> : <span className="text-muted">Price unavailable</span>;
+  return value ? <span className="text-foreground">{formatCurrency(value)}</span> : <span className="text-muted">Price unavailable</span>;
 }
 
 function formatMoneyOrUnavailableText(value: string | null) {
-  return value ? `€${value}` : "Price unavailable";
+  return value ? formatCurrency(value) : "Price unavailable";
 }
 
 function formatMoneyOrDash(value: string | null) {
-  return value ? <span className="text-foreground">€{value}</span> : <span className="text-muted">—</span>;
+  return value ? <span className="text-foreground">{formatCurrency(value)}</span> : <span className="text-muted">—</span>;
 }
 
 function formatMoneyOrDashText(value: string | null) {
-  return value ? `€${value}` : "—";
+  return value ? formatCurrency(value) : "—";
+}
+
+function formatCurrency(value: string) {
+  return new Intl.NumberFormat("en-IE", {
+    style: "currency",
+    currency: "EUR",
+    maximumFractionDigits: 2,
+  }).format(Number(value));
+}
+
+function formatTimestamp(value: string | null) {
+  return value ? new Date(value).toLocaleString() : "unavailable";
 }
 
 const inputClassName =

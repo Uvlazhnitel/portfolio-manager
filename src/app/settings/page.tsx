@@ -1,16 +1,21 @@
-import { Settings } from "lucide-react";
-import { EmptyState } from "@/components/ui/empty-state";
+import { PriceRefresh } from "@/components/market-data/price-refresh";
 import { PageHeader } from "@/components/ui/page-header";
+import { ManualPrices } from "@/app/settings/_components/manual-prices";
+import { getMarketDataSettingsReadModel } from "@/features/market-data/settings-read-model";
 
-export default function SettingsPage() {
+export const dynamic = "force-dynamic";
+
+export default async function SettingsPage() {
+  const assets = await getMarketDataSettingsReadModel();
+
   return (
     <>
-      <PageHeader title="Settings" description="Base currency, data sources, and local preferences." />
-      <EmptyState
-        title="Settings foundation"
-        description="EUR is the default base currency for now; future currencies can be introduced here."
-        icon={<Settings className="h-5 w-5" aria-hidden="true" />}
+      <PageHeader
+        title="Settings"
+        description="Base currency, market data sources, and manual price fallbacks."
+        action={<PriceRefresh />}
       />
+      <ManualPrices assets={assets} />
     </>
   );
 }

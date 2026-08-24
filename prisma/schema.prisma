@@ -50,6 +50,12 @@ enum PortfolioRuleType {
   MIN_REBALANCE_DRIFT
 }
 
+enum MarketPriceUnit {
+  ASSET_UNIT
+  GRAM
+  TROY_OUNCE
+}
+
 model Asset {
   id           String        @id @default(cuid())
   symbol       String        @unique
@@ -62,6 +68,41 @@ model Asset {
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   transactions Transaction[]
+  cachedPrices CachedMarketPrice[]
+  manualPrices ManualMarketPrice[]
+}
+
+model CachedMarketPrice {
+  id           String   @id @default(cuid())
+  assetId      String
+  currency     String
+  price        Decimal  @db.Decimal(28, 8)
+  timestamp    DateTime
+  fetchedAt    DateTime @default(now())
+  source       String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, currency])
+  @@index([currency])
+  @@index([fetchedAt])
+}
+
+model ManualMarketPrice {
+  id        String          @id @default(cuid())
+  assetId   String
+  currency  String
+  price     Decimal         @db.Decimal(28, 8)
+  unit      MarketPriceUnit
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, currency])
+  @@index([currency])
 }
 
 model Account {

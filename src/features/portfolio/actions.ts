@@ -110,5 +110,6 @@ function toActionError(error: unknown): PortfolioActionState {
 async function withPortfolioRevalidation<T extends PortfolioMutationResult>(mutation: Promise<T>) {
   const result = await mutation;
   revalidatePath("/portfolio");
+  revalidatePath("/dashboard");
   return result;
 }
