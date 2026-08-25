@@ -73,7 +73,6 @@ export async function createTransactionAction(
         currency: String(formData.get("currency") ?? baseCurrency),
         executedAt: String(formData.get("executedAt") ?? ""),
         note: nullableString(formData.get("note")) ?? undefined,
-        allowOversell: formData.get("allowOversell") === "on",
       }),
     );
   } catch (error) {
@@ -118,7 +117,6 @@ export async function createPositionAction(
         currency: baseCurrency,
         executedAt: String(formData.get("executedAt") ?? ""),
         note: nullableString(formData.get("note")) ?? undefined,
-        allowOversell: false,
       }),
     );
   } catch (error) {

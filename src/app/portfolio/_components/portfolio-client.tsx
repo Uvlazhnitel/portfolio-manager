@@ -398,7 +398,6 @@ function AddTransactionDialog({ portfolio, initialAssetId, initialAccountId, onC
             <Field label="Fee (optional)"><input name="fee" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
             <Field label="Date"><input name="executedAt" required type="date" className={inputClassName} defaultValue={today()} /></Field>
           </div>
-          {type === "SELL" ? <label className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-muted"><input name="allowOversell" type="checkbox" className="mt-1 h-5 w-5" /><span>Allow selling more than the current quantity in this account.</span></label> : null}
           <Field label="Note (optional)"><textarea name="note" className={textareaClassName} rows={3} /></Field>
           <ActionMessage state={state} />
           <Button type="submit" disabled={isPending || !assetId || portfolio.accounts.length === 0} className="w-full sm:w-auto">{isPending ? "Saving…" : "Save transaction"}</Button>

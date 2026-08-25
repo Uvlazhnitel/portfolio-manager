@@ -16,6 +16,22 @@ const responseSchema = z.object({
 
 type FetchLike = typeof fetch;
 type ApiKeyResolver = () => Promise<string | undefined>;
+type CoinGeckoCoin = z.infer<typeof responseSchema>["coins"][number];
+
+const tokenizedGoldSymbols = new Set(["XAUT", "PAXG"]);
+const tokenizedGoldIds = new Set(["tether-gold", "pax-gold"]);
+const stablecoinSymbols = new Set(["USDT", "USDC", "DAI", "TUSD", "USDP", "PYUSD", "FDUSD", "USDE", "EURC"]);
+const stablecoinIds = new Set([
+  "tether",
+  "usd-coin",
+  "dai",
+  "true-usd",
+  "paxos-standard",
+  "paypal-usd",
+  "first-digital-usd",
+  "ethena-usde",
+  "euro-coin",
+]);
 
 export class CoinGeckoAssetCatalogProvider implements AssetCatalogProvider {
   readonly name = "COINGECKO";
@@ -40,20 +56,39 @@ export class CoinGeckoAssetCatalogProvider implements AssetCatalogProvider {
     if (!response.ok) throw new Error(`CoinGecko search failed with status ${response.status}.`);
 
     const payload = responseSchema.parse(await response.json());
-    return payload.coins.slice(0, 8).map((coin) => ({
-      source: "COINGECKO",
-      externalId: coin.id,
-      symbol: coin.symbol.toUpperCase(),
-      name: coin.name,
-      imageUrl: safeCoinGeckoImageUrl(coin.thumb),
-      marketCapRank: coin.market_cap_rank ?? null,
-      existingAssetId: null,
-      assetClass: "CRYPTO",
-      assetType: "CRYPTO",
-      currency: coin.symbol.toUpperCase(),
-      isSymbolConflict: false,
-    }));
+    return payload.coins.slice(0, 8).map((coin) => {
+      const symbol = coin.symbol.toUpperCase();
+      const classification = classifyCoinGeckoCoin(coin);
+
+      return {
+        source: "COINGECKO",
+        externalId: coin.id,
+        symbol,
+        name: coin.name,
+        imageUrl: safeCoinGeckoImageUrl(coin.thumb),
+        marketCapRank: coin.market_cap_rank ?? null,
+        existingAssetId: null,
+        ...classification,
+        currency: symbol,
+        isSymbolConflict: false,
+      };
+    });
   }
+}
+
+function classifyCoinGeckoCoin(coin: CoinGeckoCoin): Pick<AssetCatalogResult, "assetClass" | "assetType"> {
+  const symbol = coin.symbol.toUpperCase();
+  const id = coin.id.toLowerCase();
+
+  if (tokenizedGoldSymbols.has(symbol) || tokenizedGoldIds.has(id)) {
+    return { assetClass: "GOLD", assetType: "TOKENIZED_GOLD" };
+  }
+
+  if (stablecoinSymbols.has(symbol) || stablecoinIds.has(id)) {
+    return { assetClass: "CASH", assetType: "STABLECOIN" };
+  }
+
+  return { assetClass: "CRYPTO", assetType: "CRYPTO" };
 }
 
 function safeCoinGeckoImageUrl(value: string | null | undefined) {

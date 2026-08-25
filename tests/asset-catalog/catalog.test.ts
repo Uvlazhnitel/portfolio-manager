@@ -42,6 +42,27 @@ describe("CoinGecko asset catalog provider", () => {
       assetType: "CRYPTO",
     })]);
   });
+
+  it("classifies tokenized gold and stablecoins instead of treating every result as crypto", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      coins: [
+        { id: "tether-gold", name: "Tether Gold", symbol: "xaut", market_cap_rank: 101, thumb: "https://coin-images.coingecko.com/coins/images/10481/thumb/tether-gold.png" },
+        { id: "pax-gold", name: "PAX Gold", symbol: "paxg", market_cap_rank: 102, thumb: null },
+        { id: "tether", name: "Tether", symbol: "usdt", market_cap_rank: 3, thumb: null },
+        { id: "usd-coin", name: "USDC", symbol: "usdc", market_cap_rank: 6, thumb: null },
+        { id: "solana", name: "Solana", symbol: "sol", market_cap_rank: 5, thumb: null },
+      ],
+    }), { status: 200 }));
+    const provider = new CoinGeckoAssetCatalogProvider("", fetcher as typeof fetch);
+
+    await expect(provider.search("token")).resolves.toEqual([
+      expect.objectContaining({ symbol: "XAUT", assetClass: "GOLD", assetType: "TOKENIZED_GOLD", currency: "XAUT" }),
+      expect.objectContaining({ symbol: "PAXG", assetClass: "GOLD", assetType: "TOKENIZED_GOLD", currency: "PAXG" }),
+      expect.objectContaining({ symbol: "USDT", assetClass: "CASH", assetType: "STABLECOIN", currency: "USDT" }),
+      expect.objectContaining({ symbol: "USDC", assetClass: "CASH", assetType: "STABLECOIN", currency: "USDC" }),
+      expect.objectContaining({ symbol: "SOL", assetClass: "CRYPTO", assetType: "CRYPTO", currency: "SOL" }),
+    ]);
+  });
 });
 
 describe("asset catalog service", () => {

@@ -193,11 +193,11 @@ describe("portfolio mutations", () => {
     ).rejects.toThrow("Add a starting balance or earlier buy first");
   });
 
-  it("allows selling more than account quantity with override", async () => {
+  it("rejects selling more than account quantity even with a legacy override field", async () => {
     const account = await testDb.prisma.account.findFirstOrThrow({ where: { name: "Bybit" } });
     const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
 
-    const result = await createTransactionMutation(
+    await expect(createTransactionMutation(
       {
         type: TransactionType.SELL,
         accountId: account.id,
@@ -208,11 +208,9 @@ describe("portfolio mutations", () => {
         currency: "EUR",
         executedAt: new Date("2026-01-04"),
         allowOversell: true,
-      },
+      } as never,
       testDb.prisma,
-    );
-
-    expect(result.ok).toBe(true);
+    )).rejects.toThrow("Add a starting balance or earlier buy first");
   });
 
   it("normalizes physical gold troy ounces and total purchase cost to gram-based storage", async () => {

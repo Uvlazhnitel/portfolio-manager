@@ -56,7 +56,6 @@ export const transactionMutationSchema = z.object({
   currency: z.string().trim().min(3).max(12).default(DEFAULT_BASE_CURRENCY).transform((value) => value.toUpperCase()),
   executedAt: z.coerce.date(),
   note: z.string().trim().optional(),
-  allowOversell: z.boolean().default(false),
 });
 
 export type TransactionMutationInput = z.input<typeof transactionMutationSchema>;
@@ -95,7 +94,7 @@ export async function createTransactionMutation(
     const asset = await resolveAsset(parsed, transaction);
     const normalized = normalizeTransaction(parsed, asset.assetType);
 
-    if (parsed.type === TransactionType.SELL && !parsed.allowOversell) {
+    if (parsed.type === TransactionType.SELL) {
       await assertEnoughQuantityForSell({
         db: transaction,
         accountId: parsed.accountId,
