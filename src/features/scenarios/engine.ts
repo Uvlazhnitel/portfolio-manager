@@ -2,6 +2,7 @@ import { AssetClass, TransactionType, type Prisma } from "@prisma/client";
 import { calculatePortfolio, compareAllocationToStrategy, evaluateStrategyCompliance, simulateTransaction } from "@/features/portfolio-engine";
 import { decimal, ONE_HUNDRED, toDecimalString, toQuantityString, ZERO } from "@/features/portfolio-engine/decimal";
 import { scenarioBuckets, type MarketScenarioInput, type ScenarioBucket, type TransactionScenarioInput } from "@/features/scenarios/types";
+import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 
 const SCENARIO_ACCOUNT_ID = "__scenario__";
 
@@ -37,7 +38,7 @@ export function simulateTransactionScenario(input: TransactionScenarioInput) {
       type: input.type === "BUY" ? TransactionType.BUY : TransactionType.SELL,
       quantity: toQuantityString(quantity),
       pricePerUnit: toDecimalString(price),
-      currency: "EUR",
+      currency: input.baseCurrency ?? DEFAULT_BASE_CURRENCY,
     },
   });
   const warnings = evaluateStrategyCompliance(projected, input.strategy);

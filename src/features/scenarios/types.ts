@@ -9,6 +9,7 @@ export type TransactionScenarioInput = {
   transactions: EngineTransaction[];
   marketPrices: MarketPrices;
   strategy: EngineStrategyAllocation[];
+  baseCurrency?: string;
   assetId: string;
   type: ScenarioTransactionType;
   amount: string;

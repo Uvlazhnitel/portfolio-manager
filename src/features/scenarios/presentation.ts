@@ -1,5 +1,6 @@
 import type { AllocationStatus, StrategyWarning } from "@/features/portfolio-engine";
 import { formatDecimalCurrency, formatDecimalPercent } from "@/lib/format/decimal";
+import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 
 export function scenarioWarningText(warning: Pick<StrategyWarning, "assetClass" | "currentPercent" | "limitPercent" | "code">) {
   const label = classLabel(warning.assetClass);
@@ -22,6 +23,6 @@ export function formatPercent(value: string) {
   return formatDecimalPercent(value);
 }
 
-export function formatCurrency(value: string, currency = "EUR") {
+export function formatCurrency(value: string, currency: string = DEFAULT_BASE_CURRENCY) {
   return formatDecimalCurrency(value, currency);
 }

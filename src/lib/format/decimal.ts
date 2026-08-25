@@ -1,9 +1,11 @@
-export function formatDecimalCurrency(value: string, currency = "EUR", places = 2) {
+import { DEFAULT_BASE_CURRENCY, getCurrencyLocale } from "@/lib/domain/currency";
+
+export function formatDecimalCurrency(value: string, currency: string = DEFAULT_BASE_CURRENCY, places = 2) {
   const fixed = normalizeFixedDecimal(value, places);
   if (!fixed) return "—";
   const { negative, whole, fraction } = splitFixed(fixed);
   try {
-    const parts = new Intl.NumberFormat("en-IE", {
+    const parts = new Intl.NumberFormat(getCurrencyLocale(currency), {
       style: "currency",
       currency,
       minimumFractionDigits: places,

@@ -69,6 +69,11 @@ async function main() {
       create: { symbol: "PHYSICAL_GOLD", name: "Physical Gold", assetClass: AssetClass.GOLD, assetType: AssetType.PHYSICAL_GOLD, currency: "XAU" },
     }),
     prisma.asset.upsert({
+      where: { symbol: "USD" },
+      update: {},
+      create: { symbol: "USD", name: "US Dollar", assetClass: AssetClass.CASH, assetType: AssetType.FIAT, currency: "USD" },
+    }),
+    prisma.asset.upsert({
       where: { symbol: "EUR" },
       update: {},
       create: { symbol: "EUR", name: "Euro", assetClass: AssetClass.CASH, assetType: AssetType.FIAT, currency: "EUR" },
@@ -87,7 +92,7 @@ async function main() {
       id: "default-strategy",
       name: "Long-term capital growth",
       objective: "Grow long-term capital while keeping allocations close to configurable target ranges.",
-      baseCurrency: "EUR",
+      baseCurrency: "USD",
     },
   });
 

@@ -15,6 +15,7 @@ import {
   positiveDecimalStringSchema,
 } from "@/features/portfolio/validation";
 import { prisma } from "@/lib/db/client";
+import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 
 const implementedTransactionTypes = [
   TransactionType.INITIAL_BALANCE,
@@ -43,9 +44,10 @@ export const transactionMutationSchema = z.object({
   quantity: positiveDecimalStringSchema.optional(),
   physicalGoldWeightGrams: positiveDecimalStringSchema.optional(),
   pricePerUnit: nonNegativeDecimalStringSchema.optional(),
+  totalAmount: nonNegativeDecimalStringSchema.optional(),
   totalPurchaseCost: nonNegativeDecimalStringSchema.optional(),
   fee: nonNegativeDecimalStringSchema.optional(),
-  currency: z.string().trim().min(3).max(12).default("EUR").transform((value) => value.toUpperCase()),
+  currency: z.string().trim().min(3).max(12).default(DEFAULT_BASE_CURRENCY).transform((value) => value.toUpperCase()),
   executedAt: z.coerce.date(),
   note: z.string().trim().optional(),
   allowOversell: z.boolean().default(false),
@@ -93,6 +95,7 @@ export async function createTransactionMutation(
         accountId: parsed.accountId,
         assetId: asset.id,
         quantity: normalized.quantity,
+        executedAt: parsed.executedAt,
       });
     }
 
@@ -131,7 +134,17 @@ export async function deleteTransactionMutation(
     throw new Error("Transaction id is required.");
   }
 
-  await new PortfolioRepository(db).deleteTransaction(id);
+  await withSerializableRetry(db, async (transaction) => {
+    const target = await transaction.transaction.findUnique({ where: { id } });
+    if (!target) throw new PortfolioMutationError("Transaction was not found.");
+
+    const remaining = await transaction.transaction.findMany({
+      where: { accountId: target.accountId, assetId: target.assetId, id: { not: id } },
+      orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }],
+    });
+    assertNonNegativeChronology(remaining);
+    await transaction.transaction.delete({ where: { id } });
+  });
   return { ok: true, message: "Transaction deleted." };
 }
 
@@ -193,13 +206,23 @@ function normalizeTransaction(parsed: z.infer<typeof transactionMutationSchema>,
   }
 
   let pricePerUnit = parsed.pricePerUnit ?? null;
+  const totalAmount = parsed.totalAmount ?? parsed.totalPurchaseCost ?? null;
 
-  if (parsed.totalPurchaseCost) {
-    pricePerUnit = decimal(parsed.totalPurchaseCost).div(decimal(quantity)).toDecimalPlaces(8).toString();
+  if (totalAmount) {
+    const derivedPrice = decimal(totalAmount).div(decimal(quantity)).toDecimalPlaces(8).toString();
+    if (pricePerUnit) {
+      const calculatedTotal = decimal(pricePerUnit).mul(quantity).toDecimalPlaces(2);
+      const suppliedTotal = decimal(totalAmount).toDecimalPlaces(2);
+      if (calculatedTotal.minus(suppliedTotal).abs().greaterThan("0.01")) {
+        throw new PortfolioMutationError("Price per unit and total amount do not match within one cent.");
+      }
+    } else {
+      pricePerUnit = derivedPrice;
+    }
   }
 
   if ((parsed.type === TransactionType.BUY || parsed.type === TransactionType.SELL) && !pricePerUnit) {
-    throw new PortfolioMutationError("Price per unit is required for buy and sell transactions.");
+    throw new PortfolioMutationError("Enter either price per unit or the total amount for this transaction.");
   }
 
   return {
@@ -214,15 +237,17 @@ async function assertEnoughQuantityForSell({
   accountId,
   assetId,
   quantity,
+  executedAt,
 }: {
   db: Prisma.TransactionClient;
   accountId: string;
   assetId: string;
   quantity: string;
+  executedAt: Date;
 }) {
   const transactions = await db.transaction.findMany({
-    where: { accountId, assetId },
-    orderBy: { executedAt: "asc" },
+    where: { accountId, assetId, executedAt: { lte: executedAt } },
+    orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }],
   });
   const currentHolding = calculateHoldings(transactions).find(
     (holding) => holding.accountId === accountId && holding.assetId === assetId,
@@ -230,7 +255,20 @@ async function assertEnoughQuantityForSell({
   const currentQuantity = currentHolding ? decimal(currentHolding.quantity) : ZERO;
 
   if (decimal(quantity).greaterThan(currentQuantity)) {
-    throw new PortfolioMutationError("Cannot sell more than the current account holding without override.");
+    throw new PortfolioMutationError("Add a starting balance or earlier buy first. You cannot sell more than was held in this account on the sale date.");
+  }
+}
+
+function assertNonNegativeChronology(transactions: Array<{ type: TransactionType; quantity: Prisma.Decimal }>) {
+  let quantity = ZERO;
+  for (const transaction of transactions) {
+    const decreases = transaction.type === TransactionType.SELL ||
+      transaction.type === TransactionType.WITHDRAWAL ||
+      transaction.type === TransactionType.TRANSFER_OUT;
+    quantity = decreases ? quantity.minus(transaction.quantity) : quantity.plus(transaction.quantity);
+    if (quantity.lessThan(ZERO)) {
+      throw new PortfolioMutationError("This transaction is required by a later sale or withdrawal. Delete or adjust the later transaction first.");
+    }
   }
 }
 
@@ -269,7 +307,7 @@ export function createPhysicalGoldInitialBalanceInput(input: {
     assetId: input.physicalGoldAssetId,
     physicalGoldWeightGrams: input.weightGrams,
     totalPurchaseCost: input.totalPurchaseCost,
-    currency: "EUR",
+    currency: DEFAULT_BASE_CURRENCY,
     executedAt: input.executedAt,
     note: input.note,
   };

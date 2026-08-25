@@ -105,9 +105,9 @@ export function ContributionPlanner({ model }: { model: ContributionPlannerModel
           <label className="block max-w-md flex-1">
             <span className="mb-2 block text-sm font-medium text-foreground">How much do you want to invest?</span>
             <div className="relative">
-              <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-lg text-muted">€</span>
+              <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-lg text-muted">{model.strategy.currency === "USD" ? "$" : model.strategy.currency}</span>
               <input type="number" min="0" step="0.01" inputMode="decimal" value={amount} onChange={(event) => changeAmount(event.target.value)} placeholder="1,000.00" className="h-14 w-full rounded-lg border border-border bg-surface pl-9 pr-20 text-xl font-semibold text-foreground outline-none transition placeholder:text-muted/50 focus:border-primary" />
-              <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm font-medium text-muted">EUR</span>
+              <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm font-medium text-muted">{model.strategy.currency}</span>
             </div>
           </label>
           <div className="flex flex-wrap items-center gap-2">
@@ -148,14 +148,14 @@ export function ContributionPlanner({ model }: { model: ContributionPlannerModel
                   <div key={assetClass} className="rounded-lg border border-border bg-surface p-4">
                     <div className="flex items-center justify-between gap-2"><p className="font-semibold">{classLabels[assetClass]}</p><Badge>{displayed?.percentOfContribution ?? "0.00"}%</Badge></div>
                     {isCustomized ? (
-                      <div className="relative mt-4"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">€</span><input type="number" min="0" step="0.01" inputMode="decimal" value={allocation?.amount ?? "0.00"} onChange={(event) => changeAllocation(assetClass, event.target.value)} className="h-11 w-full rounded-lg border border-border bg-surface-strong pl-7 pr-3 text-right font-medium outline-none focus:border-primary" /></div>
-                    ) : <p className="mt-4 text-2xl font-semibold">{formatMoney(allocation?.amount ?? "0")}</p>}
+                      <div className="relative mt-4"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">{model.strategy.currency === "USD" ? "$" : model.strategy.currency}</span><input type="number" min="0" step="0.01" inputMode="decimal" value={allocation?.amount ?? "0.00"} onChange={(event) => changeAllocation(assetClass, event.target.value)} className="h-11 w-full rounded-lg border border-border bg-surface-strong pl-8 pr-3 text-right font-medium outline-none focus:border-primary" /></div>
+                    ) : <p className="mt-4 text-2xl font-semibold">{formatMoney(allocation?.amount ?? "0", model.strategy.currency)}</p>}
                   </div>
                 );
               })}
             </div>
 
-            {isCustomized ? <div className={cn("mt-4 flex flex-col gap-1 rounded-lg border p-3 text-sm sm:flex-row sm:items-center sm:justify-between", allocationAnalysis.isValid ? "border-success/30 bg-success/10" : "border-warning/30 bg-warning/10 text-warning")}><span>{allocationAnalysis.message}</span><span className="font-semibold">{formatMoney(String(allocationAnalysis.totalCents / 100))} / {formatMoney(amount || "0")}</span></div> : null}
+            {isCustomized ? <div className={cn("mt-4 flex flex-col gap-1 rounded-lg border p-3 text-sm sm:flex-row sm:items-center sm:justify-between", allocationAnalysis.isValid ? "border-success/30 bg-success/10" : "border-warning/30 bg-warning/10 text-warning")}><span>{allocationAnalysis.message}</span><span className="font-semibold">{formatMoney(String(allocationAnalysis.totalCents / 100), model.strategy.currency)} / {formatMoney(amount || "0", model.strategy.currency)}</span></div> : null}
             {isPreviewPending ? <p className="mt-3 text-sm text-muted">Updating projected allocation…</p> : null}
             {displayedPreviewError ? <Notice tone="destructive">{displayedPreviewError}</Notice> : null}
           </Card>
@@ -207,5 +207,5 @@ function analyzeDraft(amount: string, allocations: ParsedContributionAllocation[
   }
 }
 
-function formatMoney(value: string) { return formatDecimalCurrency(value, "EUR"); }
+function formatMoney(value: string, currency: string) { return formatDecimalCurrency(value, currency); }
 function formatPercent(value: string) { return formatDecimalPercent(value); }

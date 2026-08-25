@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AssistantRepository } from "@/features/assistant/repository";
 import { AssistantConversationService, buildConversationTitle } from "@/features/assistant/service";
 import { loadAssistantPortfolioRuntime } from "@/features/assistant/context";
-import { executeAssistantTool } from "@/features/assistant/tools";
+import { assistantToolDefinitions, executeAssistantTool } from "@/features/assistant/tools";
 import { streamAssistantResponse } from "@/features/assistant/stream";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
 import { MarketDataService } from "@/features/market-data/service";
@@ -99,12 +99,14 @@ describe("assistant portfolio context and tools", () => {
     const transactionCount = await testDb.prisma.transaction.count();
     const summary = await executeAssistantTool("get_portfolio_summary", "{}", runtime) as { valuation: { totalPortfolioValue: string } };
     const savedStrategy = await executeAssistantTool("get_strategy", "{}", runtime) as { allocations: unknown[] };
-    const plan = await executeAssistantTool("plan_contribution", JSON.stringify({ amount: "1000", currency: "EUR" }), runtime) as { allocations: Array<{ amount: string }> };
+    const plan = await executeAssistantTool("plan_contribution", JSON.stringify({ amount: "1000" }), runtime) as { currency: string; allocations: Array<{ amount: string }> };
     const simulation = await executeAssistantTool("simulate_transaction", JSON.stringify({ symbol: "btc", type: "BUY", amount: "500" }), runtime) as { projectedAssetClassPercent: string; strategyMaximum: string; violations: Array<{ code: string }> };
 
     expect(summary.valuation.totalPortfolioValue).toBe("1000.00");
     expect(savedStrategy.allocations).toHaveLength(4);
     expect(plan.allocations.reduce((sum, allocation) => sum + Number(allocation.amount), 0)).toBe(1000);
+    expect(plan.currency).toBe(runtime.strategy?.baseCurrency);
+    expect(JSON.stringify(assistantToolDefinitions.find((tool) => "name" in tool && tool.name === "plan_contribution"))).not.toContain('"currency"');
     expect(simulation).toEqual(expect.objectContaining({ projectedAssetClassPercent: "40.00", strategyMaximum: "20.00" }));
     expect(simulation.violations).toContainEqual(expect.objectContaining({ code: "CRYPTO_ABOVE_MAX" }));
     expect(await testDb.prisma.transaction.count()).toBe(transactionCount);

@@ -137,6 +137,41 @@ describe("portfolio mutations", () => {
     expect(transaction.fee?.toString()).toBe("3");
   });
 
+  it("normalizes buy and sell gross totals to price per unit", async () => {
+    const account = await testDb.prisma.account.create({ data: { name: "Gross Total Test", type: AccountType.EXCHANGE } });
+    const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
+    await createTransactionMutation({ type: TransactionType.BUY, accountId: account.id, assetMode: "existing", assetId: btc.id, quantity: "2", totalAmount: "1000", fee: "5", currency: "USD", executedAt: new Date("2025-01-01") }, testDb.prisma);
+    await createTransactionMutation({ type: TransactionType.SELL, accountId: account.id, assetMode: "existing", assetId: btc.id, quantity: "0.5", totalAmount: "400", fee: "2", currency: "USD", executedAt: new Date("2025-02-01") }, testDb.prisma);
+
+    const rows = await testDb.prisma.transaction.findMany({ where: { accountId: account.id }, orderBy: { executedAt: "asc" } });
+    expect(rows.map((row) => row.pricePerUnit?.toString())).toEqual(["500", "800"]);
+    expect(rows.map((row) => row.fee?.toString())).toEqual(["5", "2"]);
+  });
+
+  it("rejects inconsistent unit price and gross total", async () => {
+    const account = await testDb.prisma.account.create({ data: { name: "Price Consistency Test", type: AccountType.EXCHANGE } });
+    const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
+    await expect(createTransactionMutation({ type: TransactionType.BUY, accountId: account.id, assetMode: "existing", assetId: btc.id, quantity: "2", pricePerUnit: "500", totalAmount: "1000.02", currency: "USD", executedAt: new Date("2025-01-01") }, testDb.prisma)).rejects.toThrow("do not match within one cent");
+    expect(await testDb.prisma.transaction.count({ where: { accountId: account.id } })).toBe(0);
+  });
+
+  it("validates a sale against holdings available on its historical date", async () => {
+    const account = await testDb.prisma.account.create({ data: { name: "Chronology Test", type: AccountType.EXCHANGE } });
+    const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
+    await createTransactionMutation({ type: TransactionType.BUY, accountId: account.id, assetMode: "existing", assetId: btc.id, quantity: "1", totalAmount: "1000", currency: "USD", executedAt: new Date("2025-06-01") }, testDb.prisma);
+    await expect(createTransactionMutation({ type: TransactionType.SELL, accountId: account.id, assetMode: "existing", assetId: btc.id, quantity: "0.5", totalAmount: "600", currency: "USD", executedAt: new Date("2025-05-01") }, testDb.prisma)).rejects.toThrow("earlier buy first");
+  });
+
+  it("rejects deleting a buy required by a later sale", async () => {
+    const account = await testDb.prisma.account.create({ data: { name: "Delete Chronology Test", type: AccountType.EXCHANGE } });
+    const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
+    await createTransactionMutation({ type: TransactionType.BUY, accountId: account.id, assetMode: "existing", assetId: btc.id, quantity: "1", totalAmount: "1000", currency: "USD", executedAt: new Date("2025-01-01") }, testDb.prisma);
+    await createTransactionMutation({ type: TransactionType.SELL, accountId: account.id, assetMode: "existing", assetId: btc.id, quantity: "0.75", totalAmount: "900", currency: "USD", executedAt: new Date("2025-02-01") }, testDb.prisma);
+    const buy = await testDb.prisma.transaction.findFirstOrThrow({ where: { accountId: account.id, type: TransactionType.BUY } });
+    await expect(deleteTransactionMutation(buy.id, testDb.prisma)).rejects.toThrow("required by a later sale");
+    expect(await testDb.prisma.transaction.count({ where: { id: buy.id } })).toBe(1);
+  });
+
   it("rejects selling more than account quantity without override", async () => {
     const account = await testDb.prisma.account.findFirstOrThrow({ where: { name: "Bybit" } });
     const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
@@ -155,7 +190,7 @@ describe("portfolio mutations", () => {
         },
         testDb.prisma,
       ),
-    ).rejects.toThrow("Cannot sell more than the current account holding without override.");
+    ).rejects.toThrow("Add a starting balance or earlier buy first");
   });
 
   it("allows selling more than account quantity with override", async () => {
@@ -203,7 +238,7 @@ describe("portfolio mutations", () => {
   });
 
   it("deletes transactions and lets holdings recalculate", async () => {
-    const account = await testDb.prisma.account.findFirstOrThrow({ where: { name: "Bybit" } });
+    const account = await testDb.prisma.account.create({ data: { name: "Deletion Test", type: AccountType.OTHER } });
     const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
     const transaction = await testDb.prisma.transaction.create({
       data: {

@@ -22,29 +22,28 @@ export const assistantToolDefinitions: Responses.Tool[] = [
   {
     type: "function",
     name: "plan_contribution",
-    description: "Use the deterministic contribution planner to allocate a new EUR contribution without selling existing assets.",
+    description: "Use the deterministic contribution planner to allocate a new contribution in the portfolio's trusted base currency without selling existing assets.",
     strict: true,
     parameters: {
       type: "object",
       properties: {
-        amount: { type: "string", description: "Positive EUR amount with at most two decimal places." },
-        currency: { type: "string", enum: ["EUR"] },
+        amount: { type: "string", description: "Positive amount with at most two decimal places." },
       },
-      required: ["amount", "currency"],
+      required: ["amount"],
       additionalProperties: false,
     },
   },
   {
     type: "function",
     name: "simulate_transaction",
-    description: "Simulate a BUY or SELL as an external EUR cashflow without changing real data. Always use this before discussing the allocation effect of a proposed transaction.",
+    description: "Simulate a BUY or SELL as an external cashflow in the portfolio's trusted base currency without changing real data. Always use this before discussing the allocation effect of a proposed transaction.",
     strict: true,
     parameters: {
       type: "object",
       properties: {
         symbol: { type: "string", description: "Existing portfolio asset symbol, for example BTC." },
         type: { type: "string", enum: ["BUY", "SELL"] },
-        amount: { type: "string", description: "Positive EUR amount with at most two decimal places." },
+        amount: { type: "string", description: "Positive amount with at most two decimal places." },
       },
       required: ["symbol", "type", "amount"],
       additionalProperties: false,
@@ -82,7 +81,6 @@ export async function executeAssistantTool(
   if (name === "plan_contribution") {
     const parsed = planContributionToolSchema.parse(argumentsValue);
     if (!runtime.strategy) throw new Error("Active strategy was not found.");
-    if (runtime.strategy.baseCurrency !== parsed.currency) throw new Error(`Only ${runtime.strategy.baseCurrency} contributions are supported.`);
     const projection = buildContributionProjection({
       portfolio: runtime.portfolio,
       strategy: runtime.strategy.allocations,
@@ -90,7 +88,7 @@ export async function executeAssistantTool(
     });
     return {
       contributionAmount: projection.plan.contributionAmount,
-      currency: parsed.currency,
+      currency: runtime.strategy.baseCurrency,
       allocations: projection.plan.allocations,
       before: projection.beforeComparison,
       projectedAfter: projection.afterComparison,
@@ -109,6 +107,7 @@ export async function executeAssistantTool(
       transactions: runtime.transactions,
       marketPrices: runtime.marketPrices,
       strategy: runtime.strategy.allocations,
+      baseCurrency: runtime.strategy.baseCurrency,
       assetId: asset.id,
       type: parsed.type,
       amount: parsed.amount,

@@ -13,6 +13,7 @@ import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/
 import { PortfolioRepository } from "@/features/portfolio/repository";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { serializeDecimal } from "@/lib/db/decimal";
+import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 
 type Assets = Awaited<ReturnType<PortfolioRepository["listAssets"]>>;
 type Accounts = Awaited<ReturnType<PortfolioRepository["listAccounts"]>>;
@@ -96,7 +97,7 @@ export async function loadAssistantPortfolioRuntime({
     portfolioRepository.listTransactions(),
     strategyRepository.findActiveStrategy(),
   ]);
-  const baseCurrency = strategy?.baseCurrency ?? "EUR";
+  const baseCurrency = strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
   const [marketData, savedPlan] = await Promise.all([
     marketDataService.getCurrentPrices({ assets, baseCurrency }),
     strategy ? contributionPlanRepository.findByStrategyId(strategy.id) : null,

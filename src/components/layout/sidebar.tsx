@@ -26,7 +26,7 @@ export function Sidebar() {
           </span>
           <span>
             <span className="block text-sm font-semibold text-foreground">Wealth Copilot</span>
-            <span className="block text-xs text-muted">EUR base</span>
+            <span className="block text-xs text-muted">USD base</span>
           </span>
         </Link>
         <button

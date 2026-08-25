@@ -9,6 +9,8 @@ import {
   type PortfolioMutationResult,
 } from "@/features/portfolio/mutations";
 import { publicErrorMessage } from "@/lib/public-error";
+import { StrategyRepository } from "@/features/strategy/repository";
+import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 
 export type PortfolioActionState = PortfolioMutationResult;
 
@@ -43,6 +45,8 @@ export async function createTransactionAction(
     const assetMode = String(formData.get("assetMode") ?? "existing");
     const rawTransactionType = String(formData.get("type") ?? TransactionType.INITIAL_BALANCE);
     const transactionType = parseImplementedTransactionType(rawTransactionType);
+    const strategy = await new StrategyRepository().findActiveStrategy();
+    const baseCurrency = strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
 
     return await withPortfolioRevalidation(
       createTransactionMutation({
@@ -57,15 +61,16 @@ export async function createTransactionAction(
                 name: String(formData.get("newAssetName") ?? ""),
                 assetClass: String(formData.get("newAssetClass") ?? AssetClass.OTHER) as AssetClass,
                 assetType: String(formData.get("newAssetType") ?? AssetType.OTHER) as AssetType,
-                currency: String(formData.get("newAssetCurrency") ?? "EUR"),
+                currency: String(formData.get("newAssetCurrency") ?? baseCurrency),
               }
             : undefined,
         quantity: nullableString(formData.get("quantity")) ?? undefined,
         physicalGoldWeightGrams: nullableString(formData.get("physicalGoldWeightGrams")) ?? undefined,
         pricePerUnit: nullableString(formData.get("pricePerUnit")) ?? undefined,
+        totalAmount: nullableString(formData.get("totalAmount")) ?? undefined,
         totalPurchaseCost: nullableString(formData.get("totalPurchaseCost")) ?? undefined,
         fee: nullableString(formData.get("fee")) ?? undefined,
-        currency: String(formData.get("currency") ?? "EUR"),
+        currency: String(formData.get("currency") ?? baseCurrency),
         executedAt: String(formData.get("executedAt") ?? ""),
         note: nullableString(formData.get("note")) ?? undefined,
         allowOversell: formData.get("allowOversell") === "on",
@@ -85,9 +90,12 @@ export async function createPositionAction(
   try {
     const existingAssetId = nullableString(formData.get("existingAssetId"));
     const imageUrl = safeCoinGeckoImageUrl(nullableString(formData.get("newAssetImageUrl")));
+    const strategy = await new StrategyRepository().findActiveStrategy();
+    const baseCurrency = strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
+    const transactionType = parseImplementedTransactionType(String(formData.get("type") ?? TransactionType.INITIAL_BALANCE));
     return await withPortfolioRevalidation(
       createTransactionMutation({
-        type: TransactionType.INITIAL_BALANCE,
+        type: transactionType,
         accountId: String(formData.get("accountId") ?? ""),
         assetMode: existingAssetId ? "existing" : "new",
         assetId: existingAssetId ?? undefined,
@@ -98,14 +106,16 @@ export async function createPositionAction(
               name: String(formData.get("newAssetName") ?? ""),
               assetClass: String(formData.get("newAssetClass") ?? AssetClass.CRYPTO) as AssetClass,
               assetType: String(formData.get("newAssetType") ?? AssetType.CRYPTO) as AssetType,
-              currency: String(formData.get("newAssetCurrency") ?? "EUR"),
+              currency: String(formData.get("newAssetCurrency") ?? baseCurrency),
               externalId: nullableString(formData.get("newAssetExternalId")),
               metadata: imageUrl ? { imageUrl } : undefined,
             },
         quantity: nullableString(formData.get("quantity")) ?? undefined,
         physicalGoldWeightGrams: nullableString(formData.get("physicalGoldWeightGrams")) ?? undefined,
-        totalPurchaseCost: nullableString(formData.get("totalPurchaseCost")) ?? undefined,
-        currency: "EUR",
+        pricePerUnit: nullableString(formData.get("pricePerUnit")) ?? undefined,
+        totalAmount: nullableString(formData.get("totalAmount")) ?? nullableString(formData.get("totalPurchaseCost")) ?? undefined,
+        fee: nullableString(formData.get("fee")) ?? undefined,
+        currency: baseCurrency,
         executedAt: String(formData.get("executedAt") ?? ""),
         note: nullableString(formData.get("note")) ?? undefined,
         allowOversell: false,

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { scenarioBuckets } from "@/features/scenarios/types";
 
-const moneySchema = z.string().trim().regex(/^\d+(?:\.\d{1,2})?$/, "Use a positive EUR amount with at most two decimal places.");
+const moneySchema = z.string().trim().regex(/^\d+(?:\.\d{1,2})?$/, "Use a positive amount with at most two decimal places.");
 const shockSchema = z.union([z.string(), z.number()]).transform((value, context) => {
   const normalized = String(value).trim();
   if (!/^-?\d+(?:\.\d{1,2})?$/.test(normalized)) {

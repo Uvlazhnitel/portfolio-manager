@@ -5,6 +5,7 @@ import { simulateMarketScenario, simulateTransactionScenario } from "@/features/
 import type { MarketScenarioFormInput, TransactionScenarioFormInput } from "@/features/scenarios/validation";
 import { marketScenarioSchema, transactionScenarioSchema } from "@/features/scenarios/validation";
 import { StrategyRepository } from "@/features/strategy/repository";
+import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 
 export type ScenariosPageModel = {
   assets: Array<{
@@ -40,7 +41,7 @@ export async function getScenariosPageModel(dependencies: ScenarioDependencies =
       assetClass: asset.assetClass,
       hasPrice: pricedSymbols.has(asset.symbol),
     })),
-    currency: context.strategy?.baseCurrency ?? "EUR",
+    currency: context.strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY,
     currentValue: context.portfolio.totalValue,
     isPartial: context.portfolio.missingPriceSymbols.length > 0,
     missingPriceSymbols: context.portfolio.missingPriceSymbols,
@@ -61,6 +62,7 @@ export async function previewTransactionScenario(
     transactions: context.transactions,
     marketPrices: context.marketPrices,
     strategy: context.strategy.allocations,
+    baseCurrency: context.strategy.baseCurrency,
     ...parsed,
   });
 }
@@ -91,7 +93,7 @@ async function loadScenarioContext({
   ]);
   const marketData = await marketDataService.getCurrentPrices({
     assets,
-    baseCurrency: strategy?.baseCurrency ?? "EUR",
+    baseCurrency: strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY,
   });
   const marketPrices = toEngineMarketPrices(marketData);
   return {

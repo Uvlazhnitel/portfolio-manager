@@ -9,8 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatUtcTimestamp } from "@/lib/format/date";
+import { formatDecimalCurrency } from "@/lib/format/decimal";
 
-export function ManualPrices({ assets }: { assets: MarketDataSettingsModel }) {
+export function ManualPrices({ assets, currency }: { assets: MarketDataSettingsModel; currency: string }) {
   const [assetId, setAssetId] = useState(assets[0]?.id ?? "");
   const selectedAsset = useMemo(() => assets.find((asset) => asset.id === assetId), [assetId, assets]);
   const isPhysicalGold = selectedAsset?.assetType === "PHYSICAL_GOLD";
@@ -50,7 +51,7 @@ export function ManualPrices({ assets }: { assets: MarketDataSettingsModel }) {
             </label>
             <label className="block text-sm">
               <span className="mb-2 block font-medium text-muted">Currency</span>
-              <input name="currency" className={inputClassName} value="EUR" readOnly />
+              <input name="currency" className={inputClassName} value={currency} readOnly />
             </label>
           </div>
 
@@ -90,7 +91,7 @@ export function ManualPrices({ assets }: { assets: MarketDataSettingsModel }) {
             <h2 className="text-lg font-semibold text-foreground">Configured prices</h2>
             <p className="mt-1 text-sm text-muted">Manual values remain visible with their timestamp.</p>
           </div>
-          <Badge tone="primary">EUR</Badge>
+          <Badge tone="primary">{currency}</Badge>
         </div>
         <div className="mt-5 space-y-3">
           {assets.filter((asset) => asset.manualPrice).length === 0 ? (
@@ -102,7 +103,7 @@ export function ManualPrices({ assets }: { assets: MarketDataSettingsModel }) {
                 <p className="text-sm text-muted">{asset.symbol} · {formatUnit(asset.manualPrice?.unit)}</p>
               </div>
               <div className="sm:text-right">
-                <p className="font-medium text-foreground">€{asset.manualPrice?.price}</p>
+                <p className="font-medium text-foreground">{asset.manualPrice ? formatDecimalCurrency(asset.manualPrice.price, currency) : "—"}</p>
                 <p className="text-xs text-muted">Updated {asset.manualPrice ? formatUtcTimestamp(asset.manualPrice.updatedAt) : "—"}</p>
               </div>
             </div>

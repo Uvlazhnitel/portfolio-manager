@@ -7,7 +7,6 @@ export const assistantMessageSchema = z.object({
 
 export const planContributionToolSchema = z.object({
   amount: z.string().regex(/^\d+(?:\.\d{1,2})?$/, "Amount must be a non-negative number with at most two decimals."),
-  currency: z.literal("EUR"),
 }).superRefine((value, context) => {
   if (Number(value.amount) <= 0) context.addIssue({ code: "custom", path: ["amount"], message: "Amount must be greater than zero." });
 });

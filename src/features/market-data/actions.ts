@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 import { MarketDataService } from "@/features/market-data/service";
 import { saveManualMarketPriceMutation } from "@/features/market-data/mutations";
 import { PortfolioRepository } from "@/features/portfolio/repository";
+import { StrategyRepository } from "@/features/strategy/repository";
+import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 import { publicErrorMessage } from "@/lib/public-error";
 
 export type MarketDataActionState = {
@@ -21,10 +23,13 @@ export async function refreshPricesAction(
   void previousState;
 
   try {
-    const assets = await new PortfolioRepository().listAssets();
+    const [assets, strategy] = await Promise.all([
+      new PortfolioRepository().listAssets(),
+      new StrategyRepository().findActiveStrategy(),
+    ]);
     const snapshot = await new MarketDataService().getCurrentPrices({
       assets,
-      baseCurrency: "EUR",
+      baseCurrency: strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY,
       forceRefresh: true,
     });
     revalidateMarketDataPages();
@@ -53,7 +58,7 @@ export async function saveManualMarketPriceAction(
     const result = await saveManualMarketPriceMutation({
       assetId: String(formData.get("assetId") ?? ""),
       price: String(formData.get("price") ?? ""),
-      currency: String(formData.get("currency") ?? "EUR"),
+      currency: String(formData.get("currency") ?? DEFAULT_BASE_CURRENCY),
       unit: String(formData.get("unit") ?? MarketPriceUnit.ASSET_UNIT) as MarketPriceUnit,
     });
     revalidateMarketDataPages();

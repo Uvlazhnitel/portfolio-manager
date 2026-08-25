@@ -38,19 +38,20 @@ describe("market data providers", () => {
       requestedUrl = String(input);
       requestedInit = init;
       return new Response(JSON.stringify({
-        bitcoin: { eur: 67540, last_updated_at: 1787603740 },
+        bitcoin: { usd: 79540, last_updated_at: 1787603740 },
       }), { status: 200 });
     };
     const provider = new CoinGeckoMarketDataProvider("server-secret", fetcher);
-    const prices = await provider.getCurrentPrices({ assets: [btc], baseCurrency: "EUR" });
+    const prices = await provider.getCurrentPrices({ assets: [btc], baseCurrency: "USD" });
 
     expect(requestedUrl).toContain("ids=bitcoin");
+    expect(requestedUrl).toContain("vs_currencies=usd");
     expect(new Headers(requestedInit?.headers).get("x-cg-demo-api-key")).toBe("server-secret");
     expect(prices).toEqual([expect.objectContaining({
       assetId: btc.id,
       symbol: "BTC",
-      price: "67540",
-      currency: "EUR",
+      price: "79540",
+      currency: "USD",
       source: "COINGECKO",
     })]);
     expect(JSON.stringify(prices)).not.toContain("server-secret");
@@ -69,10 +70,10 @@ describe("market data providers", () => {
     expect(observedKeys).toEqual(["first-server-key", "second-server-key"]);
   });
 
-  it("returns deterministic one-to-one pricing for the EUR base asset", async () => {
-    const eur = { ...btc, id: "eur-id", symbol: "EUR", currency: "EUR", externalId: null };
-    const prices = await new BaseCurrencyMarketDataProvider().getCurrentPrices({ assets: [btc, eur], baseCurrency: "EUR" });
-    expect(prices).toEqual([expect.objectContaining({ assetId: "eur-id", price: "1", source: "BASE_CURRENCY" })]);
+  it("returns deterministic one-to-one pricing for the USD base asset", async () => {
+    const usd = { ...btc, id: "usd-id", symbol: "USD", currency: "USD", externalId: null };
+    const prices = await new BaseCurrencyMarketDataProvider().getCurrentPrices({ assets: [btc, usd], baseCurrency: "USD" });
+    expect(prices).toEqual([expect.objectContaining({ assetId: "usd-id", price: "1", source: "BASE_CURRENCY" })]);
   });
 
   it("rejects incompatible manual units", () => {
@@ -90,13 +91,13 @@ describe("market data providers", () => {
     };
     const provider = new ManualMarketDataProvider(async () => [{
       assetId: physicalGold.id,
-      currency: "EUR",
+      currency: "USD",
       price: "3110.34768",
       unit: MarketPriceUnit.TROY_OUNCE,
       updatedAt: now,
     }]);
 
-    const prices = await provider.getCurrentPrices({ assets: [physicalGold], baseCurrency: "EUR" });
+    const prices = await provider.getCurrentPrices({ assets: [physicalGold], baseCurrency: "USD" });
     expect(prices).toEqual([expect.objectContaining({ price: "100", source: "MANUAL" })]);
   });
 });
@@ -168,7 +169,7 @@ describe("market data cache service", () => {
         assetId: asset.id,
         symbol: asset.symbol,
         price: asset.symbol === "BTC" ? "65000" : "3000",
-        currency: "EUR",
+        currency: "USD",
         timestamp: now,
         source: "TEST",
       }))),
@@ -217,7 +218,7 @@ function cachedPrice(
   return {
     id: "cache-id",
     assetId: btc.id,
-    currency: "EUR",
+    currency: "USD",
     timestamp: new Date(now.getTime() - 1_000),
     fetchedAt: new Date(now.getTime() - 1_000),
     source: "COINGECKO",
@@ -229,7 +230,7 @@ function cachedPrice(
 }
 
 function quote(price: string, timestamp: Date): MarketPrice {
-  return { assetId: btc.id, symbol: btc.symbol, price, currency: "EUR", timestamp, source: "TEST" };
+  return { assetId: btc.id, symbol: btc.symbol, price, currency: "USD", timestamp, source: "TEST" };
 }
 
 function providerReturning(prices: MarketPrice[]): MarketDataProvider {

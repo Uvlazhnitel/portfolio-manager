@@ -13,6 +13,7 @@ import type { ScenariosPageModel } from "@/features/scenarios/read-model";
 import { scenarioBuckets, type MarketScenarioResult, type ScenarioBucket, type TransactionScenarioResult } from "@/features/scenarios/types";
 import { cn } from "@/lib/utils";
 import { decimalSign } from "@/lib/format/decimal";
+import { getCurrencyLocale } from "@/lib/domain/currency";
 
 type Mode = "TRANSACTION" | "MARKET";
 type ShockDraft = Record<ScenarioBucket, string>;
@@ -59,13 +60,13 @@ function TransactionSimulator({ model }: { model: ScenariosPageModel }) {
         <div className="mt-6 space-y-4">
           <Field label="Asset"><select value={assetId} onChange={(event) => { setAssetId(event.target.value); setResult(null); }} className={inputClass}>{model.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} · {asset.symbol}{asset.hasPrice ? "" : " · price unavailable"}</option>)}</select></Field>
           <Field label="Transaction"><div className="grid grid-cols-2 gap-2">{(["BUY", "SELL"] as const).map((item) => <button type="button" key={item} onClick={() => { setType(item); setResult(null); }} className={cn("min-h-11 rounded-lg border text-sm font-medium", type === item ? "border-primary bg-primary/15 text-primary" : "border-border bg-surface text-muted")}>{item}</button>)}</div></Field>
-          <Field label="Amount in EUR"><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">€</span><input type="number" min="0" step="0.01" inputMode="decimal" value={amount} onChange={(event) => { setAmount(event.target.value); setResult(null); }} placeholder="500.00" className={cn(inputClass, "pl-7")} /></div></Field>
+          <Field label={`Amount in ${model.currency}`}><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">{model.currency === "USD" ? "$" : model.currency}</span><input type="number" min="0" step="0.01" inputMode="decimal" value={amount} onChange={(event) => { setAmount(event.target.value); setResult(null); }} placeholder="500.00" className={cn(inputClass, "pl-8")} /></div></Field>
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
           {!model.hasStrategy ? <Notice>Create an active strategy before running transaction scenarios.</Notice> : null}
           <div className="flex gap-2"><Button type="button" onClick={run} disabled={pending || !assetId || !amount || !model.hasStrategy} className="flex-1">{pending ? "Calculating…" : "Run simulation"}</Button><Button type="button" variant="secondary" onClick={reset} aria-label="Reset"><RotateCcw className="h-4 w-4" /></Button></div>
         </div>
       </Card>
-      {result ? <TransactionResult result={result} currency={model.currency} onModify={() => setResult(null)} onReset={reset} /> : <ScenarioEmpty title="No transaction simulated" description="Choose an asset, transaction type, and EUR amount to compare allocation before and after." />}
+      {result ? <TransactionResult result={result} currency={model.currency} onModify={() => setResult(null)} onReset={reset} /> : <ScenarioEmpty title="No transaction simulated" description={`Choose an asset, transaction type, and ${model.currency} amount to compare allocation before and after.`} />}
     </div>
   );
 }
@@ -121,5 +122,5 @@ function ValueCard({ label, value, currency, detail, tone }: { label: string; va
 function StatusBadge({ status }: { status: "UNDERWEIGHT" | "IN_RANGE" | "OVERWEIGHT" }) { return <Badge tone={status === "IN_RANGE" ? "success" : status === "OVERWEIGHT" ? "destructive" : "warning"}>{statusLabel(status)}</Badge>; }
 function Notice({ children }: { children: React.ReactNode }) { return <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span>{children}</span></div>; }
 function ScenarioEmpty({ title, description }: { title: string; description: string }) { return <Card className="flex min-h-72 items-center justify-center border-dashed"><div className="max-w-sm text-center"><BarChart3 className="mx-auto h-7 w-7 text-primary" /><h2 className="mt-4 font-semibold">{title}</h2><p className="mt-2 text-sm leading-6 text-muted">{description}</p></div></Card>; }
-function compactCurrency(value: number, currency: string) { return new Intl.NumberFormat("en-IE", { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 }).format(value); }
+function compactCurrency(value: number, currency: string) { return new Intl.NumberFormat(getCurrencyLocale(currency), { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 }).format(value); }
 const inputClass = "h-11 w-full rounded-lg border border-border bg-surface-strong px-3 text-sm text-foreground outline-none transition focus:border-primary/60";

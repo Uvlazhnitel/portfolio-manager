@@ -4,11 +4,11 @@ Single-user investment portfolio manager and decision-support copilot. The MVP f
 
 ## MVP FEATURES
 
-- PostgreSQL-backed assets, accounts, transactions, strategy, market-price cache, contribution plan, and assistant conversations.
+- PostgreSQL-backed assets, accounts, complete Buy/Sell/Current Balance transaction history, strategy, market-price cache, contribution plan, and assistant conversations.
 - Holdings derived from transactions and initial balances; no manually editable Holding source of truth.
 - Deterministic Portfolio Engine for holdings, valuation, allocation, strategy compliance, P&L availability, contribution planning, and simulations.
 - Editable ETF, Crypto, Gold, and Cash targets/ranges with exact 100% target validation.
-- CoinGecko adapter for supported crypto, EUR base-currency valuation, manual prices, physical-gold gram/troy-ounce normalization, persistent cache, and stale indicators.
+- CoinGecko adapter for supported crypto, USD base-currency valuation, manual prices, physical-gold gram/troy-ounce normalization, persistent cache, and stale indicators.
 - Encrypted in-app API-key management for OpenAI and CoinGecko with environment fallbacks.
 - Portfolio, Dashboard, Strategy, Contribution Planner, Scenarios, Settings, and read-only AI Assistant screens.
 - OpenAI Responses API assistant with compact trusted portfolio context and deterministic read-only tools.
@@ -31,6 +31,10 @@ Single-user investment portfolio manager and decision-support copilot. The MVP f
 The App Router pages call feature read models and server actions. Repositories are the only layer that queries Prisma. Portfolio and scenario calculations are pure and do not depend on React, market providers, or an LLM. Market providers return normalized prices through a provider-independent service and PostgreSQL cache. The AI Assistant receives compact pre-calculated context and can call only deterministic read-only tools; it cannot create transactions or execute trades.
 
 Transactions and initial balances are the portfolio source of truth. Per-holding cost basis and P&L are shown only when they can be derived reliably in the base currency. Missing acquisition data, unsupported currencies, or ambiguous account transfers are reported as unavailable rather than estimated.
+
+USD is the single MVP base currency. Transaction monetary values are stored in the currency recorded at entry and are never silently converted. USD cash is valued one-to-one; USDT is priced through CoinGecko. To hold EUR cash in a USD portfolio, configure a manual USD price per EUR unit in Settings. Physical-gold manual quotes can be entered in USD per gram or per troy ounce.
+
+The Portfolio screen supports chronological `Current balance`, `Buy`, and `Sell` entry. For Buy/Sell, enter either price per unit or the gross total; fees are stored separately. Enter older transactions first. A sale is checked against the selected account balance as of its historical date, and a required earlier purchase cannot be deleted while a later sale depends on it.
 
 ## Development setup
 

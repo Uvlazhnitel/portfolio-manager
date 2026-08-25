@@ -4,10 +4,7 @@ import type { MarketDataProvider, MarketPrice } from "@/features/market-data/typ
 
 const responseSchema = z.record(
   z.string(),
-  z.object({
-    eur: z.number().positive(),
-    last_updated_at: z.number().int().positive().optional(),
-  }),
+  z.record(z.string(), z.number().positive()),
 );
 
 type FetchLike = typeof fetch;
@@ -22,7 +19,8 @@ export class CoinGeckoMarketDataProvider implements MarketDataProvider {
   ) {}
 
   async getCurrentPrices({ assets, baseCurrency }: Parameters<MarketDataProvider["getCurrentPrices"]>[0]) {
-    if (baseCurrency !== "EUR") {
+    const quoteCurrency = baseCurrency.toLowerCase();
+    if (!/^[a-z]{3}$/.test(quoteCurrency)) {
       return [];
     }
 
@@ -35,7 +33,7 @@ export class CoinGeckoMarketDataProvider implements MarketDataProvider {
     const ids = [...new Set(supportedAssets.map((asset) => asset.externalId as string))];
     const url = new URL("https://api.coingecko.com/api/v3/simple/price");
     url.searchParams.set("ids", ids.join(","));
-    url.searchParams.set("vs_currencies", "eur");
+    url.searchParams.set("vs_currencies", quoteCurrency);
     url.searchParams.set("include_last_updated_at", "true");
 
     const headers = new Headers({ Accept: "application/json" });
@@ -63,10 +61,13 @@ export class CoinGeckoMarketDataProvider implements MarketDataProvider {
         return [];
       }
 
+      const price = quote[quoteCurrency];
+      if (!price) return [];
+
       return [{
         assetId: asset.id,
         symbol: asset.symbol,
-        price: String(quote.eur),
+        price: String(price),
         currency: baseCurrency,
         timestamp: quote.last_updated_at
           ? new Date(quote.last_updated_at * 1_000)

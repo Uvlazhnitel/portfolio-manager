@@ -1,9 +1,10 @@
 import { serializeDecimal } from "@/lib/db/decimal";
 import { MarketDataRepository } from "@/features/market-data/repository";
+import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 
 export async function getMarketDataSettingsReadModel(
   repository = new MarketDataRepository(),
-  currency = "EUR",
+  currency: string = DEFAULT_BASE_CURRENCY,
 ) {
   const assets = await repository.listAssetsWithManualPrices(currency);
 

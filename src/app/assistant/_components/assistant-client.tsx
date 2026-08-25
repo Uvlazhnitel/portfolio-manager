@@ -11,9 +11,9 @@ import type { AssistantPageModel } from "@/features/assistant/read-model";
 import { cn } from "@/lib/utils";
 
 const suggestions = [
-  "What should I do with my next €1,000?",
+  "What should I do with my next $1,000?",
   "Is my portfolio aligned with my strategy?",
-  "What happens if I buy €500 of BTC?",
+  "What happens if I buy $500 of BTC?",
   "Where is my biggest portfolio risk?",
 ];
 

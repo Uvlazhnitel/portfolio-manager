@@ -14,6 +14,7 @@ import type {
   MarketPrice,
   ResolvedMarketPrice,
 } from "@/features/market-data/types";
+import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 
 export const MARKET_PRICE_CACHE_TTL_MS = 5 * 60 * 1_000;
 export const MARKET_PRICE_STALE_AFTER_MS = 15 * 60 * 1_000;
@@ -51,7 +52,7 @@ export class MarketDataService {
     forceRefresh?: boolean;
     now?: Date;
   }): Promise<MarketDataSnapshot> {
-    const baseCurrency = input.baseCurrency ?? "EUR";
+    const baseCurrency = input.baseCurrency ?? DEFAULT_BASE_CURRENCY;
     const now = input.now ?? new Date();
     const refreshKey = buildRefreshKey(baseCurrency, input.assets);
     const cache = await this.store.listCachedPrices(input.assets.map((asset) => asset.id), baseCurrency);

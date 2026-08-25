@@ -5,6 +5,7 @@ import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/
 import { PortfolioRepository } from "@/features/portfolio/repository";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { serializeDecimal, serializeNullableDecimal } from "@/lib/db/decimal";
+import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 
 type TransactionWithRelations = Awaited<ReturnType<PortfolioRepository["listTransactions"]>>[number];
 type AssetRow = Awaited<ReturnType<PortfolioRepository["listAssets"]>>[number];
@@ -90,7 +91,7 @@ export async function getPortfolioReadModel({
   repository = new PortfolioRepository(),
   strategyRepository = new StrategyRepository(),
   marketDataService = new MarketDataService(),
-  baseCurrency = "EUR",
+  baseCurrency,
 }: {
   repository?: PortfolioRepository;
   strategyRepository?: StrategyRepository;
@@ -103,13 +104,14 @@ export async function getPortfolioReadModel({
     repository.listTransactions(),
     strategyRepository.findActiveStrategy(),
   ]);
-  const marketData = await marketDataService.getCurrentPrices({ assets, baseCurrency });
+  const resolvedBaseCurrency = baseCurrency ?? strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
+  const marketData = await marketDataService.getCurrentPrices({ assets, baseCurrency: resolvedBaseCurrency });
   const portfolio = calculatePortfolio({
     assets,
     transactions,
     marketPrices: toEngineMarketPrices(marketData),
   });
-  const holdings = buildHoldingRows(assets, accounts, transactions, portfolio, marketData.prices, baseCurrency);
+  const holdings = buildHoldingRows(assets, accounts, transactions, portfolio, marketData.prices, resolvedBaseCurrency);
   const strategyComparisons = strategy
     ? compareAllocationToStrategy(portfolio, strategy.allocations)
     : [];
@@ -134,7 +136,7 @@ export async function getPortfolioReadModel({
     transactions: transactions.map(serializeTransactionRow),
     valuation: {
       totalValue: portfolio.totalValue,
-      currency: baseCurrency,
+      currency: resolvedBaseCurrency,
       isPartial: portfolio.missingPriceSymbols.length > 0,
       lastUpdated: marketData.lastUpdated,
       hasStalePrices: marketData.hasStalePrices,

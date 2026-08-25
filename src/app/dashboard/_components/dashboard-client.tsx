@@ -51,7 +51,7 @@ export function DashboardClient({ dashboard }: { dashboard: DashboardReadModel }
   function changeAmount(value: string) {
     setAmount(value);
     setProjection(null);
-    setPreviewError(value && !isValidPositiveAmount(value) ? "Enter a positive EUR amount with at most two decimal places." : "");
+    setPreviewError(value && !isValidPositiveAmount(value) ? `Enter a positive ${dashboard.valuation.currency} amount with at most two decimal places.` : "");
   }
 
   return (
@@ -65,7 +65,7 @@ export function DashboardClient({ dashboard }: { dashboard: DashboardReadModel }
         <TotalValueCard dashboard={dashboard} />
         <div className="order-4 md:order-2"><AlignmentCard dashboard={dashboard} onDetails={() => setIsAlignmentOpen(true)} /></div>
         <div className="order-2 md:order-3"><AllocationCard dashboard={dashboard} /></div>
-        <div className="order-3 md:order-4"><ContributionCard amount={amount} projection={projection} error={previewError} isPending={isPreviewPending} onAmount={changeAmount} onReasons={() => setIsReasonsOpen(true)} /></div>
+        <div className="order-3 md:order-4"><ContributionCard currency={dashboard.valuation.currency} amount={amount} projection={projection} error={previewError} isPending={isPreviewPending} onAmount={changeAmount} onReasons={() => setIsReasonsOpen(true)} /></div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.4fr_0.8fr]">
@@ -129,15 +129,15 @@ function AllocationCard({ dashboard }: { dashboard: DashboardReadModel }) {
   );
 }
 
-function ContributionCard({ amount, projection, error, isPending, onAmount, onReasons }: { amount: string; projection: ContributionProjection | null; error: string; isPending: boolean; onAmount: (value: string) => void; onReasons: () => void }) {
+function ContributionCard({ currency, amount, projection, error, isPending, onAmount, onReasons }: { currency: string; amount: string; projection: ContributionProjection | null; error: string; isPending: boolean; onAmount: (value: string) => void; onReasons: () => void }) {
   const href = isValidPositiveAmount(amount) ? `/plan/contributions?amount=${encodeURIComponent(amount)}` : "/plan/contributions";
   return (
     <Card className="h-full min-w-0">
       <CardHeading title="Suggested next move" icon={<Sparkles className="h-5 w-5" />} />
-      <label className="mt-5 block"><span className="mb-2 block text-xs uppercase tracking-wide text-muted">Next contribution</span><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">€</span><input type="number" min="0" step="0.01" inputMode="decimal" value={amount} onChange={(event) => onAmount(event.target.value)} placeholder="1,000" className="h-11 w-full rounded-lg border border-border bg-surface pl-7 pr-12 outline-none focus:border-primary" /><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">EUR</span></div></label>
+      <label className="mt-5 block"><span className="mb-2 block text-xs uppercase tracking-wide text-muted">Next contribution</span><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">{currency === "USD" ? "$" : currency}</span><input type="number" min="0" step="0.01" inputMode="decimal" value={amount} onChange={(event) => onAmount(event.target.value)} placeholder="1,000" className="h-11 w-full rounded-lg border border-border bg-surface pl-8 pr-12 outline-none focus:border-primary" /><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">{currency}</span></div></label>
       {isPending ? <p className="mt-3 text-xs text-muted">Updating recommendation…</p> : null}
       {error ? <p className="mt-3 text-xs text-destructive">{error}</p> : null}
-      {projection ? <div className="mt-4 grid grid-cols-2 gap-2">{contributionAssetClasses.map((assetClass) => { const item = projection.plan.allocations.find((allocation) => allocation.assetClass === assetClass); return <div key={assetClass} className="rounded-lg bg-surface p-2"><p className="text-xs text-muted">{contributionClassLabels[assetClass]}</p><p className="mt-1 text-sm font-semibold">{formatCurrency(item?.amount ?? "0", "EUR")}</p><p className="mt-1 text-[11px] text-muted">{item?.percentOfContribution ?? "0.00"}%</p></div>; })}</div> : <p className="mt-4 text-sm text-muted">Enter an amount to calculate the next contribution.</p>}
+      {projection ? <div className="mt-4 grid grid-cols-2 gap-2">{contributionAssetClasses.map((assetClass) => { const item = projection.plan.allocations.find((allocation) => allocation.assetClass === assetClass); return <div key={assetClass} className="rounded-lg bg-surface p-2"><p className="text-xs text-muted">{contributionClassLabels[assetClass]}</p><p className="mt-1 text-sm font-semibold">{formatCurrency(item?.amount ?? "0", currency)}</p><p className="mt-1 text-[11px] text-muted">{item?.percentOfContribution ?? "0.00"}%</p></div>; })}</div> : <p className="mt-4 text-sm text-muted">Enter an amount to calculate the next contribution.</p>}
       <div className="mt-4 flex flex-col gap-2"><Link href={href} className="inline-flex min-h-11 items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-primary/90">Plan contribution <ArrowRight className="ml-2 h-4 w-4" /></Link><Button type="button" variant="ghost" onClick={onReasons} disabled={!projection}>Why this recommendation?</Button></div>
     </Card>
   );
