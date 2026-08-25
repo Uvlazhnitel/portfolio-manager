@@ -53,6 +53,7 @@ export class MarketDataService {
   }): Promise<MarketDataSnapshot> {
     const baseCurrency = input.baseCurrency ?? "EUR";
     const now = input.now ?? new Date();
+    const refreshKey = buildRefreshKey(baseCurrency, input.assets);
     const cache = await this.store.listCachedPrices(input.assets.map((asset) => asset.id), baseCurrency);
     const cacheByAsset = new Map(cache.map((price) => [price.assetId, price]));
     const needsRefresh = input.assets.filter((asset) => {
@@ -64,7 +65,7 @@ export class MarketDataService {
       return buildSnapshot(input.assets, cache, now, false, null, null);
     }
 
-    const lastAttempt = refreshAttempts.get(baseCurrency);
+    const lastAttempt = refreshAttempts.get(refreshKey);
     if (lastAttempt && now.getTime() - lastAttempt < MARKET_PRICE_REFRESH_COOLDOWN_MS) {
       return buildSnapshot(
         input.assets,
@@ -76,7 +77,7 @@ export class MarketDataService {
       );
     }
 
-    const existingRefresh = inFlightRefreshes.get(baseCurrency);
+    const existingRefresh = inFlightRefreshes.get(refreshKey);
     if (existingRefresh) {
       return existingRefresh;
     }
@@ -87,8 +88,9 @@ export class MarketDataService {
       now,
       previousCache: cache,
       needsRefresh,
-    }).finally(() => inFlightRefreshes.delete(baseCurrency));
-    inFlightRefreshes.set(baseCurrency, refresh);
+      refreshKey,
+    }).finally(() => inFlightRefreshes.delete(refreshKey));
+    inFlightRefreshes.set(refreshKey, refresh);
     return refresh;
   }
 
@@ -98,8 +100,9 @@ export class MarketDataService {
     now: Date;
     previousCache: CachedPriceRecord[];
     needsRefresh: MarketDataAsset[];
+    refreshKey: string;
   }) {
-    refreshAttempts.set(input.baseCurrency, input.now.getTime());
+    refreshAttempts.set(input.refreshKey, input.now.getTime());
     const cachedByAsset = new Map(input.previousCache.map((price) => [price.assetId, price]));
     const refreshedByAsset = new Map<string, MarketPrice>();
     const warnings: string[] = [];
@@ -130,7 +133,8 @@ export class MarketDataService {
           refreshedByAsset.set(price.assetId, price);
         }
       } catch (error) {
-        warnings.push(error instanceof Error ? error.message : `${provider.name} failed.`);
+        void error;
+        warnings.push(`${provider.name} market data is temporarily unavailable.`);
       }
     }
 
@@ -153,6 +157,10 @@ export class MarketDataService {
       warnings.length > 0 ? warnings.join(" ") : null,
     );
   }
+}
+
+function buildRefreshKey(baseCurrency: string, assets: MarketDataAsset[]) {
+  return `${baseCurrency.toUpperCase()}:${assets.map((asset) => asset.id).sort().join(",")}`;
 }
 
 function buildSnapshot(

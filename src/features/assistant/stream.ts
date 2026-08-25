@@ -4,6 +4,7 @@ import type { AssistantPortfolioRuntime } from "@/features/assistant/context";
 import { ASSISTANT_SYSTEM_INSTRUCTIONS } from "@/features/assistant/instructions";
 import { assistantToolDefinitions, executeAssistantTool } from "@/features/assistant/tools";
 import { getAssistantModel } from "@/features/assistant/openai";
+import { publicErrorMessage } from "@/lib/public-error";
 
 export type AssistantStreamEvent =
   | { type: "tool"; name: string }
@@ -77,7 +78,7 @@ export async function streamAssistantResponse({
       try {
         output = await executeAssistantTool(call.name, call.arguments, runtime);
       } catch (error) {
-        output = { error: error instanceof Error ? error.message : "Tool execution failed." };
+        output = { error: publicErrorMessage(error, "Tool execution failed.") };
       }
       input.push({
         type: "function_call_output",

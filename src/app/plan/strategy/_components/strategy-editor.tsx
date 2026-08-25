@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useMemo, useState } from "react";
-import { AssetClass } from "@prisma/client";
+import { AssetClass, type AssetClass as AssetClassValue } from "@/lib/domain/enums";
 import { AlertCircle, CheckCircle2, RotateCcw, Save } from "lucide-react";
 import { updateStrategyAction } from "@/features/strategy/actions";
 import type { StrategyEditorModel } from "@/features/strategy/read-model";
@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { formatUtcTimestamp } from "@/lib/format/date";
 
 type Draft = Pick<StrategyEditorModel, "id" | "name" | "allocations" | "rules">;
 type AllocationField = "targetPercent" | "minPercent" | "maxPercent";
@@ -49,7 +50,7 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
   }, [isDirty]);
 
-  function updateAllocation(assetClass: AssetClass, field: AllocationField, value: string) {
+  function updateAllocation(assetClass: AssetClassValue, field: AllocationField, value: string) {
     setDraft((current) => ({
       ...current,
       allocations: current.allocations.map((allocation) =>
@@ -175,9 +176,9 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
         </div>
       ) : null}
 
-      <div className="sticky bottom-20 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card/95 p-3 shadow-lg shadow-background/40 backdrop-blur md:bottom-4">
+      <div className="sticky bottom-[calc(5.25rem+env(safe-area-inset-bottom))] z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card/95 p-3 shadow-lg shadow-background/40 backdrop-blur lg:bottom-4">
         <p className="text-sm text-muted">
-          {isDirty ? "You have unsaved strategy changes." : `Saved ${new Date(strategy.updatedAt).toLocaleString()}`}
+          {isDirty ? "You have unsaved strategy changes." : `Saved ${formatUtcTimestamp(strategy.updatedAt)}`}
         </p>
         <div className="flex gap-2">
           <Button type="button" variant="secondary" disabled={!isDirty || isPending} onClick={() => setDraft(initialDraft)}>
@@ -296,4 +297,4 @@ function formatAssetClass(assetClass: AssetClass) {
   return assetClass;
 }
 
-const inputClassName = "h-10 w-full rounded-lg border border-border bg-surface-strong px-3 text-sm text-foreground outline-none transition placeholder:text-muted/70 focus:border-primary/60";
+const inputClassName = "h-11 w-full rounded-lg border border-border bg-surface-strong px-3 text-sm text-foreground outline-none transition placeholder:text-muted/70 focus:border-primary/60";

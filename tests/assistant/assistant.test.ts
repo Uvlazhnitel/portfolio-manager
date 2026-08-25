@@ -78,6 +78,14 @@ describe("assistant persistence", () => {
     expect(buildConversationTitle("x".repeat(80))).toHaveLength(58);
     await expect(new AssistantConversationService(new AssistantRepository(testDb.prisma)).prepareUserMessage({ conversationId: "missing", message: "Hello" })).rejects.toThrow("not found");
   });
+
+  it("deletes owned messages when a conversation is removed", async () => {
+    const conversation = await testDb.prisma.assistantConversation.create({
+      data: { title: "Disposable", messages: { create: { role: AssistantMessageRole.USER, content: "Hello" } } },
+    });
+    await testDb.prisma.assistantConversation.delete({ where: { id: conversation.id } });
+    expect(await testDb.prisma.assistantMessage.count({ where: { conversationId: conversation.id } })).toBe(0);
+  });
 });
 
 describe("assistant portfolio context and tools", () => {

@@ -1,22 +1,20 @@
 import type { AssetClass } from "@prisma/client";
 import { contributionClassLabels } from "@/features/contributions/presentation";
+import { decimalSign, formatDecimalCurrency, formatDecimalPercent } from "@/lib/format/decimal";
 
 export function formatDashboardCurrency(value: string, currency: string) {
-  const amount = Number(value);
-  return Number.isFinite(amount)
-    ? new Intl.NumberFormat("en-IE", { style: "currency", currency, maximumFractionDigits: 2 }).format(amount)
-    : "—";
+  return formatDecimalCurrency(value, currency);
 }
 
 export function formatDashboardSignedCurrency(value: string, currency: string) {
-  const amount = Number(value);
-  if (!Number.isFinite(amount)) return "—";
-  return `${amount >= 0 ? "+" : "−"}${formatDashboardCurrency(String(Math.abs(amount)), currency)}`;
+  const sign = decimalSign(value);
+  if (sign === null) return "—";
+  const formatted = formatDashboardCurrency(value.replace(/^-/, ""), currency);
+  return `${sign >= 0 ? "+" : "−"}${formatted}`;
 }
 
 export function formatDashboardPercent(value: string) {
-  const amount = Number(value);
-  return `${Number.isFinite(amount) ? amount.toFixed(1) : "0.0"}%`;
+  return formatDecimalPercent(value, 1);
 }
 
 export function strategyWarningText(warning: {

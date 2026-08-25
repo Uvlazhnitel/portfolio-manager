@@ -15,7 +15,7 @@ export function MobileBottomNav() {
 
   return (
     <>
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 px-3 pb-3 pt-2 backdrop-blur md:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur lg:hidden">
         <div className="mx-auto grid max-w-md grid-cols-5 items-center gap-1">
           {mobileNavigationItems.slice(0, 2).map((item) => {
             const Icon = item.icon;
@@ -26,7 +26,7 @@ export function MobileBottomNav() {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex flex-col items-center gap-1 rounded-lg px-2 py-2 text-[11px] font-medium text-muted",
+                  "flex min-h-12 flex-col items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium text-muted",
                   active ? "bg-primary/14 text-foreground" : "hover:text-foreground",
                 )}
               >
@@ -54,7 +54,7 @@ export function MobileBottomNav() {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex flex-col items-center gap-1 rounded-lg px-2 py-2 text-[11px] font-medium text-muted",
+                  "flex min-h-12 flex-col items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium text-muted",
                   active ? "bg-primary/14 text-foreground" : "hover:text-foreground",
                 )}
               >
@@ -67,8 +67,8 @@ export function MobileBottomNav() {
       </nav>
 
       {isModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-background/70 p-4 backdrop-blur-sm md:hidden">
-          <Card className="w-full">
+        <div className="fixed inset-0 z-50 flex items-end bg-background/70 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur-sm lg:hidden">
+          <Card className="max-h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-1.5rem)] w-full overflow-y-auto overscroll-contain rounded-xl">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Add transaction</h2>
@@ -80,7 +80,7 @@ export function MobileBottomNav() {
                 type="button"
                 onClick={() => setIsModalOpen(false)}
                 aria-label="Close add transaction modal"
-                className="rounded-md border border-border p-2 text-muted transition hover:border-primary/50 hover:text-foreground"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border text-muted transition hover:border-primary/50 hover:text-foreground"
               >
                 <X className="h-4 w-4" aria-hidden="true" />
               </button>

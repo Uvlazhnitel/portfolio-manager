@@ -1,5 +1,5 @@
-import { AssetClass } from "@prisma/client";
 import { z } from "zod";
+import { AssetClass } from "@/lib/domain/enums";
 
 export const contributionAssetClasses = [
   AssetClass.ETF,

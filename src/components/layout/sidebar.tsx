@@ -18,7 +18,7 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 hidden w-[240px] border-r border-border bg-surface px-4 py-5 md:flex md:flex-col">
+    <aside className="fixed inset-y-0 left-0 z-30 hidden w-[240px] border-r border-border bg-surface px-4 py-5 lg:flex lg:flex-col">
       <div className="mb-8 flex items-center justify-between">
         <Link href="/dashboard" className="flex items-center gap-3">
           <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15 text-primary ring-1 ring-primary/25">
@@ -32,7 +32,7 @@ export function Sidebar() {
         <button
           type="button"
           aria-label="Collapse sidebar"
-          className="rounded-md border border-border p-1.5 text-muted transition hover:border-primary/50 hover:text-foreground"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border text-muted transition hover:border-primary/50 hover:text-foreground"
         >
           <ChevronLeft className="h-4 w-4" aria-hidden="true" />
         </button>

@@ -32,17 +32,17 @@ async function main() {
   await Promise.all([
     prisma.account.upsert({
       where: { name: "Bybit" },
-      update: { type: AccountType.EXCHANGE },
+      update: {},
       create: { name: "Bybit", type: AccountType.EXCHANGE },
     }),
     prisma.account.upsert({
       where: { name: "Physical Storage" },
-      update: { type: AccountType.PHYSICAL },
+      update: {},
       create: { name: "Physical Storage", type: AccountType.PHYSICAL },
     }),
     prisma.account.upsert({
       where: { name: "Future Broker" },
-      update: { type: AccountType.BROKER },
+      update: {},
       create: { name: "Future Broker", type: AccountType.BROKER },
     }),
   ]);
@@ -137,6 +137,6 @@ main()
     await prisma.$disconnect();
   })
   .catch(async (error) => {
-    console.error(error);
+    console.error(`Seed failed (${error instanceof Error ? error.name : "unknown error"}). Verify the database connection and migration state.`);
     process.exit(1);
   });

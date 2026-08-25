@@ -4,6 +4,7 @@ import { getOpenAIClient, isOpenAIConfigured } from "@/features/assistant/openai
 import { AssistantConversationService } from "@/features/assistant/service";
 import { streamAssistantResponse } from "@/features/assistant/stream";
 import { assistantMessageSchema } from "@/features/assistant/validation";
+import { publicErrorMessage } from "@/lib/public-error";
 
 export const runtime = "nodejs";
 
@@ -75,5 +76,5 @@ function safeErrorMessage(error: unknown) {
   if (/api.?key|401|authentication/i.test(message)) return "OpenAI authentication failed. Check the server API key.";
   if (/rate|429/i.test(message)) return "OpenAI is temporarily rate-limited. Please try again shortly.";
   if (/timeout|network|connection/i.test(message)) return "OpenAI is temporarily unavailable. Please try again.";
-  return message.length <= 240 ? message : "Assistant request failed. Please try again.";
+  return publicErrorMessage(error, "Assistant request failed. Please try again.");
 }

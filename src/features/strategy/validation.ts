@@ -1,5 +1,5 @@
-import { AssetClass, PortfolioRuleType } from "@prisma/client";
 import { z } from "zod";
+import { AssetClass, PortfolioRuleType } from "@/lib/domain/enums";
 
 export const editableAssetClasses = [
   AssetClass.ETF,

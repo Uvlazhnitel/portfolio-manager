@@ -2,6 +2,7 @@ import { AssetClass, AssetType, TransactionType } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import {
   calculateHoldings,
+  calculateHoldingCostBasis,
   calculatePortfolio,
   calculatePortfolioAnalytics,
   calculateStrategyAlignment,
@@ -19,6 +20,7 @@ import {
   type EngineTransaction,
   type PortfolioSnapshot,
 } from "@/features/portfolio-engine";
+import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 
 const assets: EngineAsset[] = [
   { id: "btc", symbol: "BTC", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO },
@@ -203,6 +205,19 @@ describe("portfolio engine allocation and compliance", () => {
       ]),
     ).toThrow("Strategy target allocations must total 100%.");
   });
+
+  it("rejects duplicate, missing, out-of-bounds, and non-finite strategy allocations", () => {
+    expect(() => validateStrategy([
+      ...strategy.slice(0, 3),
+      { ...strategy[3], assetClass: AssetClass.GOLD },
+    ])).toThrow("exactly one ETF, CRYPTO, GOLD, and CASH");
+    expect(() => validateStrategy(strategy.map((item) => item.assetClass === AssetClass.ETF
+      ? { ...item, minPercent: "-1", targetPercent: "77", maxPercent: "82" }
+      : item))).toThrow("between 0 and 100");
+    expect(() => validateStrategy(strategy.map((item) => item.assetClass === AssetClass.ETF
+      ? { ...item, targetPercent: "NaN" }
+      : item))).toThrow("total 100");
+  });
 });
 
 describe("portfolio engine contribution planning and simulation", () => {
@@ -276,6 +291,29 @@ describe("portfolio engine contribution planning and simulation", () => {
 
     expect(plan.allocations.reduce((sum, allocation) => sum + Math.round(Number(allocation.amount) * 100), 0)).toBe(5);
     expect(plan.allocations.every((allocation) => /^\d+\.\d{2}$/.test(allocation.amount))).toBe(true);
+  });
+
+  it("keeps cent totals exact above JavaScript's safe integer range", () => {
+    const portfolio = calculatePortfolio({ assets, marketPrices: prices, transactions: [] });
+    const contributionAmount = "9007199254740993.01";
+    const plan = planContribution({ portfolio, strategy, contributionAmount });
+    const total = plan.allocations.reduce((sum, allocation) => sum.plus(decimal(allocation.amount)), ZERO);
+
+    expect(total.toFixed(2)).toBe(contributionAmount);
+  });
+
+  it("preserves OTHER asset value in projected portfolio totals", () => {
+    const otherAsset: EngineAsset = { id: "other", symbol: "OTHER_ASSET", assetClass: AssetClass.OTHER, assetType: AssetType.OTHER };
+    const portfolio = calculatePortfolio({
+      assets: [...assets, otherAsset],
+      marketPrices: { ...prices, OTHER_ASSET: "100" },
+      transactions: [transaction({ assetId: "other", accountId: "wallet", type: TransactionType.INITIAL_BALANCE, quantity: "10" })],
+    });
+    const plan = planContribution({ portfolio, strategy, contributionAmount: "100" });
+
+    expect(portfolio.totalValue).toBe("1000.00");
+    expect(plan.projectedAfter.totalValue).toBe("1100.00");
+    expect(plan.projectedAfter.allocation.reduce((sum, item) => sum.plus(decimal(item.value)), ZERO).toFixed(2)).toBe("100.00");
   });
 
   it("projects an exact custom contribution without changing the source portfolio", () => {
@@ -419,6 +457,14 @@ describe("portfolio engine dashboard analytics", () => {
     expect(analytics.priceCoverage).toEqual({ pricedHoldings: 1, totalHoldings: 1, percent: "100.00" });
   });
 
+  it("returns a negative unrealized P&L without changing its sign", () => {
+    const transactions: EngineTransaction[] = [
+      { assetId: "etf", accountId: "broker", type: TransactionType.BUY, quantity: "10", pricePerUnit: "20", currency: "EUR" },
+    ];
+    const portfolio = calculatePortfolio({ assets, transactions, marketPrices: { ...prices, VWCE: "15" } });
+    expect(calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency: "EUR" }).totalUnrealizedPnl).toBe("-50.00");
+  });
+
   it("withholds total P&L for missing prices, missing cost, unmatched transfers, and foreign cost currency", () => {
     const baseTransaction: EngineTransaction = { assetId: "btc", accountId: "bybit", type: TransactionType.INITIAL_BALANCE, quantity: "1", pricePerUnit: "5000", currency: "EUR", executedAt: "2026-01-01" };
     const cases: Array<{ transactions: EngineTransaction[]; marketPrices: Record<string, string> }> = [
@@ -463,5 +509,52 @@ describe("portfolio engine dashboard analytics", () => {
 
     expect(analytics.accounts).toContainEqual({ accountId: "mixed", value: "10000.00", isPartial: true });
     expect(analytics.priceCoverage).toEqual({ pricedHoldings: 1, totalHoldings: 2, percent: "50.00" });
+  });
+});
+
+describe("portfolio engine holding cost basis", () => {
+  it("calculates weighted-average cost after a partial sell", () => {
+    const transactions: EngineTransaction[] = [
+      { assetId: "btc", accountId: "bybit", type: TransactionType.BUY, quantity: "2", pricePerUnit: "100", fee: "2", currency: "EUR", executedAt: "2026-01-01" },
+      { assetId: "btc", accountId: "bybit", type: TransactionType.SELL, quantity: "0.5", pricePerUnit: "150", currency: "EUR", executedAt: "2026-02-01" },
+    ];
+    const portfolio = calculatePortfolio({ assets, transactions, marketPrices: prices });
+
+    expect(calculateHoldingCostBasis({ portfolio, assets, transactions, baseCurrency: "EUR" })).toContainEqual({
+      accountId: "bybit",
+      assetId: "btc",
+      status: "AVAILABLE",
+      totalCost: "151.50",
+      averageAcquisitionPrice: "101.00",
+      reason: null,
+    });
+  });
+
+  it("withholds per-account cost basis for transfers, foreign currencies, missing prices, and negative holdings", () => {
+    const cases: Array<{ transactions: EngineTransaction[]; reason: string }> = [
+      { transactions: [{ assetId: "btc", accountId: "bybit", type: TransactionType.TRANSFER_IN, quantity: "1", currency: "EUR" }], reason: "ACCOUNT_TRANSFER_COST_UNKNOWN" },
+      { transactions: [{ assetId: "btc", accountId: "bybit", type: TransactionType.BUY, quantity: "1", pricePerUnit: "100", currency: "USD" }], reason: "UNSUPPORTED_TRANSACTION_CURRENCY" },
+      { transactions: [{ assetId: "btc", accountId: "bybit", type: TransactionType.INITIAL_BALANCE, quantity: "1", currency: "EUR" }], reason: "MISSING_ACQUISITION_PRICE" },
+      { transactions: [{ assetId: "btc", accountId: "bybit", type: TransactionType.SELL, quantity: "1", pricePerUnit: "100", currency: "EUR" }], reason: "NON_POSITIVE_HOLDING" },
+    ];
+
+    for (const item of cases) {
+      const portfolio = calculatePortfolio({ assets, transactions: item.transactions, marketPrices: prices });
+      expect(calculateHoldingCostBasis({ portfolio, assets, transactions: item.transactions, baseCurrency: "EUR" })[0]).toEqual(
+        expect.objectContaining({ status: "UNAVAILABLE", reason: item.reason, totalCost: null }),
+      );
+    }
+  });
+
+  it("treats base-currency fiat as zero-P&L cost basis", () => {
+    const engineAssets = assets.map((asset) => asset.id === "eur" ? { ...asset, currency: "EUR" } : asset);
+    const transactions: EngineTransaction[] = [
+      { assetId: "eur", accountId: "bank", type: TransactionType.DEPOSIT, quantity: "500", currency: "EUR" },
+      { assetId: "eur", accountId: "bank", type: TransactionType.WITHDRAWAL, quantity: "125", currency: "EUR" },
+    ];
+    const portfolio = calculatePortfolio({ assets: engineAssets, transactions, marketPrices: prices });
+    expect(calculateHoldingCostBasis({ portfolio, assets: engineAssets, transactions, baseCurrency: "EUR" })[0]).toEqual(
+      expect.objectContaining({ status: "AVAILABLE", totalCost: "375.00", averageAcquisitionPrice: "1.00" }),
+    );
   });
 });

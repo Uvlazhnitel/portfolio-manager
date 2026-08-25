@@ -13,6 +13,7 @@ import type {
   AssetClassAllocation,
   CalculatePortfolioInput,
   CalculatePortfolioAnalyticsInput,
+  CalculateHoldingCostBasisInput,
   CalculateStrategyAlignmentInput,
   ContributionAllocation,
   ContributionPlan,
@@ -22,6 +23,7 @@ import type {
   EngineStrategyAllocation,
   EngineTransaction,
   Holding,
+  HoldingCostBasis,
   PlanContributionInput,
   ProjectContributionInput,
   PortfolioSnapshot,
@@ -392,20 +394,43 @@ export function simulateTransaction(input: SimulatedTransactionInput) {
 }
 
 export function validateStrategy(strategy: EngineStrategyAllocation[]) {
-  const total = strategy.reduce((sum, allocation) => sum.plus(decimal(allocation.targetPercent)), ZERO);
+  const parsed = strategy.map((allocation) => ({
+    allocation,
+    min: decimal(allocation.minPercent),
+    target: decimal(allocation.targetPercent),
+    max: decimal(allocation.maxPercent),
+  }));
+  const total = parsed.reduce((sum, item) => sum.plus(item.target), ZERO);
 
-  if (!total.equals(ONE_HUNDRED)) {
+  if (!total.isFinite() || !total.equals(ONE_HUNDRED)) {
     throw new Error("Strategy target allocations must total 100%.");
   }
 
-  for (const allocation of strategy) {
-    const min = decimal(allocation.minPercent);
-    const target = decimal(allocation.targetPercent);
-    const max = decimal(allocation.maxPercent);
+  const classCounts = new Map<AssetClass, number>();
+  for (const { allocation, min, target, max } of parsed) {
+    classCounts.set(allocation.assetClass, (classCounts.get(allocation.assetClass) ?? 0) + 1);
+
+    if (![min, target, max].every((value) => value.isFinite())) {
+      throw new Error(`${allocation.assetClass} percentages must be finite.`);
+    }
+
+    if (min.lessThan(ZERO) || max.greaterThan(ONE_HUNDRED)) {
+      throw new Error(`${allocation.assetClass} percentages must be between 0 and 100.`);
+    }
 
     if (min.greaterThan(target) || target.greaterThan(max)) {
       throw new Error(`${allocation.assetClass} must satisfy minPercent <= targetPercent <= maxPercent.`);
     }
+  }
+
+  if (
+    strategy.length !== allocationClasses.length ||
+    allocationClasses.some((assetClass) => classCounts.get(assetClass) !== 1) ||
+    [...classCounts.keys()].some(
+      (assetClass) => !allocationClasses.includes(assetClass as (typeof allocationClasses)[number]),
+    )
+  ) {
+    throw new Error("Strategy must contain exactly one ETF, CRYPTO, GOLD, and CASH allocation.");
   }
 }
 
@@ -479,10 +504,10 @@ function roundContributionAllocations(
   rawAmounts: Map<AssetClass, Prisma.Decimal>,
   contributionAmount: Prisma.Decimal,
 ): ContributionAllocation[] {
-  const contributionCents = contributionAmount.mul(100).toDecimalPlaces(0).toNumber();
+  const contributionCents = contributionAmount.mul(100).toDecimalPlaces(0);
   const rows = Array.from(rawAmounts.entries()).map(([assetClass, amount]) => {
     const rawCents = amount.mul(100);
-    const floorCents = rawCents.floor().toNumber();
+    const floorCents = rawCents.floor();
 
     return {
       assetClass,
@@ -491,33 +516,33 @@ function roundContributionAllocations(
     };
   });
 
-  let distributedCents = rows.reduce((sum, row) => sum + row.floorCents, 0);
-  let remainingCents = contributionCents - distributedCents;
+  let distributedCents = rows.reduce((sum, row) => sum.plus(row.floorCents), ZERO);
+  let remainingCents = contributionCents.minus(distributedCents);
 
   for (const row of rows.sort((left, right) => {
     const fractionCompare = decimal(right.fraction).cmp(decimal(left.fraction));
     return fractionCompare === 0 ? left.assetClass.localeCompare(right.assetClass) : fractionCompare;
   })) {
-    if (remainingCents <= 0) {
+    if (remainingCents.lessThanOrEqualTo(ZERO)) {
       break;
     }
 
-    row.floorCents += 1;
-    remainingCents -= 1;
+    row.floorCents = row.floorCents.plus(1);
+    remainingCents = remainingCents.minus(1);
   }
 
-  distributedCents = rows.reduce((sum, row) => sum + row.floorCents, 0);
+  distributedCents = rows.reduce((sum, row) => sum.plus(row.floorCents), ZERO);
 
-  if (distributedCents !== contributionCents) {
+  if (!distributedCents.equals(contributionCents)) {
     const first = rows[0];
 
     if (first) {
-      first.floorCents += contributionCents - distributedCents;
+      first.floorCents = first.floorCents.plus(contributionCents.minus(distributedCents));
     }
   }
 
   return rows
-    .filter((row) => row.floorCents !== 0)
+    .filter((row) => !row.floorCents.equals(ZERO))
     .sort(
       (left, right) =>
         (allocationClassOrder.get(left.assetClass) ?? Number.MAX_SAFE_INTEGER) -
@@ -545,7 +570,8 @@ function projectContribution(portfolio: PortfolioSnapshot, allocations: Contribu
     valueByClass.set(allocation.assetClass, current.plus(decimal(allocation.amount)));
   }
 
-  const totalValue = Array.from(valueByClass.values()).reduce((total, value) => total.plus(value), ZERO);
+  const contributionTotal = allocations.reduce((total, allocation) => total.plus(decimal(allocation.amount)), ZERO);
+  const totalValue = decimal(portfolio.totalValue).plus(contributionTotal);
   const allocation = allocationClasses.map((assetClass) => {
     const value = valueByClass.get(assetClass) ?? ZERO;
     const percentage = totalValue.equals(ZERO) ? ZERO : value.div(totalValue).mul(ONE_HUNDRED);
@@ -562,6 +588,92 @@ function projectContribution(portfolio: PortfolioSnapshot, allocations: Contribu
     totalValue: toDecimalString(totalValue),
     allocation,
   };
+}
+
+export function calculateHoldingCostBasis(input: CalculateHoldingCostBasisInput): HoldingCostBasis[] {
+  const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
+  const transactionsByHolding = new Map<string, EngineTransaction[]>();
+
+  for (const transaction of input.transactions) {
+    const key = `${transaction.accountId}:${transaction.assetId}`;
+    const current = transactionsByHolding.get(key) ?? [];
+    current.push(transaction);
+    transactionsByHolding.set(key, current);
+  }
+
+  return input.portfolio.holdings.map((holding) => {
+    const asset = requireAsset(assetById, holding.assetId);
+    const quantity = decimal(holding.quantity);
+    const unavailable = (reason: HoldingCostBasis["reason"]): HoldingCostBasis => ({
+      accountId: holding.accountId,
+      assetId: holding.assetId,
+      status: "UNAVAILABLE",
+      totalCost: null,
+      averageAcquisitionPrice: null,
+      reason,
+    });
+
+    if (!quantity.greaterThan(ZERO)) return unavailable("NON_POSITIVE_HOLDING");
+
+    if (asset.assetType === "FIAT" && asset.currency?.toUpperCase() === input.baseCurrency.toUpperCase()) {
+      return {
+        accountId: holding.accountId,
+        assetId: holding.assetId,
+        status: "AVAILABLE",
+        totalCost: toDecimalString(quantity),
+        averageAcquisitionPrice: toDecimalString(decimal(1)),
+        reason: null,
+      };
+    }
+
+    const transactions = [...(transactionsByHolding.get(`${holding.accountId}:${holding.assetId}`) ?? [])]
+      .map((transaction, index) => ({ transaction, index }))
+      .sort((left, right) => transactionTime(left.transaction, left.index) - transactionTime(right.transaction, right.index))
+      .map(({ transaction }) => transaction);
+    let trackedQuantity = ZERO;
+    let trackedCost = ZERO;
+
+    for (const transaction of transactions) {
+      const transactionQuantity = decimal(transaction.quantity);
+      if (transaction.type === TransactionType.TRANSFER_IN || transaction.type === TransactionType.TRANSFER_OUT) {
+        return unavailable("ACCOUNT_TRANSFER_COST_UNKNOWN");
+      }
+      if (transaction.type === TransactionType.DEPOSIT || transaction.type === TransactionType.WITHDRAWAL) {
+        return unavailable("UNSUPPORTED_QUANTITY_MOVEMENT");
+      }
+      if (transaction.type === TransactionType.INITIAL_BALANCE || transaction.type === TransactionType.BUY) {
+        if (transaction.pricePerUnit === null || transaction.pricePerUnit === undefined) {
+          return unavailable("MISSING_ACQUISITION_PRICE");
+        }
+        if (transaction.currency?.toUpperCase() !== input.baseCurrency.toUpperCase()) {
+          return unavailable("UNSUPPORTED_TRANSACTION_CURRENCY");
+        }
+        trackedQuantity = trackedQuantity.plus(transactionQuantity);
+        trackedCost = trackedCost
+          .plus(transactionQuantity.mul(decimal(transaction.pricePerUnit)))
+          .plus(transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee));
+      }
+      if (transaction.type === TransactionType.SELL) {
+        if (trackedQuantity.equals(ZERO) || transactionQuantity.greaterThan(trackedQuantity)) {
+          return unavailable("INCONSISTENT_TRANSACTION_HISTORY");
+        }
+        const averageCost = trackedCost.div(trackedQuantity);
+        trackedQuantity = trackedQuantity.minus(transactionQuantity);
+        trackedCost = trackedCost.minus(averageCost.mul(transactionQuantity));
+      }
+    }
+
+    if (!trackedQuantity.equals(quantity)) return unavailable("INCONSISTENT_TRANSACTION_HISTORY");
+
+    return {
+      accountId: holding.accountId,
+      assetId: holding.assetId,
+      status: "AVAILABLE",
+      totalCost: toDecimalString(trackedCost),
+      averageAcquisitionPrice: toDecimalString(trackedCost.div(quantity)),
+      reason: null,
+    };
+  });
 }
 
 function analyzeContributionProjection(

@@ -1,20 +1,33 @@
-import { AccountType, AssetClass, AssetType, TransactionType } from "@prisma/client";
+import { AccountType, AssetClass, AssetType, Prisma, TransactionType } from "@prisma/client";
 import { z } from "zod";
 
-export const decimalStringSchema = z
-  .union([z.string(), z.number()])
-  .transform((value) => String(value).trim())
-  .refine((value) => value !== "" && !Number.isNaN(Number(value)) && Number.isFinite(Number(value)), {
-    message: "Must be a valid number.",
-  });
+function decimalInputSchema({ integerDigits, decimalPlaces }: { integerDigits: number; decimalPlaces: number }) {
+  return z.union([z.string(), z.number()])
+    .transform((value) => String(value).trim())
+    .refine((value) => /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value), {
+      message: "Must be a plain non-negative decimal number.",
+    })
+    .refine((value) => {
+      const [integer, fraction = ""] = value.split(".");
+      return integer.length <= integerDigits && fraction.length <= decimalPlaces;
+    }, {
+      message: `Must have at most ${integerDigits} integer digits and ${decimalPlaces} decimal places.`,
+    });
+}
 
-export const positiveDecimalStringSchema = decimalStringSchema.refine((value) => Number(value) > 0, {
+export const decimalStringSchema = decimalInputSchema({ integerDigits: 20, decimalPlaces: 18 });
+const quantityDecimalStringSchema = decimalInputSchema({ integerDigits: 18, decimalPlaces: 18 });
+const moneyDecimalStringSchema = decimalInputSchema({ integerDigits: 20, decimalPlaces: 8 });
+
+export const positiveDecimalStringSchema = quantityDecimalStringSchema.refine((value) => new Prisma.Decimal(value).greaterThan(0), {
   message: "Must be greater than 0.",
 });
 
-export const nonNegativeDecimalStringSchema = decimalStringSchema.refine((value) => Number(value) >= 0, {
-  message: "Must be greater than or equal to 0.",
-});
+export const nonNegativeDecimalStringSchema = moneyDecimalStringSchema;
+export const positiveMarketPriceStringSchema = moneyDecimalStringSchema.refine(
+  (value) => new Prisma.Decimal(value).greaterThan(0),
+  { message: "Must be greater than 0." },
+);
 
 export const assetInputSchema = z.object({
   symbol: z.string().trim().min(1).transform((value) => value.toUpperCase()),

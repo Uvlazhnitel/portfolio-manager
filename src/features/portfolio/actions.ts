@@ -8,6 +8,7 @@ import {
   deleteTransactionMutation,
   type PortfolioMutationResult,
 } from "@/features/portfolio/mutations";
+import { publicErrorMessage } from "@/lib/public-error";
 
 export type PortfolioActionState = PortfolioMutationResult;
 
@@ -103,7 +104,7 @@ function nullableString(value: FormDataEntryValue | null) {
 function toActionError(error: unknown): PortfolioActionState {
   return {
     ok: false,
-    message: error instanceof Error ? error.message : "Something went wrong.",
+    message: publicErrorMessage(error, "Portfolio change could not be saved."),
   };
 }
 

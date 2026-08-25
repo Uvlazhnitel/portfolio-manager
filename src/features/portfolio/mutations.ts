@@ -1,5 +1,6 @@
 import {
   AssetType,
+  Prisma,
   TransactionType,
   type PrismaClient,
 } from "@prisma/client";
@@ -25,6 +26,13 @@ export type PortfolioMutationResult = {
   ok: boolean;
   message: string;
 };
+
+export class PortfolioMutationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PortfolioMutationError";
+  }
+}
 
 export const transactionMutationSchema = z.object({
   type: z.enum(implementedTransactionTypes),
@@ -52,11 +60,16 @@ export async function createAccountMutation(
   const parsed = accountInputSchema.parse(input);
   const repository = new PortfolioRepository(db);
 
-  await repository.createAccount({
-    name: parsed.name,
-    type: parsed.type,
-    description: parsed.description || null,
-  });
+  try {
+    await repository.createAccount({
+      name: parsed.name,
+      type: parsed.type,
+      description: parsed.description || null,
+    });
+  } catch (error) {
+    if (isPrismaError(error, "P2002")) throw new PortfolioMutationError("Account name already exists.");
+    throw error;
+  }
 
   return { ok: true, message: "Account created." };
 }
@@ -66,35 +79,34 @@ export async function createTransactionMutation(
   db: PrismaClient = prisma,
 ): Promise<PortfolioMutationResult> {
   const parsed = transactionMutationSchema.parse(input);
-  const repository = new PortfolioRepository(db);
-  const asset = await resolveAsset(parsed, db);
-  const account = await repository.findAccount(parsed.accountId);
+  await withSerializableRetry(db, async (transaction) => {
+    const repository = new PortfolioRepository(transaction);
+    const account = await repository.findAccount(parsed.accountId);
+    if (!account) throw new PortfolioMutationError("Selected account does not exist.");
 
-  if (!account) {
-    throw new Error("Selected account does not exist.");
-  }
+    const asset = await resolveAsset(parsed, transaction);
+    const normalized = normalizeTransaction(parsed, asset.assetType);
 
-  const normalized = normalizeTransaction(parsed, asset.assetType);
+    if (parsed.type === TransactionType.SELL && !parsed.allowOversell) {
+      await assertEnoughQuantityForSell({
+        db: transaction,
+        accountId: parsed.accountId,
+        assetId: asset.id,
+        quantity: normalized.quantity,
+      });
+    }
 
-  if (parsed.type === TransactionType.SELL && !parsed.allowOversell) {
-    await assertEnoughQuantityForSell({
-      db,
-      accountId: parsed.accountId,
+    await repository.createTransaction({
       assetId: asset.id,
+      accountId: parsed.accountId,
+      type: parsed.type,
       quantity: normalized.quantity,
+      pricePerUnit: normalized.pricePerUnit,
+      fee: normalized.fee,
+      currency: parsed.currency,
+      executedAt: parsed.executedAt,
+      note: parsed.note || null,
     });
-  }
-
-  await repository.createTransaction({
-    assetId: asset.id,
-    accountId: parsed.accountId,
-    type: parsed.type,
-    quantity: normalized.quantity,
-    pricePerUnit: normalized.pricePerUnit,
-    fee: normalized.fee,
-    currency: parsed.currency,
-    executedAt: parsed.executedAt,
-    note: parsed.note || null,
   });
 
   return { ok: true, message: "Transaction saved." };
@@ -112,40 +124,45 @@ export async function deleteTransactionMutation(
   return { ok: true, message: "Transaction deleted." };
 }
 
-async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, db: PrismaClient) {
+async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, db: Prisma.TransactionClient) {
   if (parsed.assetMode === "new") {
     if (!parsed.newAsset) {
-      throw new Error("New asset details are required.");
+      throw new PortfolioMutationError("New asset details are required.");
     }
 
-    return db.asset.upsert({
-      where: { symbol: parsed.newAsset.symbol },
-      update: {
-        name: parsed.newAsset.name,
-        assetClass: parsed.newAsset.assetClass,
-        assetType: parsed.newAsset.assetType,
-        currency: parsed.newAsset.currency,
-        externalId: parsed.newAsset.externalId || null,
-      },
-      create: {
-        symbol: parsed.newAsset.symbol,
-        name: parsed.newAsset.name,
-        assetClass: parsed.newAsset.assetClass,
-        assetType: parsed.newAsset.assetType,
-        currency: parsed.newAsset.currency,
-        externalId: parsed.newAsset.externalId || null,
-      },
-    });
+    const existing = await db.asset.findUnique({ where: { symbol: parsed.newAsset.symbol } });
+    if (existing) {
+      throw new PortfolioMutationError(`Asset symbol ${parsed.newAsset.symbol} already exists. Select the existing asset.`);
+    }
+
+    try {
+      return await db.asset.create({
+        data: {
+          symbol: parsed.newAsset.symbol,
+          name: parsed.newAsset.name,
+          assetClass: parsed.newAsset.assetClass,
+          assetType: parsed.newAsset.assetType,
+          currency: parsed.newAsset.currency,
+          externalId: parsed.newAsset.externalId || null,
+          metadata: parsed.newAsset.metadata as Prisma.InputJsonValue | undefined,
+        },
+      });
+    } catch (error) {
+      if (isPrismaError(error, "P2002")) {
+        throw new PortfolioMutationError(`Asset symbol ${parsed.newAsset.symbol} already exists. Select the existing asset.`);
+      }
+      throw error;
+    }
   }
 
   if (!parsed.assetId) {
-    throw new Error("Asset is required.");
+    throw new PortfolioMutationError("Asset is required.");
   }
 
   const asset = await db.asset.findUnique({ where: { id: parsed.assetId } });
 
   if (!asset) {
-    throw new Error("Selected asset does not exist.");
+    throw new PortfolioMutationError("Selected asset does not exist.");
   }
 
   return asset;
@@ -156,17 +173,17 @@ function normalizeTransaction(parsed: z.infer<typeof transactionMutationSchema>,
   const quantity = isPhysicalGold && parsed.physicalGoldWeightGrams ? parsed.physicalGoldWeightGrams : parsed.quantity;
 
   if (!quantity) {
-    throw new Error(isPhysicalGold ? "Weight grams is required." : "Quantity is required.");
+    throw new PortfolioMutationError(isPhysicalGold ? "Weight grams is required." : "Quantity is required.");
   }
 
   let pricePerUnit = parsed.pricePerUnit ?? null;
 
   if (isPhysicalGold && parsed.totalPurchaseCost) {
-    pricePerUnit = decimal(parsed.totalPurchaseCost).div(decimal(quantity)).toString();
+    pricePerUnit = decimal(parsed.totalPurchaseCost).div(decimal(quantity)).toDecimalPlaces(8).toString();
   }
 
   if ((parsed.type === TransactionType.BUY || parsed.type === TransactionType.SELL) && !pricePerUnit) {
-    throw new Error("Price per unit is required for buy and sell transactions.");
+    throw new PortfolioMutationError("Price per unit is required for buy and sell transactions.");
   }
 
   return {
@@ -182,7 +199,7 @@ async function assertEnoughQuantityForSell({
   assetId,
   quantity,
 }: {
-  db: PrismaClient;
+  db: Prisma.TransactionClient;
   accountId: string;
   assetId: string;
   quantity: string;
@@ -197,8 +214,28 @@ async function assertEnoughQuantityForSell({
   const currentQuantity = currentHolding ? decimal(currentHolding.quantity) : ZERO;
 
   if (decimal(quantity).greaterThan(currentQuantity)) {
-    throw new Error("Cannot sell more than the current account holding without override.");
+    throw new PortfolioMutationError("Cannot sell more than the current account holding without override.");
   }
+}
+
+async function withSerializableRetry<T>(
+  db: PrismaClient,
+  operation: (transaction: Prisma.TransactionClient) => Promise<T>,
+) {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await db.$transaction(operation, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error) {
+      if (attempt < maxAttempts && isPrismaError(error, "P2034")) continue;
+      throw error;
+    }
+  }
+  throw new PortfolioMutationError("Transaction could not be saved due to a concurrent update. Please retry.");
+}
+
+function isPrismaError(error: unknown, code: string) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === code;
 }
 
 export function createPhysicalGoldInitialBalanceInput(input: {

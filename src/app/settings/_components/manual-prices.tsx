@@ -1,13 +1,14 @@
 "use client";
 
 import { useActionState, useMemo, useState } from "react";
-import { MarketPriceUnit } from "@prisma/client";
+import { MarketPriceUnit } from "@/lib/domain/enums";
 import { saveManualMarketPriceAction } from "@/features/market-data/actions";
 import type { MarketDataSettingsModel } from "@/features/market-data/settings-read-model";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { formatUtcTimestamp } from "@/lib/format/date";
 
 export function ManualPrices({ assets }: { assets: MarketDataSettingsModel }) {
   const [assetId, setAssetId] = useState(assets[0]?.id ?? "");
@@ -102,7 +103,7 @@ export function ManualPrices({ assets }: { assets: MarketDataSettingsModel }) {
               </div>
               <div className="sm:text-right">
                 <p className="font-medium text-foreground">€{asset.manualPrice?.price}</p>
-                <p className="text-xs text-muted">Updated {asset.manualPrice ? new Date(asset.manualPrice.updatedAt).toLocaleString() : "—"}</p>
+                <p className="text-xs text-muted">Updated {asset.manualPrice ? formatUtcTimestamp(asset.manualPrice.updatedAt) : "—"}</p>
               </div>
             </div>
           ))}

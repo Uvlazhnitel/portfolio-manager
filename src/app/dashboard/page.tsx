@@ -2,6 +2,7 @@ import { DashboardClient } from "@/app/dashboard/_components/dashboard-client";
 import { PriceRefresh } from "@/components/market-data/price-refresh";
 import { PageHeader } from "@/components/ui/page-header";
 import { getDashboardReadModel } from "@/features/dashboard/read-model";
+import { formatUtcTimestamp } from "@/lib/format/date";
 
 export const dynamic = "force-dynamic";
 
@@ -25,5 +26,5 @@ export default async function DashboardPage() {
 }
 
 function formatTimestamp(value: string | null) {
-  return value ? new Date(value).toLocaleString() : "unavailable";
+  return formatUtcTimestamp(value);
 }

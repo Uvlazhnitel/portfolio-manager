@@ -1,4 +1,5 @@
 import type { AllocationStatus, StrategyWarning } from "@/features/portfolio-engine";
+import { formatDecimalCurrency, formatDecimalPercent } from "@/lib/format/decimal";
 
 export function scenarioWarningText(warning: Pick<StrategyWarning, "assetClass" | "currentPercent" | "limitPercent" | "code">) {
   const label = classLabel(warning.assetClass);
@@ -18,15 +19,9 @@ export function statusLabel(status: AllocationStatus) {
 }
 
 export function formatPercent(value: string) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric)
-    ? `${new Intl.NumberFormat("en-IE", { maximumFractionDigits: 2 }).format(numeric)}%`
-    : "—";
+  return formatDecimalPercent(value);
 }
 
 export function formatCurrency(value: string, currency = "EUR") {
-  const numeric = Number(value);
-  return Number.isFinite(numeric)
-    ? new Intl.NumberFormat("en-IE", { style: "currency", currency, maximumFractionDigits: 2 }).format(numeric)
-    : "—";
+  return formatDecimalCurrency(value, currency);
 }

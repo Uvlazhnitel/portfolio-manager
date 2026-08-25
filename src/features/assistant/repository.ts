@@ -12,11 +12,11 @@ export class AssistantRepository {
     });
   }
 
-  findConversation(id: string) {
-    return this.db.assistantConversation.findUnique({
-      where: { id },
-      include: { messages: { orderBy: { createdAt: "asc" } } },
-    });
+  async findConversation(id: string, messageLimit = 100) {
+    const conversation = await this.db.assistantConversation.findUnique({ where: { id } });
+    if (!conversation) return null;
+    const messages = await this.listRecentMessages(id, messageLimit);
+    return { ...conversation, messages };
   }
 
   async listRecentMessages(conversationId: string, limit = 20) {

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { MarketDataService } from "@/features/market-data/service";
 import { saveManualMarketPriceMutation } from "@/features/market-data/mutations";
 import { PortfolioRepository } from "@/features/portfolio/repository";
+import { publicErrorMessage } from "@/lib/public-error";
 
 export type MarketDataActionState = {
   ok: boolean;
@@ -71,6 +72,6 @@ function revalidateMarketDataPages() {
 function toActionError(error: unknown): MarketDataActionState {
   return {
     ok: false,
-    message: error instanceof Error ? error.message : "Something went wrong.",
+    message: publicErrorMessage(error, "Market price could not be updated."),
   };
 }

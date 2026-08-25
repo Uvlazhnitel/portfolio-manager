@@ -133,7 +133,7 @@ describe("market data cache service", () => {
 
     expect(snapshot.prices[0].price).toBe("60000");
     expect(snapshot.hasStalePrices).toBe(true);
-    expect(snapshot.warning).toContain("Provider unavailable");
+    expect(snapshot.warning).toBe("FAILURE market data is temporarily unavailable.");
   });
 
   it("keeps missing and partial provider results unavailable without failing", async () => {
@@ -144,6 +144,31 @@ describe("market data cache service", () => {
 
     expect(snapshot.prices).toHaveLength(1);
     expect(snapshot.unavailableAssetIds).toEqual([eth.id]);
+  });
+
+  it("does not coalesce concurrent refreshes for different asset sets", async () => {
+    const eth = { ...btc, id: "eth-id", symbol: "ETH", externalId: "ethereum" };
+    const store = new FakeStore([]);
+    const provider: MarketDataProvider = {
+      name: "TEST",
+      getCurrentPrices: vi.fn(async ({ assets }: { assets: MarketDataAsset[] }) => assets.map((asset) => ({
+        assetId: asset.id,
+        symbol: asset.symbol,
+        price: asset.symbol === "BTC" ? "65000" : "3000",
+        currency: "EUR",
+        timestamp: now,
+        source: "TEST",
+      }))),
+    };
+    const service = new MarketDataService(store, [provider]);
+    const [btcSnapshot, ethSnapshot] = await Promise.all([
+      service.getCurrentPrices({ assets: [btc], now, forceRefresh: true }),
+      service.getCurrentPrices({ assets: [eth], now, forceRefresh: true }),
+    ]);
+
+    expect(provider.getCurrentPrices).toHaveBeenCalledTimes(2);
+    expect(btcSnapshot.prices).toEqual([expect.objectContaining({ assetId: btc.id })]);
+    expect(ethSnapshot.prices).toEqual([expect.objectContaining({ assetId: eth.id })]);
   });
 });
 

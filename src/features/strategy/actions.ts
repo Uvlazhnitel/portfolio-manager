@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { StrategyService } from "@/features/strategy/service";
 import { toStrategyEditorModel, type StrategyEditorModel } from "@/features/strategy/read-model";
 import type { UpdateStrategyInput } from "@/features/strategy/validation";
+import { publicErrorMessage } from "@/lib/public-error";
 
 export type StrategyActionState = {
   ok: boolean;
@@ -41,7 +42,7 @@ export async function updateStrategyAction(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "Strategy could not be saved.",
+      message: publicErrorMessage(error, "Strategy could not be saved."),
     };
   }
 }

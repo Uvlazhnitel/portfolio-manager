@@ -1,7 +1,5 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import path from "node:path";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 import pg from "pg";
@@ -14,22 +12,35 @@ export type TestDatabase = {
 
 export async function createTestDatabase(): Promise<TestDatabase> {
   const databaseName = `portfolio_manager_test_${randomUUID().replaceAll("-", "_")}`;
-  const maintenanceUrl = process.env.TEST_DATABASE_MAINTENANCE_URL ?? "postgresql://uvlazhnitel@localhost:5432/postgres";
-  const databaseUrl = `postgresql://uvlazhnitel@localhost:5432/${databaseName}?schema=public`;
-
-  execFileSync("createdb", [databaseName], { stdio: "ignore" });
-
-  const client = new pg.Client({ connectionString: databaseUrl });
-  await client.connect();
-  const migrationsDirectory = path.join(process.cwd(), "prisma/migrations");
-  for (const migration of readdirSync(migrationsDirectory).sort()) {
-    const migrationPath = path.join(migrationsDirectory, migration, "migration.sql");
-    if (!existsSync(migrationPath)) {
-      continue;
-    }
-    await client.query(readFileSync(migrationPath, "utf8"));
+  const configuredUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+  if (!configuredUrl) {
+    throw new Error("TEST_DATABASE_URL or DATABASE_URL must point to a PostgreSQL server for integration tests.");
   }
-  await client.end();
+  const configured = new URL(configuredUrl);
+  if (!configured.username) {
+    const databaseUser = process.env.PGUSER ?? process.env.USER;
+    if (!databaseUser) throw new Error("TEST_DATABASE_URL must include a PostgreSQL username.");
+    configured.username = databaseUser;
+  }
+  const maintenance = new URL(configured);
+  maintenance.pathname = "/postgres";
+  maintenance.search = "";
+  const database = new URL(configured);
+  database.pathname = `/${databaseName}`;
+  database.searchParams.set("schema", "public");
+  const maintenanceUrl = maintenance.toString();
+  const databaseUrl = database.toString();
+
+  const maintenanceClient = new pg.Client({ connectionString: maintenanceUrl });
+  await maintenanceClient.connect();
+  await maintenanceClient.query(`CREATE DATABASE ${pg.escapeIdentifier(databaseName)}`);
+  await maintenanceClient.end();
+
+  execFileSync("pnpm", ["exec", "prisma", "migrate", "deploy"], {
+    cwd: process.cwd(),
+    env: { ...process.env, DATABASE_URL: databaseUrl },
+    stdio: "ignore",
+  });
 
   const prisma = new PrismaClient({ adapter: new PrismaPg(databaseUrl) });
 

@@ -1,5 +1,5 @@
-import { AssetType, TransactionType, type Prisma } from "@prisma/client";
-import { calculatePortfolio, compareAllocationToStrategy } from "@/features/portfolio-engine";
+import { AssetType } from "@prisma/client";
+import { calculateHoldingCostBasis, calculatePortfolio, compareAllocationToStrategy } from "@/features/portfolio-engine";
 import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/service";
 import { PortfolioRepository } from "@/features/portfolio/repository";
@@ -107,7 +107,7 @@ export async function getPortfolioReadModel({
     transactions,
     marketPrices: toEngineMarketPrices(marketData),
   });
-  const holdings = buildHoldingRows(assets, accounts, transactions, portfolio, marketData.prices);
+  const holdings = buildHoldingRows(assets, accounts, transactions, portfolio, marketData.prices, baseCurrency);
   const strategyComparisons = strategy
     ? compareAllocationToStrategy(portfolio, strategy.allocations)
     : [];
@@ -161,11 +161,17 @@ function buildHoldingRows(
   transactions: TransactionWithRelations[],
   portfolio: ReturnType<typeof calculatePortfolio>,
   marketPrices: Awaited<ReturnType<MarketDataService["getCurrentPrices"]>>["prices"],
+  baseCurrency: string,
 ): PortfolioHoldingRow[] {
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
   const accountsById = new Map(accounts.map((account) => [account.id, account]));
   const holdings = portfolio.holdings;
-  const costBasisByHolding = calculateCostBasis(transactions);
+  const costBasisByHolding = new Map(
+    calculateHoldingCostBasis({ portfolio, assets, transactions, baseCurrency }).map((basis) => [
+      holdingKey(basis.accountId, basis.assetId),
+      basis,
+    ]),
+  );
   const valuedByHolding = new Map(
     portfolio.valuedHoldings.map((holding) => [holdingKey(holding.accountId, holding.assetId), holding]),
   );
@@ -177,11 +183,9 @@ function buildHoldingRows(
     const costBasis = costBasisByHolding.get(holdingKey(holding.accountId, holding.assetId));
     const valuedHolding = valuedByHolding.get(holdingKey(holding.accountId, holding.assetId));
     const marketPrice = pricesByAsset.get(holding.assetId);
-    const quantity = decimal(holding.quantity);
-    const averageAcquisitionPrice =
-      costBasis && quantity.greaterThan(ZERO) && costBasis.cost.greaterThan(ZERO)
-        ? costBasis.cost.div(quantity).toFixed(2)
-        : null;
+    const averageAcquisitionPrice = costBasis?.status === "AVAILABLE"
+      ? costBasis.averageAcquisitionPrice
+      : null;
 
     return {
       assetId: holding.assetId,
@@ -197,8 +201,8 @@ function buildHoldingRows(
       isPriceStale: marketPrice?.isStale ?? false,
       averageAcquisitionPrice,
       pnl:
-        marketPrice && valuedHolding && costBasis
-          ? decimal(valuedHolding.value).minus(costBasis.cost).toFixed(2)
+        marketPrice && valuedHolding && costBasis?.status === "AVAILABLE" && costBasis.totalCost !== null
+          ? decimal(valuedHolding.value).minus(costBasis.totalCost).toFixed(2)
           : null,
       assetClass: asset?.assetClass ?? "OTHER",
       assetType: asset?.assetType ?? "OTHER",
@@ -216,40 +220,6 @@ function buildHoldingRows(
         ? decimal(row.currentValue).div(totalAvailableValue).mul(100).toFixed(2)
         : null,
   }));
-}
-
-function calculateCostBasis(transactions: TransactionWithRelations[]) {
-  const sorted = [...transactions].sort((left, right) => left.executedAt.getTime() - right.executedAt.getTime());
-  const costByHolding = new Map<string, { quantity: Prisma.Decimal; cost: Prisma.Decimal }>();
-
-  for (const transaction of sorted) {
-    const key = holdingKey(transaction.accountId, transaction.assetId);
-    const current = costByHolding.get(key) ?? { quantity: ZERO, cost: ZERO };
-    const quantity = transaction.quantity;
-
-    if (transaction.type === TransactionType.INITIAL_BALANCE || transaction.type === TransactionType.BUY) {
-      const addedCost = transaction.pricePerUnit ? quantity.mul(transaction.pricePerUnit) : ZERO;
-      const fee = transaction.fee ?? ZERO;
-
-      costByHolding.set(key, {
-        quantity: current.quantity.plus(quantity),
-        cost: current.cost.plus(addedCost).plus(fee),
-      });
-    }
-
-    if (transaction.type === TransactionType.SELL) {
-      const averageCost = current.quantity.greaterThan(ZERO) ? current.cost.div(current.quantity) : ZERO;
-      const remainingQuantity = current.quantity.minus(quantity);
-      const remainingCost = current.cost.minus(averageCost.mul(quantity));
-
-      costByHolding.set(key, {
-        quantity: remainingQuantity.greaterThan(ZERO) ? remainingQuantity : ZERO,
-        cost: remainingCost.greaterThan(ZERO) ? remainingCost : ZERO,
-      });
-    }
-  }
-
-  return costByHolding;
 }
 
 export function serializeTransactionRow(transaction: TransactionWithRelations): PortfolioTransactionRow {

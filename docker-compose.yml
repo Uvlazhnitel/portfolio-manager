@@ -30,7 +30,7 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: "1"
-    command: sh -c "pnpm db:migrate && pnpm db:seed && pnpm start"
+    command: sh -c "pnpm db:deploy && pnpm db:seed && pnpm start"
     ports:
       - "3010:3000"
 

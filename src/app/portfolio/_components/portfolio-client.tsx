@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState, type ReactNode } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Plus, Trash2, X } from "lucide-react";
 import { createAccountAction, createTransactionAction, deleteTransactionAction } from "@/features/portfolio/actions";
 import type { PortfolioReadModel } from "@/features/portfolio/read-model";
@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
+import { formatDecimalCurrency } from "@/lib/format/decimal";
+import { formatUtcDate, formatUtcTimestamp } from "@/lib/format/date";
 
 type PortfolioTab = "holdings" | "accounts" | "transactions";
 type AddMode = "transaction" | "account";
@@ -40,6 +42,7 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
   const [addMode, setAddMode] = useState<AddMode>("transaction");
   const [transactionType, setTransactionType] = useState("INITIAL_BALANCE");
   const [assetMode, setAssetMode] = useState<AssetMode>("existing");
+  const closeDialogRef = useRef<HTMLButtonElement>(null);
   const [selectedAssetId, setSelectedAssetId] = useState(portfolio.assets[0]?.id ?? "");
   const [transactionState, transactionAction, isTransactionPending] = useActionState(createTransactionAction, {
     ok: false,
@@ -54,6 +57,16 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
     [portfolio.assets, selectedAssetId],
   );
   const isPhysicalGold = assetMode === "existing" && selectedAsset?.assetType === "PHYSICAL_GOLD";
+
+  useEffect(() => {
+    if (!isAddOpen) return;
+    closeDialogRef.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsAddOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [isAddOpen]);
 
   return (
     <div className="space-y-4">
@@ -117,7 +130,7 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
             type="button"
             onClick={() => setActiveTab(tab)}
             className={cn(
-              "rounded-lg border px-3 py-2 text-sm font-medium capitalize transition",
+              "min-h-11 rounded-lg border px-3 py-2 text-sm font-medium capitalize transition",
               activeTab === tab
                 ? "border-primary/35 bg-primary/15 text-foreground"
                 : "border-border bg-surface text-muted hover:text-foreground",
@@ -141,11 +154,16 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
       {activeTab === "transactions" ? <TransactionsSection portfolio={portfolio} /> : null}
 
       {isAddOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-background/75 p-4 backdrop-blur-sm md:items-center md:justify-center">
-          <Card className="max-h-[92vh] w-full overflow-y-auto md:max-w-2xl">
+        <div className="fixed inset-0 z-50 flex items-end bg-background/75 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur-sm md:items-center md:justify-center md:p-4">
+          <Card
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="portfolio-add-dialog-title"
+            className="max-h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-1.5rem)] w-full overflow-y-auto overscroll-contain rounded-xl md:max-h-[92vh] md:max-w-2xl"
+          >
             <div className="mb-5 flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-foreground">
+                <h2 id="portfolio-add-dialog-title" className="text-lg font-semibold text-foreground">
                   {addMode === "account" ? "Add account" : "Add transaction"}
                 </h2>
                 <p className="mt-1 text-sm text-muted">
@@ -155,9 +173,10 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
                 </p>
               </div>
               <button
+                ref={closeDialogRef}
                 type="button"
                 onClick={() => setIsAddOpen(false)}
-                className="rounded-md border border-border p-2 text-muted transition hover:border-primary/50 hover:text-foreground"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border text-muted transition hover:border-primary/50 hover:text-foreground"
                 aria-label="Close"
               >
                 <X className="h-4 w-4" aria-hidden="true" />
@@ -217,7 +236,7 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
                       key={choice}
                       type="button"
                       disabled
-                      className="h-10 rounded-lg border border-border bg-surface text-sm font-medium text-muted/60"
+                      className="h-11 rounded-lg border border-border bg-surface text-sm font-medium text-muted/60"
                     >
                       {formatType(choice)}
                     </button>
@@ -456,7 +475,7 @@ function TransactionsSection({ portfolio }: PortfolioClientProps) {
               </div>
               <p className="mt-2 text-sm text-muted">
                 {transaction.quantity} · {transaction.pricePerUnit ? `€${transaction.pricePerUnit}` : "No price"} ·{" "}
-                {new Date(transaction.executedAt).toLocaleDateString()}
+                {formatUtcDate(transaction.executedAt)}
               </p>
               {transaction.note ? <p className="mt-2 text-sm text-muted">{transaction.note}</p> : null}
             </div>
@@ -574,16 +593,12 @@ function formatMoneyOrDashText(value: string | null) {
 }
 
 function formatCurrency(value: string) {
-  return new Intl.NumberFormat("en-IE", {
-    style: "currency",
-    currency: "EUR",
-    maximumFractionDigits: 2,
-  }).format(Number(value));
+  return formatDecimalCurrency(value, "EUR");
 }
 
 function formatTimestamp(value: string | null) {
-  return value ? new Date(value).toLocaleString() : "unavailable";
+  return formatUtcTimestamp(value);
 }
 
 const inputClassName =
-  "h-10 w-full rounded-lg border border-border bg-surface-strong px-3 text-sm text-foreground outline-none transition placeholder:text-muted/70 focus:border-primary/60";
+  "h-11 w-full rounded-lg border border-border bg-surface-strong px-3 text-sm text-foreground outline-none transition placeholder:text-muted/70 focus:border-primary/60";

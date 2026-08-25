@@ -2,7 +2,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 
 export class PortfolioRepository {
-  constructor(private readonly db: PrismaClient = prisma) {}
+  constructor(private readonly db: PrismaClient | Prisma.TransactionClient = prisma) {}
 
   listAssets() {
     return this.db.asset.findMany({ orderBy: { symbol: "asc" } });

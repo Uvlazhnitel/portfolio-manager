@@ -119,6 +119,30 @@ export type PortfolioAnalytics = {
   }>;
 };
 
+export type HoldingCostBasisReason =
+  | "NON_POSITIVE_HOLDING"
+  | "MISSING_ACQUISITION_PRICE"
+  | "UNSUPPORTED_TRANSACTION_CURRENCY"
+  | "ACCOUNT_TRANSFER_COST_UNKNOWN"
+  | "UNSUPPORTED_QUANTITY_MOVEMENT"
+  | "INCONSISTENT_TRANSACTION_HISTORY";
+
+export type HoldingCostBasis = {
+  accountId: string;
+  assetId: string;
+  status: "AVAILABLE" | "UNAVAILABLE";
+  totalCost: string | null;
+  averageAcquisitionPrice: string | null;
+  reason: HoldingCostBasisReason | null;
+};
+
+export type CalculateHoldingCostBasisInput = {
+  portfolio: PortfolioSnapshot;
+  assets: EngineAsset[];
+  transactions: EngineTransaction[];
+  baseCurrency: string;
+};
+
 export type CalculatePortfolioAnalyticsInput = {
   portfolio: PortfolioSnapshot;
   assets: EngineAsset[];
