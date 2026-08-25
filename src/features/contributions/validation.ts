@@ -82,6 +82,14 @@ export function parsePreviewInput(input: ContributionPreviewInput) {
   return parsed;
 }
 
+export function parseContributionQueryAmount(value: string | string[] | undefined) {
+  if (typeof value !== "string") return null;
+  const parsed = contributionPreviewInputSchema.safeParse({ contributionAmount: value });
+  return parsed.success && moneyToCents(parsed.data.contributionAmount) > 0
+    ? parsed.data.contributionAmount
+    : null;
+}
+
 export function parseSaveInput(input: SaveContributionPlanInput) {
   const parsed = saveContributionPlanInputSchema.parse(input);
   if (moneyToCents(parsed.contributionAmount) <= 0) {

@@ -12,6 +12,8 @@ import type {
   AllocationComparison,
   AssetClassAllocation,
   CalculatePortfolioInput,
+  CalculatePortfolioAnalyticsInput,
+  CalculateStrategyAlignmentInput,
   ContributionAllocation,
   ContributionPlan,
   ContributionProjection,
@@ -23,10 +25,12 @@ import type {
   PlanContributionInput,
   ProjectContributionInput,
   PortfolioSnapshot,
+  PortfolioAnalytics,
   ReasonCode,
   SimulatedTransactionInput,
   SimulateContributionInput,
   StrategyWarning,
+  StrategyAlignment,
   ValuedHolding,
 } from "@/features/portfolio-engine/types";
 
@@ -113,6 +117,72 @@ export function calculatePortfolio(input: CalculatePortfolioInput): PortfolioSna
     totalValue: toDecimalString(totalValue),
     allocation,
     missingPriceSymbols: Array.from(missingPriceSymbols).sort(),
+  };
+}
+
+export function calculatePortfolioAnalytics(input: CalculatePortfolioAnalyticsInput): PortfolioAnalytics {
+  const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
+  const missingSymbols = new Set(input.portfolio.missingPriceSymbols);
+  const positiveHoldings = input.portfolio.holdings.filter((holding) => decimal(holding.quantity).greaterThan(ZERO));
+  const valuedByHolding = new Map(
+    input.portfolio.valuedHoldings.map((holding) => [`${holding.accountId}:${holding.assetId}`, holding]),
+  );
+  const accountValues = new Map<string, { value: Prisma.Decimal; isPartial: boolean }>();
+  let pricedHoldings = 0;
+
+  for (const holding of positiveHoldings) {
+    const asset = requireAsset(assetById, holding.assetId);
+    const account = accountValues.get(holding.accountId) ?? { value: ZERO, isPartial: false };
+    if (missingSymbols.has(asset.symbol)) {
+      account.isPartial = true;
+    } else {
+      const valued = valuedByHolding.get(`${holding.accountId}:${holding.assetId}`);
+      account.value = account.value.plus(decimal(valued?.value ?? 0));
+      pricedHoldings += 1;
+    }
+    accountValues.set(holding.accountId, account);
+  }
+
+  const totalHoldings = positiveHoldings.length;
+  const totalUnrealizedPnl = calculateStrictUnrealizedPnl(input, assetById, missingSymbols);
+
+  return {
+    totalUnrealizedPnl: totalUnrealizedPnl ? toDecimalString(totalUnrealizedPnl) : null,
+    priceCoverage: {
+      pricedHoldings,
+      totalHoldings,
+      percent: toDecimalString(totalHoldings === 0 ? ZERO : decimal(pricedHoldings).div(totalHoldings).mul(ONE_HUNDRED)),
+    },
+    accounts: [...accountValues.entries()].map(([accountId, account]) => ({
+      accountId,
+      value: toDecimalString(account.value),
+      isPartial: account.isPartial,
+    })),
+  };
+}
+
+export function calculateStrategyAlignment(input: CalculateStrategyAlignmentInput): StrategyAlignment {
+  const hasHoldings = input.totalHoldings > 0;
+  const inRangeClasses = hasHoldings
+    ? input.comparisons.filter((comparison) => comparison.status === "IN_RANGE").length
+    : 0;
+  const totalClasses = input.comparisons.length;
+  const allocationPoints = Math.min(80, inRangeClasses * 20);
+  const priceDataPoints = input.totalHoldings === 0
+    ? 0
+    : Math.round(20 * Math.min(1, Math.max(0, input.pricedHoldings / input.totalHoldings)));
+  const score = !hasHoldings || totalClasses === 0 ? null : allocationPoints + priceDataPoints;
+
+  return {
+    score,
+    allocationPoints,
+    allocationMaxPoints: 80,
+    priceDataPoints,
+    priceDataMaxPoints: 20,
+    inRangeClasses,
+    totalClasses,
+    pricedHoldings: input.pricedHoldings,
+    totalHoldings: input.totalHoldings,
   };
 }
 
@@ -531,6 +601,94 @@ function requireMoney(value: Parameters<typeof decimal>[0], label: string) {
     throw new Error(`${label} must be a finite amount with at most two decimal places.`);
   }
   return amount;
+}
+
+function calculateStrictUnrealizedPnl(
+  input: CalculatePortfolioAnalyticsInput,
+  assetById: Map<string, EngineAsset>,
+  missingSymbols: Set<string>,
+) {
+  const holdingsByAsset = new Map<string, Prisma.Decimal>();
+  for (const holding of input.portfolio.holdings) {
+    const quantity = decimal(holding.quantity);
+    if (quantity.lessThan(ZERO)) return null;
+    holdingsByAsset.set(holding.assetId, (holdingsByAsset.get(holding.assetId) ?? ZERO).plus(quantity));
+  }
+  const activeAssets = [...holdingsByAsset.entries()].filter(([, quantity]) => quantity.greaterThan(ZERO));
+  if (activeAssets.length === 0) return null;
+
+  const currentValueByAsset = new Map<string, Prisma.Decimal>();
+  for (const holding of input.portfolio.valuedHoldings) {
+    currentValueByAsset.set(
+      holding.assetId,
+      (currentValueByAsset.get(holding.assetId) ?? ZERO).plus(decimal(holding.value)),
+    );
+  }
+
+  let totalCost = ZERO;
+  let totalCurrentValue = ZERO;
+  for (const [assetId, currentQuantity] of activeAssets) {
+    const asset = requireAsset(assetById, assetId);
+    if (missingSymbols.has(asset.symbol)) return null;
+    const currentValue = currentValueByAsset.get(assetId) ?? ZERO;
+    totalCurrentValue = totalCurrentValue.plus(currentValue);
+
+    if (asset.assetType === "FIAT" && asset.currency?.toUpperCase() === input.baseCurrency.toUpperCase()) {
+      totalCost = totalCost.plus(currentValue);
+      continue;
+    }
+
+    const assetTransactions = input.transactions
+      .filter((transaction) => transaction.assetId === assetId)
+      .map((transaction, index) => ({ transaction, index }))
+      .sort((left, right) => transactionTime(left.transaction, left.index) - transactionTime(right.transaction, right.index))
+      .map(({ transaction }) => transaction);
+    const transferIn = sumTransactionQuantity(assetTransactions, TransactionType.TRANSFER_IN);
+    const transferOut = sumTransactionQuantity(assetTransactions, TransactionType.TRANSFER_OUT);
+    if (!transferIn.equals(transferOut)) return null;
+
+    let trackedQuantity = ZERO;
+    let trackedCost = ZERO;
+    for (const transaction of assetTransactions) {
+      const quantity = decimal(transaction.quantity);
+      if (transaction.type === TransactionType.TRANSFER_IN || transaction.type === TransactionType.TRANSFER_OUT) {
+        continue;
+      }
+      if (transaction.type === TransactionType.DEPOSIT || transaction.type === TransactionType.WITHDRAWAL) {
+        return null;
+      }
+      if (transaction.type === TransactionType.INITIAL_BALANCE || transaction.type === TransactionType.BUY) {
+        if (transaction.pricePerUnit === null || transaction.pricePerUnit === undefined) return null;
+        if (transaction.currency?.toUpperCase() !== input.baseCurrency.toUpperCase()) return null;
+        trackedQuantity = trackedQuantity.plus(quantity);
+        trackedCost = trackedCost
+          .plus(quantity.mul(decimal(transaction.pricePerUnit)))
+          .plus(transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee));
+      }
+      if (transaction.type === TransactionType.SELL) {
+        if (quantity.greaterThan(trackedQuantity) || trackedQuantity.equals(ZERO)) return null;
+        const averageCost = trackedCost.div(trackedQuantity);
+        trackedQuantity = trackedQuantity.minus(quantity);
+        trackedCost = trackedCost.minus(averageCost.mul(quantity));
+      }
+    }
+    if (!trackedQuantity.equals(currentQuantity)) return null;
+    totalCost = totalCost.plus(trackedCost);
+  }
+
+  return totalCurrentValue.minus(totalCost);
+}
+
+function sumTransactionQuantity(transactions: EngineTransaction[], type: TransactionType) {
+  return transactions
+    .filter((transaction) => transaction.type === type)
+    .reduce((sum, transaction) => sum.plus(decimal(transaction.quantity)), ZERO);
+}
+
+function transactionTime(transaction: EngineTransaction, fallback: number) {
+  if (!transaction.executedAt) return fallback;
+  const timestamp = new Date(transaction.executedAt).getTime();
+  return Number.isFinite(timestamp) ? timestamp : fallback;
 }
 
 function requireAsset(assetById: Map<string, EngineAsset>, assetId: string) {

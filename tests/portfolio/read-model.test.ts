@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getDashboardReadModel } from "@/features/dashboard/read-model";
+import { ContributionPlanRepository } from "@/features/contributions/repository";
 import type { MarketDataStore } from "@/features/market-data/repository";
 import { MarketDataService, resetMarketDataRuntimeCacheForTests } from "@/features/market-data/service";
 import { getPortfolioReadModel } from "@/features/portfolio/read-model";
@@ -21,6 +22,7 @@ let marketDataService: MarketDataService;
 beforeAll(async () => {
   testDb = await createTestDatabase();
   const account = await testDb.prisma.account.create({ data: { name: "Main", type: AccountType.OTHER } });
+  await testDb.prisma.account.create({ data: { name: "Empty", type: AccountType.BANK } });
   const [btc, gold] = await Promise.all([
     testDb.prisma.asset.create({
       data: { symbol: "BTC", name: "Bitcoin", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "BTC" },
@@ -32,6 +34,10 @@ beforeAll(async () => {
   await testDb.prisma.transaction.createMany({ data: [
     { accountId: account.id, assetId: btc.id, type: TransactionType.INITIAL_BALANCE, quantity: "1", pricePerUnit: "40000", currency: "EUR", executedAt: new Date("2026-08-01") },
     { accountId: account.id, assetId: gold.id, type: TransactionType.INITIAL_BALANCE, quantity: "10", pricePerUnit: "80", currency: "EUR", executedAt: new Date("2026-08-01") },
+    { accountId: account.id, assetId: btc.id, type: TransactionType.BUY, quantity: "0.0001", pricePerUnit: "40000", currency: "EUR", executedAt: new Date("2026-08-02") },
+    { accountId: account.id, assetId: btc.id, type: TransactionType.SELL, quantity: "0.0001", pricePerUnit: "50000", currency: "EUR", executedAt: new Date("2026-08-03") },
+    { accountId: account.id, assetId: btc.id, type: TransactionType.BUY, quantity: "0.0001", pricePerUnit: "40000", currency: "EUR", executedAt: new Date("2026-08-04") },
+    { accountId: account.id, assetId: btc.id, type: TransactionType.SELL, quantity: "0.0001", pricePerUnit: "50000", currency: "EUR", executedAt: new Date("2026-08-05") },
   ] });
   const strategy = await testDb.prisma.strategy.create({
     data: { name: "Test", objective: "Test", baseCurrency: "EUR" },
@@ -42,6 +48,13 @@ beforeAll(async () => {
     { strategyId: strategy.id, assetClass: AssetClass.GOLD, targetPercent: "10", minPercent: "5", maxPercent: "15" },
     { strategyId: strategy.id, assetClass: AssetClass.CASH, targetPercent: "5", minPercent: "0", maxPercent: "10" },
   ] });
+  await testDb.prisma.contributionPlan.create({ data: {
+    strategyId: strategy.id,
+    contributionAmount: "1000",
+    currency: "EUR",
+    allocations: [],
+    isCustomized: false,
+  } });
 
   const now = new Date();
   marketDataService = new MarketDataService(new ReadModelPriceStore([
@@ -77,13 +90,24 @@ describe("priced portfolio read models", () => {
     const dashboard = await getDashboardReadModel({
       portfolioRepository: new PortfolioRepository(testDb.prisma),
       strategyRepository: new StrategyRepository(testDb.prisma),
+      contributionPlanRepository: new ContributionPlanRepository(testDb.prisma),
       marketDataService,
     });
 
-    expect(dashboard.totalValue).toBe("51000.00");
-    expect(dashboard.comparisons).toHaveLength(4);
-    expect(dashboard.suggestedAssetClass).toBe(AssetClass.ETF);
-    expect(dashboard.isPartial).toBe(false);
+    expect(dashboard.valuation.totalValue).toBe("51000.00");
+    expect(dashboard.valuation.totalUnrealizedPnl).toBe("10200.00");
+    expect(dashboard.allocation).toHaveLength(4);
+    expect(dashboard.valuation.isPartial).toBe(false);
+    expect(dashboard.contribution.amount).toBe("1000");
+    expect(dashboard.contribution.projection?.plan.contributionAmount).toBe("1000.00");
+    expect(dashboard.recentActivity).toHaveLength(5);
+    expect(dashboard.recentActivity[0].executedAt).toContain("2026-08-05");
+    expect(dashboard.accounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "Main", value: "51000.00", isPartial: false }),
+      expect.objectContaining({ name: "Empty", value: "0.00", isPartial: false }),
+    ]));
+    expect(dashboard.alignment.score).toBe(40);
+    expect(dashboard.strategyStatus.state).toBe("NEEDS_ATTENTION");
   });
 });
 

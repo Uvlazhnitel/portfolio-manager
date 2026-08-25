@@ -7,14 +7,13 @@ import { previewContributionAction, saveContributionPlanAction } from "@/feature
 import type { ContributionPlannerModel } from "@/features/contributions/read-model";
 import type { ContributionProjection } from "@/features/portfolio-engine";
 import { contributionAssetClasses, moneyToCents, type ParsedContributionAllocation } from "@/features/contributions/validation";
+import { contributionClassLabels as classLabels, contributionReasonText } from "@/features/contributions/presentation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 type PreviewState = Pick<ContributionPlannerModel, "recommendedAllocations" | "valuation"> & { projection: ContributionProjection | null };
-
-const classLabels: Record<AssetClass, string> = { ETF: "ETF", CRYPTO: "Crypto", GOLD: "Gold", CASH: "Cash", OTHER: "Other" };
 
 export function ContributionPlanner({ model }: { model: ContributionPlannerModel }) {
   const [amount, setAmount] = useState(model.contributionAmount);
@@ -177,7 +176,7 @@ function ImpactTable({ projection }: { projection: ContributionProjection }) {
 }
 
 function Reasons({ projection }: { projection: ContributionProjection }) {
-  const messages = [...new Set(projection.reasons.map((reason) => reasonText(reason.code, reason.assetClass)))];
+  const messages = [...new Set(projection.reasons.map(contributionReasonText))];
   return <Card><h2 className="text-lg font-semibold">Why this allocation</h2><div className="mt-4 space-y-3">{messages.map((message) => <div key={message} className="flex items-start gap-3 text-sm"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" /><p className="text-muted">{message}</p></div>)}</div>{projection.warnings.map((warning) => <Notice key={warning.code} tone="warning">{classLabels[warning.assetClass]} after contribution is {formatPercent(warning.currentPercent)}; configured {warning.code.endsWith("ABOVE_MAX") ? "maximum" : "minimum"} is {formatPercent(warning.limitPercent)}. This is advisory and does not block saving.</Notice>)}</Card>;
 }
 
@@ -200,17 +199,6 @@ function analyzeDraft(amount: string, allocations: ParsedContributionAllocation[
   } catch (error) {
     return { isValid: false, amountValid: false, totalCents: 0, expectedCents: 0, message: error instanceof Error ? error.message : "Custom allocation is invalid." };
   }
-}
-
-function reasonText(code: string, assetClass?: AssetClass) {
-  const label = assetClass ? classLabels[assetClass] : "This asset class";
-  if (code === "ASSET_CLASS_UNDERWEIGHT") return `${label} is currently below your target allocation.`;
-  if (code === "OVERWEIGHT_CLASS_RECEIVES_NO_CONTRIBUTION") return `${label} is above its preferred range, so this contribution adds no additional exposure.`;
-  if (code === "CUSTOM_ALLOCATION_ABOVE_MAX") return `Your custom allocation would leave ${label.toLowerCase()} outside its configured range.`;
-  if (code === "CONTRIBUTION_MOVES_TOWARD_TARGET") return "The contribution moves the portfolio toward its configured target.";
-  if (code === "NO_SELL_REQUIRED") return "Your allocation can move toward the target without selling existing assets.";
-  if (code === "NO_CONTRIBUTION") return "Enter a positive contribution amount to calculate a plan.";
-  return `${label}: ${code.toLowerCase().replaceAll("_", " ")}.`;
 }
 
 function formatMoney(value: string) { const number = Number(value); return Number.isFinite(number) ? new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR" }).format(number) : "€0.00"; }

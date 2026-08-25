@@ -39,11 +39,13 @@ export async function getContributionPlannerModel({
   strategyRepository = new StrategyRepository(),
   planRepository = new ContributionPlanRepository(),
   marketDataService = new MarketDataService(),
+  preferredAmount = null,
 }: {
   portfolioRepository?: PortfolioRepository;
   strategyRepository?: StrategyRepository;
   planRepository?: ContributionPlanRepository;
   marketDataService?: MarketDataService;
+  preferredAmount?: string | null;
 } = {}): Promise<ContributionPlannerModel> {
   const [assets, transactions, strategy] = await Promise.all([
     portfolioRepository.listAssets(),
@@ -58,13 +60,14 @@ export async function getContributionPlannerModel({
     planRepository.findByStrategyId(strategy.id),
   ]);
   const portfolio = calculatePortfolio({ assets, transactions, marketPrices: toEngineMarketPrices(marketData) });
-  const contributionAmount = saved ? serializeDecimal(saved.contributionAmount) : "";
+  const contributionAmount = preferredAmount ?? (saved ? serializeDecimal(saved.contributionAmount) : "");
   const recommendation = contributionAmount && contributionAmount !== "0"
     ? buildContributionProjection({ portfolio, strategy: strategy.allocations, contributionAmount })
     : null;
   const recommendedAllocations = normalizeAllocations(recommendation?.plan.allocations ?? []);
-  const savedAllocations = saved ? parseSavedAllocations(saved.allocations) : [];
-  const allocations = saved ? normalizeAllocations(savedAllocations) : recommendedAllocations;
+  const shouldRestoreSavedAllocation = !preferredAmount && Boolean(saved);
+  const savedAllocations = shouldRestoreSavedAllocation && saved ? parseSavedAllocations(saved.allocations) : [];
+  const allocations = shouldRestoreSavedAllocation ? normalizeAllocations(savedAllocations) : recommendedAllocations;
   const projection = contributionAmount && contributionAmount !== "0"
     ? projectCustomContribution({ portfolio, strategy: strategy.allocations, contributionAmount, allocations })
     : null;
@@ -75,7 +78,7 @@ export async function getContributionPlannerModel({
     allocations,
     recommendedAllocations,
     projection,
-    isCustomized: saved?.isCustomized ?? false,
+    isCustomized: shouldRestoreSavedAllocation ? saved?.isCustomized ?? false : false,
     savedAt: saved?.updatedAt.toISOString() ?? null,
     valuation: {
       isPartial: portfolio.missingPriceSymbols.length > 0,

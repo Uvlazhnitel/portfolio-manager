@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   calculateHoldings,
   calculatePortfolio,
+  calculatePortfolioAnalytics,
+  calculateStrategyAlignment,
   compareAllocationToStrategy,
   evaluateStrategyCompliance,
   planContribution,
@@ -381,5 +383,85 @@ describe("portfolio engine contribution planning and simulation", () => {
 
     expect(allocationFor(portfolio, AssetClass.CRYPTO).percentage).toBe("100.00");
     expect(evaluateStrategyCompliance(portfolio, strategy).some((warning) => warning.code === "CRYPTO_ABOVE_MAX")).toBe(true);
+  });
+});
+
+describe("portfolio engine dashboard analytics", () => {
+  it("calculates transparent alignment points and returns no score for an empty portfolio", () => {
+    const portfolio = calculatePortfolio({ assets, transactions: [], marketPrices: prices });
+    const comparisons = compareAllocationToStrategy(portfolio, strategy);
+    const empty = calculateStrategyAlignment({ comparisons, pricedHoldings: 0, totalHoldings: 0 });
+    const complete = calculateStrategyAlignment({
+      comparisons: comparisons.map((comparison) => ({ ...comparison, status: "IN_RANGE" as const })),
+      pricedHoldings: 4,
+      totalHoldings: 4,
+    });
+    const partial = calculateStrategyAlignment({
+      comparisons: comparisons.map((comparison, index) => ({ ...comparison, status: index === 0 ? "OVERWEIGHT" as const : "IN_RANGE" as const })),
+      pricedHoldings: 2,
+      totalHoldings: 4,
+    });
+
+    expect(empty).toEqual(expect.objectContaining({ score: null, allocationPoints: 0, inRangeClasses: 0 }));
+    expect(complete).toEqual(expect.objectContaining({ score: 100, allocationPoints: 80, priceDataPoints: 20 }));
+    expect(partial).toEqual(expect.objectContaining({ score: 70, allocationPoints: 60, priceDataPoints: 10 }));
+  });
+
+  it("calculates strict unrealized P&L and account values when coverage is complete", () => {
+    const transactions: EngineTransaction[] = [
+      { assetId: "etf", accountId: "broker", type: TransactionType.INITIAL_BALANCE, quantity: "100", pricePerUnit: "10", currency: "EUR", executedAt: "2026-01-01" },
+    ];
+    const portfolio = calculatePortfolio({ assets, transactions, marketPrices: { ...prices, VWCE: "12" } });
+    const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency: "EUR" });
+
+    expect(analytics.totalUnrealizedPnl).toBe("200.00");
+    expect(analytics.accounts).toContainEqual({ accountId: "broker", value: "1200.00", isPartial: false });
+    expect(analytics.priceCoverage).toEqual({ pricedHoldings: 1, totalHoldings: 1, percent: "100.00" });
+  });
+
+  it("withholds total P&L for missing prices, missing cost, unmatched transfers, and foreign cost currency", () => {
+    const baseTransaction: EngineTransaction = { assetId: "btc", accountId: "bybit", type: TransactionType.INITIAL_BALANCE, quantity: "1", pricePerUnit: "5000", currency: "EUR", executedAt: "2026-01-01" };
+    const cases: Array<{ transactions: EngineTransaction[]; marketPrices: Record<string, string> }> = [
+      { transactions: [baseTransaction], marketPrices: {} },
+      { transactions: [{ ...baseTransaction, pricePerUnit: null }], marketPrices: { BTC: "10000" } },
+      { transactions: [baseTransaction, { assetId: "btc", accountId: "wallet", type: TransactionType.TRANSFER_IN, quantity: "0.1", executedAt: "2026-01-02" }], marketPrices: { BTC: "10000" } },
+      { transactions: [{ ...baseTransaction, currency: "USD" }], marketPrices: { BTC: "10000" } },
+    ];
+
+    for (const item of cases) {
+      const portfolio = calculatePortfolio({ assets, transactions: item.transactions, marketPrices: item.marketPrices });
+      expect(calculatePortfolioAnalytics({ portfolio, assets, transactions: item.transactions, baseCurrency: "EUR" }).totalUnrealizedPnl).toBeNull();
+    }
+  });
+
+  it("preserves global cost basis across matched transfers and treats base EUR fiat as zero P&L", () => {
+    const engineAssets: EngineAsset[] = assets.map((asset) => asset.id === "eur" ? { ...asset, currency: "EUR" } : asset);
+    const transactions: EngineTransaction[] = [
+      { assetId: "btc", accountId: "bybit", type: TransactionType.INITIAL_BALANCE, quantity: "1", pricePerUnit: "5000", currency: "EUR", executedAt: "2026-01-01" },
+      { assetId: "btc", accountId: "bybit", type: TransactionType.TRANSFER_OUT, quantity: "0.4", executedAt: "2026-01-02" },
+      { assetId: "btc", accountId: "wallet", type: TransactionType.TRANSFER_IN, quantity: "0.4", executedAt: "2026-01-02" },
+      { assetId: "eur", accountId: "bank", type: TransactionType.INITIAL_BALANCE, quantity: "1000", pricePerUnit: null, currency: "EUR", executedAt: "2026-01-01" },
+    ];
+    const portfolio = calculatePortfolio({ assets: engineAssets, transactions, marketPrices: { BTC: "10000", EUR: "1" } });
+    const analytics = calculatePortfolioAnalytics({ portfolio, assets: engineAssets, transactions, baseCurrency: "EUR" });
+
+    expect(analytics.totalUnrealizedPnl).toBe("5000.00");
+    expect(analytics.accounts).toEqual(expect.arrayContaining([
+      { accountId: "bybit", value: "6000.00", isPartial: false },
+      { accountId: "wallet", value: "4000.00", isPartial: false },
+      { accountId: "bank", value: "1000.00", isPartial: false },
+    ]));
+  });
+
+  it("marks an account partial while preserving its available value", () => {
+    const transactions: EngineTransaction[] = [
+      { assetId: "btc", accountId: "mixed", type: TransactionType.INITIAL_BALANCE, quantity: "1" },
+      { assetId: "gold", accountId: "mixed", type: TransactionType.INITIAL_BALANCE, quantity: "10" },
+    ];
+    const portfolio = calculatePortfolio({ assets, transactions, marketPrices: { BTC: "10000" } });
+    const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency: "EUR" });
+
+    expect(analytics.accounts).toContainEqual({ accountId: "mixed", value: "10000.00", isPartial: true });
+    expect(analytics.priceCoverage).toEqual({ pricedHoldings: 1, totalHoldings: 2, percent: "50.00" });
   });
 });

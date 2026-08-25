@@ -7,6 +7,7 @@ export type EngineAsset = {
   symbol: string;
   assetClass: AssetClass;
   assetType: AssetType;
+  currency?: string;
 };
 
 export type EngineTransaction = {
@@ -15,6 +16,10 @@ export type EngineTransaction = {
   accountId: string;
   type: TransactionType;
   quantity: DecimalLike;
+  pricePerUnit?: DecimalLike | null;
+  fee?: DecimalLike | null;
+  currency?: string;
+  executedAt?: Date | string;
 };
 
 export type EngineStrategyAllocation = {
@@ -98,6 +103,45 @@ export type CalculatePortfolioInput = {
   assets: EngineAsset[];
   transactions: EngineTransaction[];
   marketPrices: MarketPrices;
+};
+
+export type PortfolioAnalytics = {
+  totalUnrealizedPnl: string | null;
+  priceCoverage: {
+    pricedHoldings: number;
+    totalHoldings: number;
+    percent: string;
+  };
+  accounts: Array<{
+    accountId: string;
+    value: string;
+    isPartial: boolean;
+  }>;
+};
+
+export type CalculatePortfolioAnalyticsInput = {
+  portfolio: PortfolioSnapshot;
+  assets: EngineAsset[];
+  transactions: EngineTransaction[];
+  baseCurrency: string;
+};
+
+export type StrategyAlignment = {
+  score: number | null;
+  allocationPoints: number;
+  allocationMaxPoints: 80;
+  priceDataPoints: number;
+  priceDataMaxPoints: 20;
+  inRangeClasses: number;
+  totalClasses: number;
+  pricedHoldings: number;
+  totalHoldings: number;
+};
+
+export type CalculateStrategyAlignmentInput = {
+  comparisons: AllocationComparison[];
+  pricedHoldings: number;
+  totalHoldings: number;
 };
 
 export type ContributionAllocation = {
