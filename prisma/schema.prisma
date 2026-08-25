@@ -57,6 +57,11 @@ enum MarketPriceUnit {
   TROY_OUNCE
 }
 
+enum AssistantMessageRole {
+  USER
+  ASSISTANT
+}
+
 model Asset {
   id           String              @id @default(cuid())
   symbol       String              @unique
@@ -192,4 +197,26 @@ model PortfolioRule {
 
   @@unique([strategyId, type])
   @@index([strategyId])
+}
+
+model AssistantConversation {
+  id        String             @id @default(cuid())
+  title     String
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+  messages  AssistantMessage[]
+
+  @@index([updatedAt])
+}
+
+model AssistantMessage {
+  id             String               @id @default(cuid())
+  conversationId String
+  role           AssistantMessageRole
+  content        String               @db.Text
+  createdAt      DateTime             @default(now())
+
+  conversation AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
 }
