@@ -1,16 +1,15 @@
-import { Coins } from "lucide-react";
-import { EmptyState } from "@/components/ui/empty-state";
+import { ScenariosClient } from "@/app/scenarios/_components/scenarios-client";
 import { PageHeader } from "@/components/ui/page-header";
+import { getScenariosPageModel } from "@/features/scenarios/read-model";
 
-export default function ScenariosPage() {
+export const dynamic = "force-dynamic";
+
+export default async function ScenariosPage() {
+  const model = await getScenariosPageModel();
   return (
     <>
-      <PageHeader title="Scenarios" description="Compare long-term allocation and contribution variants." />
-      <EmptyState
-        title="Scenario modeling is planned"
-        description="Future scenarios will use deterministic calculations and clearly separated assumptions."
-        icon={<Coins className="h-5 w-5" aria-hidden="true" />}
-      />
+      <PageHeader title="Scenarios" description="Test hypothetical portfolio decisions without changing real data." />
+      <ScenariosClient model={model} />
     </>
   );
 }
