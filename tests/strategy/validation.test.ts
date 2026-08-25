@@ -21,6 +21,22 @@ describe("strategy allocation validation", () => {
     expect(validateStrategyAllocations(validAllocations)).toHaveLength(4);
   });
 
+  it("accepts a strategy without CASH", () => {
+    expect(validateStrategyAllocations([
+      { assetClass: AssetClass.ETF, targetPercent: "78", minPercent: "70", maxPercent: "85" },
+      { assetClass: AssetClass.CRYPTO, targetPercent: "12", minPercent: "8", maxPercent: "20" },
+      { assetClass: AssetClass.GOLD, targetPercent: "10", minPercent: "5", maxPercent: "15" },
+    ])).toHaveLength(3);
+  });
+
+  it("accepts any 3 enabled classes totaling 100", () => {
+    expect(validateStrategyAllocations([
+      { assetClass: AssetClass.ETF, targetPercent: "60", minPercent: "50", maxPercent: "70" },
+      { assetClass: AssetClass.GOLD, targetPercent: "25", minPercent: "15", maxPercent: "35" },
+      { assetClass: AssetClass.CASH, targetPercent: "15", minPercent: "0", maxPercent: "25" },
+    ])).toHaveLength(3);
+  });
+
   it("accepts allocations where min <= target <= max", () => {
     const result = validateStrategyAllocations(validAllocations);
     expect(result.every((allocation) => Number(allocation.minPercent) <= Number(allocation.targetPercent))).toBe(true);
@@ -64,10 +80,7 @@ describe("strategy allocation validation", () => {
   it("accepts inclusive 0 and 100 boundaries", () => {
     expect(validateStrategyAllocations([
       { assetClass: AssetClass.ETF, targetPercent: "100", minPercent: "0", maxPercent: "100" },
-      { assetClass: AssetClass.CRYPTO, targetPercent: "0", minPercent: "0", maxPercent: "100" },
-      { assetClass: AssetClass.GOLD, targetPercent: "0", minPercent: "0", maxPercent: "100" },
-      { assetClass: AssetClass.CASH, targetPercent: "0", minPercent: "0", maxPercent: "100" },
-    ])).toHaveLength(4);
+    ])).toHaveLength(1);
   });
 
   it("rejects values outside 0-100 and precision beyond two decimals", () => {
@@ -83,12 +96,11 @@ describe("strategy allocation validation", () => {
     expect(() => parsePercentToBasisPoints("-1")).toThrow(StrategyAllocationValidationError);
   });
 
-  it("rejects missing and duplicate editable classes", () => {
+  it("rejects duplicate enabled classes", () => {
     const duplicate = validAllocations.map((allocation, index) =>
       index === 3 ? { ...allocation, assetClass: AssetClass.GOLD } : allocation,
     );
     expect(() => validateStrategyAllocations(duplicate)).toThrow(StrategyAllocationValidationError);
-    expect(() => validateStrategyAllocations(validAllocations.slice(0, 3))).toThrow(StrategyAllocationValidationError);
   });
 
   it("validates name and minimum drift", () => {

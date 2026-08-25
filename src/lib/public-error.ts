@@ -3,7 +3,6 @@ import { ZodError } from "zod";
 const safeErrorNames = new Set([
   "PortfolioMutationError",
   "StrategyAllocationValidationError",
-  "ScenarioValidationError",
 ]);
 
 const safeMessagePrefixes = [

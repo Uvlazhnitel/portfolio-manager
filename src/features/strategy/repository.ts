@@ -65,6 +65,13 @@ export class StrategyRepository {
         });
       }
 
+      await transaction.strategyAllocation.deleteMany({
+        where: {
+          strategyId: strategy.id,
+          assetClass: { notIn: input.allocations.map((allocation) => allocation.assetClass) },
+        },
+      });
+
       const booleanRules = [
         {
           type: PortfolioRuleType.PREFER_CONTRIBUTIONS_OVER_SELLING,

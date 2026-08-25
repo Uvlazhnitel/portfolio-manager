@@ -36,7 +36,13 @@ import type {
   ValuedHolding,
 } from "@/features/portfolio-engine/types";
 
-const allocationClasses = [AssetClass.ETF, AssetClass.CRYPTO, AssetClass.GOLD, AssetClass.CASH] as const;
+const allocationClasses = [
+  AssetClass.ETF,
+  AssetClass.CRYPTO,
+  AssetClass.GOLD,
+  AssetClass.CASH,
+  AssetClass.OTHER,
+] as const;
 const allocationClassOrder = new Map<AssetClass, number>(
   allocationClasses.map((assetClass, index) => [assetClass, index]),
 );
@@ -199,10 +205,6 @@ export function calculateAssetClassAllocation(
   }
 
   for (const holding of valuedHoldings) {
-    if (!allocationClasses.includes(holding.assetClass as (typeof allocationClasses)[number])) {
-      continue;
-    }
-
     const current = valuesByClass.get(holding.assetClass) ?? ZERO;
     valuesByClass.set(holding.assetClass, current.plus(decimal(holding.value)));
   }
@@ -329,12 +331,16 @@ export function projectCustomContribution(input: ProjectContributionInput): Cont
   }
 
   const classes = new Set<AssetClass>();
+  const strategyClasses = new Set(input.strategy.map((allocation) => allocation.assetClass));
   const allocations = input.allocations.map((allocation) => {
     if (!allocationClasses.includes(allocation.assetClass as (typeof allocationClasses)[number])) {
       throw new Error(`Unsupported contribution asset class: ${allocation.assetClass}.`);
     }
+    if (!strategyClasses.has(allocation.assetClass)) {
+      throw new Error(`${allocation.assetClass} is not enabled in the active strategy.`);
+    }
     if (classes.has(allocation.assetClass)) {
-      throw new Error(`Contribution must contain exactly one ${allocation.assetClass} allocation.`);
+      throw new Error(`Contribution must contain only one ${allocation.assetClass} allocation.`);
     }
     classes.add(allocation.assetClass);
     const amount = requireMoney(allocation.amount, `${allocation.assetClass} amount`);
@@ -344,8 +350,9 @@ export function projectCustomContribution(input: ProjectContributionInput): Cont
     return { assetClass: allocation.assetClass, amount };
   });
 
-  if (classes.size !== allocationClasses.length || allocationClasses.some((assetClass) => !classes.has(assetClass))) {
-    throw new Error("Contribution must contain exactly one ETF, CRYPTO, GOLD, and CASH allocation.");
+  const missingStrategyClass = input.strategy.find((allocation) => !classes.has(allocation.assetClass));
+  if (missingStrategyClass) {
+    throw new Error(`Contribution must contain one ${missingStrategyClass.assetClass} allocation.`);
   }
 
   const allocationTotal = allocations.reduce((sum, allocation) => sum.plus(allocation.amount), ZERO);
@@ -423,14 +430,17 @@ export function validateStrategy(strategy: EngineStrategyAllocation[]) {
     }
   }
 
-  if (
-    strategy.length !== allocationClasses.length ||
-    allocationClasses.some((assetClass) => classCounts.get(assetClass) !== 1) ||
-    [...classCounts.keys()].some(
-      (assetClass) => !allocationClasses.includes(assetClass as (typeof allocationClasses)[number]),
-    )
-  ) {
-    throw new Error("Strategy must contain exactly one ETF, CRYPTO, GOLD, and CASH allocation.");
+  if (strategy.length === 0) {
+    throw new Error("Strategy must contain at least one allocation.");
+  }
+
+  for (const [assetClass, count] of classCounts) {
+    if (!allocationClasses.includes(assetClass as (typeof allocationClasses)[number])) {
+      throw new Error(`Unsupported strategy asset class: ${assetClass}.`);
+    }
+    if (count > 1) {
+      throw new Error(`Strategy must contain only one ${assetClass} allocation.`);
+    }
   }
 }
 

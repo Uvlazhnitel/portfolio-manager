@@ -1,6 +1,6 @@
 import { AssetClass, type Prisma } from "@prisma/client";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
-import { parseSaveInput, type SaveContributionPlanInput } from "@/features/contributions/validation";
+import { parseSaveInput, validateContributionAllocations, type SaveContributionPlanInput } from "@/features/contributions/validation";
 import { StrategyRepository } from "@/features/strategy/repository";
 
 export class ContributionPlanService {
@@ -18,6 +18,11 @@ export class ContributionPlanService {
     if (strategy.baseCurrency !== parsed.currency) {
       throw new Error(`Contribution currency must match strategy base currency ${strategy.baseCurrency}.`);
     }
+    validateContributionAllocations(
+      parsed.contributionAmount,
+      parsed.allocations,
+      strategy.allocations.map((allocation) => allocation.assetClass),
+    );
 
     const allocations = parsed.allocations
       .sort((left, right) => contributionClassOrder(left.assetClass) - contributionClassOrder(right.assetClass))

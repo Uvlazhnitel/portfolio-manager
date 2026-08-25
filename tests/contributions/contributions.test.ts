@@ -84,6 +84,73 @@ describe("contribution plan persistence and read model", () => {
     expect(preview.projection.afterComparison.find((row) => row.assetClass === AssetClass.ETF)?.targetPercent).toBe("60.00");
     expect(preview.projection.afterComparison.find((row) => row.assetClass === AssetClass.CRYPTO)?.targetPercent).toBe("25.00");
   });
+
+  it("plans and saves contributions without CASH when CASH is not active in the strategy", async () => {
+    await testDb.prisma.contributionPlan.deleteMany({ where: { strategyId } });
+    await testDb.prisma.strategyAllocation.update({ where: { strategyId_assetClass: { strategyId, assetClass: AssetClass.ETF } }, data: { targetPercent: "78", minPercent: "70", maxPercent: "85" } });
+    await testDb.prisma.strategyAllocation.update({ where: { strategyId_assetClass: { strategyId, assetClass: AssetClass.CRYPTO } }, data: { targetPercent: "12", minPercent: "8", maxPercent: "20" } });
+    await testDb.prisma.strategyAllocation.update({ where: { strategyId_assetClass: { strategyId, assetClass: AssetClass.GOLD } }, data: { targetPercent: "10", minPercent: "5", maxPercent: "15" } });
+    await testDb.prisma.strategyAllocation.delete({ where: { strategyId_assetClass: { strategyId, assetClass: AssetClass.CASH } } });
+    resetMarketDataRuntimeCacheForTests();
+
+    const preview = await previewContribution({
+      contributionAmount: "1000",
+      allocations: [
+        { assetClass: AssetClass.ETF, amount: "780.00" },
+        { assetClass: AssetClass.CRYPTO, amount: "120.00" },
+        { assetClass: AssetClass.GOLD, amount: "100.00" },
+      ],
+    }, {
+      portfolioRepository: new PortfolioRepository(testDb.prisma),
+      strategyRepository: new StrategyRepository(testDb.prisma),
+      marketDataService,
+    });
+
+    expect(preview.recommendedAllocations.some((allocation) => allocation.assetClass === AssetClass.CASH)).toBe(false);
+    expect(preview.projection.afterComparison.map((allocation) => allocation.assetClass).sort()).toEqual([
+      AssetClass.CRYPTO,
+      AssetClass.ETF,
+      AssetClass.GOLD,
+    ].sort());
+
+    const service = new ContributionPlanService(new ContributionPlanRepository(testDb.prisma), new StrategyRepository(testDb.prisma));
+    await service.save({
+      strategyId,
+      currency: "EUR",
+      contributionAmount: "1000.00",
+      allocations: [
+        { assetClass: AssetClass.ETF, amount: "780.00" },
+        { assetClass: AssetClass.CRYPTO, amount: "120.00" },
+        { assetClass: AssetClass.GOLD, amount: "100.00" },
+      ],
+      isCustomized: true,
+    });
+
+    const model = await getContributionPlannerModel({
+      portfolioRepository: new PortfolioRepository(testDb.prisma),
+      strategyRepository: new StrategyRepository(testDb.prisma),
+      planRepository: new ContributionPlanRepository(testDb.prisma),
+      marketDataService,
+    });
+    expect(model.strategy.allocations.map((allocation) => allocation.assetClass).sort()).toEqual([
+      AssetClass.CRYPTO,
+      AssetClass.ETF,
+      AssetClass.GOLD,
+    ].sort());
+    expect(model.allocations.some((allocation) => allocation.assetClass === AssetClass.CASH)).toBe(false);
+    await expect(service.save({
+      strategyId,
+      currency: "EUR",
+      contributionAmount: "1000.00",
+      allocations: [
+        { assetClass: AssetClass.ETF, amount: "779.00" },
+        { assetClass: AssetClass.CRYPTO, amount: "120.00" },
+        { assetClass: AssetClass.GOLD, amount: "100.00" },
+        { assetClass: AssetClass.CASH, amount: "1.00" },
+      ],
+      isCustomized: true,
+    })).rejects.toThrow("not enabled");
+  });
 });
 
 class PriceStore implements MarketDataStore {

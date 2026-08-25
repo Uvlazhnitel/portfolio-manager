@@ -1,7 +1,7 @@
 import { AssetClass, PortfolioRuleType } from "@prisma/client";
 import { serializeDecimal } from "@/lib/db/decimal";
 import { StrategyRepository } from "@/features/strategy/repository";
-import { editableAssetClasses } from "@/features/strategy/validation";
+import { assetClassOrder, editableAssetClasses } from "@/features/strategy/validation";
 
 type StrategyWithRelations = NonNullable<Awaited<ReturnType<StrategyRepository["findActiveStrategy"]>>>;
 
@@ -36,7 +36,6 @@ export async function getStrategyEditorModel(repository = new StrategyRepository
 }
 
 export function toStrategyEditorModel(strategy: StrategyWithRelations): StrategyEditorModel {
-  const allocationsByClass = new Map(strategy.allocations.map((allocation) => [allocation.assetClass, allocation]));
   const rulesByType = new Map(strategy.portfolioRules.map((rule) => [rule.type, rule]));
   const driftRule = rulesByType.get(PortfolioRuleType.MIN_REBALANCE_DRIFT);
 
@@ -46,20 +45,14 @@ export function toStrategyEditorModel(strategy: StrategyWithRelations): Strategy
     objective: strategy.objective,
     baseCurrency: strategy.baseCurrency,
     updatedAt: strategy.updatedAt.toISOString(),
-    allocations: editableAssetClasses.map((assetClass) => {
-      const allocation = allocationsByClass.get(assetClass);
-
-      if (!allocation) {
-        throw new Error(`${assetClass} allocation is missing from the active strategy.`);
-      }
-
-      return {
-        assetClass,
+    allocations: [...strategy.allocations]
+      .sort((left, right) => assetClassOrder(left.assetClass) - assetClassOrder(right.assetClass))
+      .map((allocation) => ({
+        assetClass: allocation.assetClass,
         targetPercent: serializeDecimal(allocation.targetPercent),
         minPercent: serializeDecimal(allocation.minPercent),
         maxPercent: serializeDecimal(allocation.maxPercent),
-      };
-    }),
+      })),
     rules: {
       preferContributionsOverSelling:
         rulesByType.get(PortfolioRuleType.PREFER_CONTRIBUTIONS_OVER_SELLING)?.enabled ?? true,

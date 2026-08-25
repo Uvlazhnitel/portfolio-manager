@@ -2,7 +2,6 @@ import {
   Bot,
   Brain,
   ChartNoAxesCombined,
-  Coins,
   Gauge,
   Landmark,
   PiggyBank,
@@ -23,7 +22,6 @@ export const navigationItems = [
     ],
   },
   { label: "Intelligence", href: "/intelligence", icon: Brain },
-  { label: "Scenarios", href: "/scenarios", icon: Coins },
   { label: "Assistant", href: "/assistant", icon: Bot },
   { label: "Settings", href: "/settings", icon: Settings },
 ] as const;

@@ -1,8 +1,8 @@
 import type { Responses } from "openai/resources/responses/responses";
 import { buildContributionProjection } from "@/features/portfolio-engine";
 import type { AssistantPortfolioRuntime } from "@/features/assistant/context";
+import { checkAssistantTransaction } from "@/features/assistant/transaction-check";
 import { planContributionToolSchema, simulateTransactionToolSchema } from "@/features/assistant/validation";
-import { simulateTransactionScenario } from "@/features/scenarios/engine";
 
 export const assistantToolDefinitions: Responses.Tool[] = [
   {
@@ -102,7 +102,7 @@ export async function executeAssistantTool(
     if (!runtime.strategy) throw new Error("Active strategy was not found.");
     const asset = runtime.assets.find((candidate) => candidate.symbol.toUpperCase() === parsed.symbol);
     if (!asset) throw new Error(`Asset ${parsed.symbol} was not found.`);
-    const simulation = simulateTransactionScenario({
+    const simulation = checkAssistantTransaction({
       assets: runtime.assets,
       transactions: runtime.transactions,
       marketPrices: runtime.marketPrices,

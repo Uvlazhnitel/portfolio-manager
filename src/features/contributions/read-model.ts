@@ -11,14 +11,14 @@ import { StrategyRepository } from "@/features/strategy/repository";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
 import {
   parsePreviewInput,
-  contributionAssetClasses,
+  validateContributionAllocations,
   type ContributionPreviewInput,
   type ParsedContributionAllocation,
 } from "@/features/contributions/validation";
 import { serializeDecimal } from "@/lib/db/decimal";
 
 export type ContributionPlannerModel = {
-  strategy: { id: string; name: string; currency: string };
+  strategy: { id: string; name: string; currency: string; allocations: Array<{ assetClass: AssetClass }> };
   contributionAmount: string;
   allocations: ParsedContributionAllocation[];
   recommendedAllocations: ParsedContributionAllocation[];
@@ -64,16 +64,22 @@ export async function getContributionPlannerModel({
   const recommendation = contributionAmount && contributionAmount !== "0"
     ? buildContributionProjection({ portfolio, strategy: strategy.allocations, contributionAmount })
     : null;
-  const recommendedAllocations = normalizeAllocations(recommendation?.plan.allocations ?? []);
+  const activeAssetClasses = strategy.allocations.map((allocation) => allocation.assetClass);
+  const recommendedAllocations = normalizeAllocations(recommendation?.plan.allocations ?? [], activeAssetClasses);
   const shouldRestoreSavedAllocation = !preferredAmount && Boolean(saved);
   const savedAllocations = shouldRestoreSavedAllocation && saved ? parseSavedAllocations(saved.allocations) : [];
-  const allocations = shouldRestoreSavedAllocation ? normalizeAllocations(savedAllocations) : recommendedAllocations;
+  const allocations = shouldRestoreSavedAllocation ? normalizeAllocations(savedAllocations, activeAssetClasses) : recommendedAllocations;
   const projection = contributionAmount && contributionAmount !== "0"
     ? projectCustomContribution({ portfolio, strategy: strategy.allocations, contributionAmount, allocations })
     : null;
 
   return {
-    strategy: { id: strategy.id, name: strategy.name, currency: strategy.baseCurrency },
+    strategy: {
+      id: strategy.id,
+      name: strategy.name,
+      currency: strategy.baseCurrency,
+      allocations: activeAssetClasses.map((assetClass) => ({ assetClass })),
+    },
     contributionAmount,
     allocations,
     recommendedAllocations,
@@ -109,6 +115,10 @@ export async function previewContribution(
     strategyRepository.findActiveStrategy(),
   ]);
   if (!strategy) throw new Error("Active strategy was not found.");
+  const activeAssetClasses = strategy.allocations.map((allocation) => allocation.assetClass);
+  if (parsed.allocations) {
+    validateContributionAllocations(parsed.contributionAmount, parsed.allocations, activeAssetClasses);
+  }
   const marketData = await marketDataService.getCurrentPrices({ assets, baseCurrency: strategy.baseCurrency });
   const portfolio = calculatePortfolio({ assets, transactions, marketPrices: toEngineMarketPrices(marketData) });
   const projection = parsed.allocations
@@ -119,6 +129,7 @@ export async function previewContribution(
     projection,
     recommendedAllocations: normalizeAllocations(
       buildContributionProjection({ portfolio, strategy: strategy.allocations, contributionAmount: parsed.contributionAmount }).plan.allocations,
+      activeAssetClasses,
     ),
     valuation: {
       isPartial: portfolio.missingPriceSymbols.length > 0,
@@ -130,9 +141,9 @@ export async function previewContribution(
   };
 }
 
-function normalizeAllocations(allocations: Array<{ assetClass: AssetClass; amount: string }>) {
+function normalizeAllocations(allocations: Array<{ assetClass: AssetClass; amount: string }>, assetClasses: AssetClass[]) {
   const byClass = new Map(allocations.map((allocation) => [allocation.assetClass, allocation.amount]));
-  return contributionAssetClasses.map((assetClass) => ({ assetClass, amount: byClass.get(assetClass) ?? "0.00" }));
+  return assetClasses.map((assetClass) => ({ assetClass, amount: byClass.get(assetClass) ?? "0.00" }));
 }
 
 function parseSavedAllocations(value: unknown): ParsedContributionAllocation[] {

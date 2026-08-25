@@ -6,7 +6,7 @@ import { AlertCircle, CheckCircle2, RotateCcw, Save, SlidersHorizontal, Sparkles
 import { previewContributionAction, saveContributionPlanAction } from "@/features/contributions/actions";
 import type { ContributionPlannerModel } from "@/features/contributions/read-model";
 import type { ContributionProjection } from "@/features/portfolio-engine";
-import { contributionAssetClasses, moneyToCents, type ParsedContributionAllocation } from "@/features/contributions/validation";
+import { moneyToCents, type ParsedContributionAllocation } from "@/features/contributions/validation";
 import { contributionClassLabels as classLabels, contributionReasonText } from "@/features/contributions/presentation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,7 @@ export function ContributionPlanner({ model }: { model: ContributionPlannerModel
   const requestId = useRef(0);
   const allocationAnalysis = useMemo(() => analyzeDraft(amount, allocations), [amount, allocations]);
   const requestAllocations = useMemo(() => isCustomized ? allocations : undefined, [isCustomized, allocations]);
+  const activeAssetClasses = model.strategy.allocations.map((allocation) => allocation.assetClass);
 
   useEffect(() => {
     const currentRequest = ++requestId.current;
@@ -141,7 +142,7 @@ export function ContributionPlanner({ model }: { model: ContributionPlannerModel
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {contributionAssetClasses.map((assetClass) => {
+              {activeAssetClasses.map((assetClass) => {
                 const allocation = allocations.find((item) => item.assetClass === assetClass);
                 const displayed = projection?.plan.allocations.find((item) => item.assetClass === assetClass);
                 return (

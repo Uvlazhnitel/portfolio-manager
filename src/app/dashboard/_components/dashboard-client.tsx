@@ -6,7 +6,6 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { AlertCircle, ArrowRight, Building2, CheckCircle2, CircleDollarSign, Info, Sparkles, Target, X } from "lucide-react";
 import { previewContributionAction } from "@/features/contributions/actions";
 import { contributionClassLabels, contributionReasonText } from "@/features/contributions/presentation";
-import { contributionAssetClasses } from "@/features/contributions/validation";
 import type { DashboardReadModel } from "@/features/dashboard/read-model";
 import { formatDashboardCurrency as formatCurrency, formatDashboardPercent as formatPercent, formatDashboardSignedCurrency as formatSignedCurrency, strategyWarningText } from "@/features/dashboard/presentation";
 import type { ContributionProjection } from "@/features/portfolio-engine";
@@ -137,7 +136,7 @@ function ContributionCard({ currency, amount, projection, error, isPending, onAm
       <label className="mt-5 block"><span className="mb-2 block text-xs uppercase tracking-wide text-muted">Next contribution</span><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">{currency === "USD" ? "$" : currency}</span><input type="number" min="0" step="0.01" inputMode="decimal" value={amount} onChange={(event) => onAmount(event.target.value)} placeholder="1,000" className="h-11 w-full rounded-lg border border-border bg-surface pl-8 pr-12 outline-none focus:border-primary" /><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">{currency}</span></div></label>
       {isPending ? <p className="mt-3 text-xs text-muted">Updating recommendation…</p> : null}
       {error ? <p className="mt-3 text-xs text-destructive">{error}</p> : null}
-      {projection ? <div className="mt-4 grid grid-cols-2 gap-2">{contributionAssetClasses.map((assetClass) => { const item = projection.plan.allocations.find((allocation) => allocation.assetClass === assetClass); return <div key={assetClass} className="rounded-lg bg-surface p-2"><p className="text-xs text-muted">{contributionClassLabels[assetClass]}</p><p className="mt-1 text-sm font-semibold">{formatCurrency(item?.amount ?? "0", currency)}</p><p className="mt-1 text-[11px] text-muted">{item?.percentOfContribution ?? "0.00"}%</p></div>; })}</div> : <p className="mt-4 text-sm text-muted">Enter an amount to calculate the next contribution.</p>}
+      {projection ? <div className="mt-4 grid grid-cols-2 gap-2">{projection.plan.allocations.map((item) => <div key={item.assetClass} className="rounded-lg bg-surface p-2"><p className="text-xs text-muted">{contributionClassLabels[item.assetClass]}</p><p className="mt-1 text-sm font-semibold">{formatCurrency(item.amount, currency)}</p><p className="mt-1 text-[11px] text-muted">{item.percentOfContribution}%</p></div>)}</div> : <p className="mt-4 text-sm text-muted">Enter an amount to calculate the next contribution.</p>}
       <div className="mt-4 flex flex-col gap-2"><Link href={href} className="inline-flex min-h-11 items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-primary/90">Plan contribution <ArrowRight className="ml-2 h-4 w-4" /></Link><Button type="button" variant="ghost" onClick={onReasons} disabled={!projection}>Why this recommendation?</Button></div>
     </Card>
   );

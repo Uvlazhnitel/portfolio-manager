@@ -1,13 +1,6 @@
 import { z } from "zod";
 import { AssetClass } from "@/lib/domain/enums";
 
-export const contributionAssetClasses = [
-  AssetClass.ETF,
-  AssetClass.CRYPTO,
-  AssetClass.GOLD,
-  AssetClass.CASH,
-] as const;
-
 const moneySchema = z.union([z.string(), z.number()]).transform((value, context) => {
   const normalized = String(value).trim();
   if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) {
@@ -41,22 +34,29 @@ export type ParsedContributionAllocation = z.output<typeof contributionAllocatio
 export function validateContributionAllocations(
   contributionAmount: string,
   allocations: ParsedContributionAllocation[],
+  activeAssetClasses: AssetClass[],
 ) {
   const counts = new Map<AssetClass, number>();
+  const activeClassSet = new Set(activeAssetClasses);
   let totalCents = 0;
 
   for (const allocation of allocations) {
+    if (!activeClassSet.has(allocation.assetClass)) {
+      throw new Error(`${allocation.assetClass} is not enabled in the active strategy.`);
+    }
     counts.set(allocation.assetClass, (counts.get(allocation.assetClass) ?? 0) + 1);
     totalCents += moneyToCents(allocation.amount);
   }
 
-  for (const assetClass of contributionAssetClasses) {
+  for (const assetClass of activeAssetClasses) {
     if (counts.get(assetClass) !== 1) {
-      throw new Error(`Contribution must contain exactly one ${assetClass} allocation.`);
+      throw new Error(`Contribution must contain one ${assetClass} allocation.`);
     }
   }
-  if ([...counts.keys()].some((assetClass) => !contributionAssetClasses.includes(assetClass as (typeof contributionAssetClasses)[number]))) {
-    throw new Error("Only ETF, CRYPTO, GOLD, and CASH contribution allocations are supported.");
+  for (const [assetClass, count] of counts) {
+    if (count > 1) {
+      throw new Error(`Contribution must contain only one ${assetClass} allocation.`);
+    }
   }
   if (totalCents !== moneyToCents(contributionAmount)) {
     throw new Error("Custom allocation must equal the contribution amount exactly.");
@@ -75,11 +75,7 @@ export function moneyToCents(value: string) {
 }
 
 export function parsePreviewInput(input: ContributionPreviewInput) {
-  const parsed = contributionPreviewInputSchema.parse(input);
-  if (parsed.allocations) {
-    validateContributionAllocations(parsed.contributionAmount, parsed.allocations);
-  }
-  return parsed;
+  return contributionPreviewInputSchema.parse(input);
 }
 
 export function parseContributionQueryAmount(value: string | string[] | undefined) {
@@ -95,6 +91,5 @@ export function parseSaveInput(input: SaveContributionPlanInput) {
   if (moneyToCents(parsed.contributionAmount) <= 0) {
     throw new Error("Contribution amount must be greater than zero.");
   }
-  validateContributionAllocations(parsed.contributionAmount, parsed.allocations);
   return parsed;
 }

@@ -95,4 +95,45 @@ describe("strategy update", () => {
     expect(after.allocations.map((allocation) => allocation.targetPercent.toString()).sort())
       .toEqual(before.allocations.map((allocation) => allocation.targetPercent.toString()).sort());
   });
+
+  it("removes a disabled allocation and adds it back later", async () => {
+    const service = new StrategyService(new StrategyRepository(testDb.prisma));
+
+    const withoutCash = await service.updateStrategy({
+      id: strategyId,
+      name: "No cash sleeve",
+      allocations: [
+        { assetClass: AssetClass.ETF, targetPercent: "78", minPercent: "70", maxPercent: "85" },
+        { assetClass: AssetClass.CRYPTO, targetPercent: "12", minPercent: "8", maxPercent: "20" },
+        { assetClass: AssetClass.GOLD, targetPercent: "10", minPercent: "5", maxPercent: "15" },
+      ],
+      rules: {
+        preferContributionsOverSelling: true,
+        challengeStrategyViolations: true,
+        preferNoActionWhenEvidenceWeak: true,
+        minimumRebalanceDrift: "2",
+      },
+    });
+
+    expect(withoutCash.allocations.map((allocation) => allocation.assetClass).sort()).toEqual([
+      AssetClass.CRYPTO,
+      AssetClass.ETF,
+      AssetClass.GOLD,
+    ].sort());
+
+    const withCashAgain = await service.updateStrategy({
+      id: strategyId,
+      name: "Cash sleeve restored",
+      allocations,
+      rules: {
+        preferContributionsOverSelling: true,
+        challengeStrategyViolations: true,
+        preferNoActionWhenEvidenceWeak: true,
+        minimumRebalanceDrift: "2",
+      },
+    });
+
+    expect(withCashAgain.allocations).toHaveLength(4);
+    expect(withCashAgain.allocations.some((allocation) => allocation.assetClass === AssetClass.CASH)).toBe(true);
+  });
 });

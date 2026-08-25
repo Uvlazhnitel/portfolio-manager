@@ -6,6 +6,7 @@ export const editableAssetClasses = [
   AssetClass.CRYPTO,
   AssetClass.GOLD,
   AssetClass.CASH,
+  AssetClass.OTHER,
 ] as const;
 
 const decimalLikeSchema = z.union([z.string(), z.number()]).transform((value) => String(value).trim());
@@ -118,14 +119,14 @@ export function analyzeStrategyDraft(input: {
     }
   }
 
-  for (const assetClass of editableAssetClasses) {
-    if (classCounts.get(assetClass) !== 1) {
-      errors.push(`Strategy must contain exactly one ${assetClass} allocation.`);
-    }
+  if ([...classCounts.keys()].some((assetClass) => !editableAssetClasses.includes(assetClass as (typeof editableAssetClasses)[number]))) {
+    errors.push("Only supported asset classes are editable.");
   }
 
-  if ([...classCounts.keys()].some((assetClass) => !editableAssetClasses.includes(assetClass as (typeof editableAssetClasses)[number]))) {
-    errors.push("Only ETF, CRYPTO, GOLD, and CASH allocations are editable.");
+  for (const [assetClass, count] of classCounts) {
+    if (count > 1) {
+      errors.push(`Strategy must contain only one ${assetClass} allocation.`);
+    }
   }
 
   if (totalBasisPoints !== 10_000) {
@@ -186,20 +187,24 @@ export function strategyDraftFingerprint(input: {
 }) {
   return JSON.stringify({
     name: input.name,
-    allocations: editableAssetClasses.map((assetClass) => {
-      const allocation = input.allocations.find((item) => item.assetClass === assetClass);
-      return allocation ? {
-        assetClass,
+    allocations: [...input.allocations]
+      .sort((left, right) => assetClassOrder(left.assetClass) - assetClassOrder(right.assetClass))
+      .map((allocation) => ({
+        assetClass: allocation.assetClass,
         targetPercent: fingerprintPercent(allocation.targetPercent),
         minPercent: fingerprintPercent(allocation.minPercent),
         maxPercent: fingerprintPercent(allocation.maxPercent),
-      } : null;
-    }),
+      })),
     rules: {
       ...input.rules,
       minimumRebalanceDrift: fingerprintPercent(input.rules.minimumRebalanceDrift),
     },
   });
+}
+
+export function assetClassOrder(assetClass: AssetClass) {
+  const index = editableAssetClasses.indexOf(assetClass as (typeof editableAssetClasses)[number]);
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
 }
 
 function fingerprintPercent(value: string | number) {

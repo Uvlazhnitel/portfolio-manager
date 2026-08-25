@@ -2,11 +2,13 @@
 
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { AssetClass, type AssetClass as AssetClassValue } from "@/lib/domain/enums";
-import { AlertCircle, CheckCircle2, RotateCcw, Save } from "lucide-react";
+import { AlertCircle, CheckCircle2, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { updateStrategyAction } from "@/features/strategy/actions";
 import type { StrategyEditorModel } from "@/features/strategy/read-model";
 import {
   analyzeStrategyDraft,
+  assetClassOrder,
+  editableAssetClasses,
   strategyDraftFingerprint,
   type StrategyAllocationInput,
 } from "@/features/strategy/validation";
@@ -39,6 +41,9 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
   });
   const isDirty = strategyDraftFingerprint(draft) !== strategyDraftFingerprint(initialDraft);
   const cryptoAllocation = draft.allocations.find((allocation) => allocation.assetClass === AssetClass.CRYPTO);
+  const availableAssetClasses = editableAssetClasses.filter(
+    (assetClass) => !draft.allocations.some((allocation) => allocation.assetClass === assetClass),
+  );
 
   useEffect(() => {
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -56,6 +61,23 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
       allocations: current.allocations.map((allocation) =>
         allocation.assetClass === assetClass ? { ...allocation, [field]: value } : allocation,
       ),
+    }));
+  }
+
+  function addAllocation(assetClass: AssetClassValue) {
+    setDraft((current) => ({
+      ...current,
+      allocations: [
+        ...current.allocations,
+        { assetClass, targetPercent: "0", minPercent: "0", maxPercent: "100" },
+      ].sort((left, right) => assetClassOrder(left.assetClass) - assetClassOrder(right.assetClass)),
+    }));
+  }
+
+  function removeAllocation(assetClass: AssetClassValue) {
+    setDraft((current) => ({
+      ...current,
+      allocations: current.allocations.filter((allocation) => allocation.assetClass !== assetClass),
     }));
   }
 
@@ -106,9 +128,21 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
               key={allocation.assetClass}
               allocation={allocation}
               onChange={(field, value) => updateAllocation(allocation.assetClass, field, value)}
+              onRemove={() => removeAllocation(allocation.assetClass)}
             />
           ))}
         </div>
+
+        {availableAssetClasses.length > 0 ? (
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            {availableAssetClasses.map((assetClass) => (
+              <Button key={assetClass} type="button" variant="secondary" onClick={() => addAllocation(assetClass)}>
+                <Plus className="mr-2 h-4 w-4" aria-hidden="true" />
+                {formatAssetClass(assetClass)}
+              </Button>
+            ))}
+          </div>
+        ) : null}
 
         {!analysis.isValid ? (
           <div className="mt-5 flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/10 p-4 text-sm text-warning">
@@ -155,12 +189,14 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
             value={draft.rules.minimumRebalanceDrift}
             onChange={(value) => updateRule("minimumRebalanceDrift", value)}
           />
-          <NumberRule
-            label="Maximum crypto allocation"
-            description="Same source of truth as Crypto Maximum in target allocation."
-            value={cryptoAllocation?.maxPercent ?? ""}
-            onChange={(value) => updateAllocation(AssetClass.CRYPTO, "maxPercent", value)}
-          />
+          {cryptoAllocation ? (
+            <NumberRule
+              label="Maximum crypto allocation"
+              description="Same source of truth as Crypto Maximum in target allocation."
+              value={cryptoAllocation.maxPercent}
+              onChange={(value) => updateAllocation(AssetClass.CRYPTO, "maxPercent", value)}
+            />
+          ) : null}
         </div>
       </Card>
 
@@ -198,13 +234,25 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
 function AllocationRow({
   allocation,
   onChange,
+  onRemove,
 }: {
   allocation: StrategyAllocationInput;
   onChange: (field: AllocationField, value: string) => void;
+  onRemove: () => void;
 }) {
   return (
     <div className="rounded-lg border border-border bg-surface p-4">
-      <h3 className="font-semibold text-foreground">{formatAssetClass(allocation.assetClass)}</h3>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-semibold text-foreground">{formatAssetClass(allocation.assetClass)}</h3>
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove ${formatAssetClass(allocation.assetClass)} allocation`}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border text-muted transition hover:border-destructive/50 hover:text-destructive"
+        >
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
       <div className="mt-4 grid gap-5 lg:grid-cols-3">
         {(Object.keys(allocationLabels) as AllocationField[]).map((field) => (
           <label key={field} className="block">
