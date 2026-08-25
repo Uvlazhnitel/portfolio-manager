@@ -1,4 +1,4 @@
-const STATIC_CACHE = "portfolio-manager-static-v1";
+const STATIC_CACHE = "portfolio-manager-static-v2";
 const OFFLINE_URL = "/offline";
 const PRECACHE_URLS = [
   OFFLINE_URL,
