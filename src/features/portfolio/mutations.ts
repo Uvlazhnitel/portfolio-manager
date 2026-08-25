@@ -1,5 +1,6 @@
 import {
   AssetType,
+  MarketPriceUnit,
   Prisma,
   TransactionType,
   type PrismaClient,
@@ -16,6 +17,11 @@ import {
 } from "@/features/portfolio/validation";
 import { prisma } from "@/lib/db/client";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
+import {
+  formatPhysicalGoldQuantity,
+  goldPricePerGram,
+  troyOuncesToGrams,
+} from "@/features/market-data/gold";
 
 const implementedTransactionTypes = [
   TransactionType.INITIAL_BALANCE,
@@ -42,7 +48,7 @@ export const transactionMutationSchema = z.object({
   assetId: z.string().optional(),
   newAsset: assetInputSchema.optional(),
   quantity: positiveDecimalStringSchema.optional(),
-  physicalGoldWeightGrams: positiveDecimalStringSchema.optional(),
+  physicalGoldWeightTroyOunces: positiveDecimalStringSchema.optional(),
   pricePerUnit: nonNegativeDecimalStringSchema.optional(),
   totalAmount: nonNegativeDecimalStringSchema.optional(),
   totalPurchaseCost: nonNegativeDecimalStringSchema.optional(),
@@ -113,15 +119,16 @@ export async function createTransactionMutation(
 
     return {
       accountName: account.name,
-      assetSymbol: asset.symbol,
-      quantity: normalized.quantity,
+      quantityLabel: asset.assetType === AssetType.PHYSICAL_GOLD
+        ? formatPhysicalGoldQuantity(normalized.quantity)
+        : `${normalized.quantity} ${asset.symbol}`,
     };
   });
 
   return {
     ok: true,
     message: parsed.type === TransactionType.INITIAL_BALANCE
-      ? `Added ${saved.quantity} ${saved.assetSymbol} to ${saved.accountName}.`
+      ? `Added ${saved.quantityLabel} to ${saved.accountName}.`
       : "Transaction saved.",
   };
 }
@@ -199,13 +206,24 @@ async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, d
 
 function normalizeTransaction(parsed: z.infer<typeof transactionMutationSchema>, assetType: AssetType) {
   const isPhysicalGold = assetType === AssetType.PHYSICAL_GOLD;
-  const quantity = isPhysicalGold && parsed.physicalGoldWeightGrams ? parsed.physicalGoldWeightGrams : parsed.quantity;
+  const inputQuantity = isPhysicalGold
+    ? parsed.physicalGoldWeightTroyOunces
+    : parsed.quantity;
 
-  if (!quantity) {
-    throw new PortfolioMutationError(isPhysicalGold ? "Weight grams is required." : "Quantity is required.");
+  if (!inputQuantity) {
+    throw new PortfolioMutationError(isPhysicalGold ? "Weight in troy ounces is required." : "Quantity is required.");
   }
 
+  const quantity = isPhysicalGold
+    ? troyOuncesToGrams(inputQuantity).toDecimalPlaces(18).toString()
+    : inputQuantity;
+
   let pricePerUnit = parsed.pricePerUnit ?? null;
+  if (isPhysicalGold && pricePerUnit) {
+    pricePerUnit = goldPricePerGram(pricePerUnit, MarketPriceUnit.TROY_OUNCE)
+      .toDecimalPlaces(8)
+      .toString();
+  }
   const totalAmount = parsed.totalAmount ?? parsed.totalPurchaseCost ?? null;
 
   if (totalAmount) {
@@ -295,7 +313,7 @@ function isPrismaError(error: unknown, code: string) {
 export function createPhysicalGoldInitialBalanceInput(input: {
   accountId: string;
   physicalGoldAssetId: string;
-  weightGrams: string;
+  weightTroyOunces: string;
   totalPurchaseCost?: string;
   executedAt: Date;
   note?: string;
@@ -305,7 +323,7 @@ export function createPhysicalGoldInitialBalanceInput(input: {
     accountId: input.accountId,
     assetMode: "existing",
     assetId: input.physicalGoldAssetId,
-    physicalGoldWeightGrams: input.weightGrams,
+    physicalGoldWeightTroyOunces: input.weightTroyOunces,
     totalPurchaseCost: input.totalPurchaseCost,
     currency: DEFAULT_BASE_CURRENCY,
     executedAt: input.executedAt,

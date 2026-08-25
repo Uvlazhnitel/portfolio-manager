@@ -1,5 +1,7 @@
+import { AssetType, MarketPriceUnit } from "@prisma/client";
 import { z } from "zod";
 import { resolveCoinGeckoApiKey } from "@/features/integrations/service";
+import { goldPricePerGram } from "@/features/market-data/gold";
 import type { MarketDataProvider, MarketPrice } from "@/features/market-data/types";
 
 const responseSchema = z.record(
@@ -9,6 +11,9 @@ const responseSchema = z.record(
 
 type FetchLike = typeof fetch;
 type ApiKeyResolver = () => Promise<string | undefined>;
+
+export const PHYSICAL_GOLD_COINGECKO_REFERENCE_ID = "tether-gold";
+export const PHYSICAL_GOLD_MARKET_SOURCE = "COINGECKO_XAUT";
 
 export class CoinGeckoMarketDataProvider implements MarketDataProvider {
   readonly name = "COINGECKO";
@@ -24,13 +29,16 @@ export class CoinGeckoMarketDataProvider implements MarketDataProvider {
       return [];
     }
 
-    const supportedAssets = assets.filter((asset) => asset.externalId);
+    const supportedAssets = assets.flatMap((asset) => {
+      const externalId = coinGeckoExternalId(asset);
+      return externalId ? [{ asset, externalId }] : [];
+    });
 
     if (supportedAssets.length === 0) {
       return [];
     }
 
-    const ids = [...new Set(supportedAssets.map((asset) => asset.externalId as string))];
+    const ids = [...new Set(supportedAssets.map(({ externalId }) => externalId))];
     const url = new URL("https://api.coingecko.com/api/v3/simple/price");
     url.searchParams.set("ids", ids.join(","));
     url.searchParams.set("vs_currencies", quoteCurrency);
@@ -55,8 +63,8 @@ export class CoinGeckoMarketDataProvider implements MarketDataProvider {
     const payload = responseSchema.parse(await response.json());
     const fallbackTimestamp = new Date();
 
-    return supportedAssets.flatMap<MarketPrice>((asset) => {
-      const quote = payload[asset.externalId as string];
+    return supportedAssets.flatMap<MarketPrice>(({ asset, externalId }) => {
+      const quote = payload[externalId];
       if (!quote) {
         return [];
       }
@@ -64,16 +72,25 @@ export class CoinGeckoMarketDataProvider implements MarketDataProvider {
       const price = quote[quoteCurrency];
       if (!price) return [];
 
+      const isPhysicalGold = asset.assetType === AssetType.PHYSICAL_GOLD;
       return [{
         assetId: asset.id,
         symbol: asset.symbol,
-        price: String(price),
+        price: isPhysicalGold
+          ? goldPricePerGram(String(price), MarketPriceUnit.TROY_OUNCE).toString()
+          : String(price),
         currency: baseCurrency,
         timestamp: quote.last_updated_at
           ? new Date(quote.last_updated_at * 1_000)
           : fallbackTimestamp,
-        source: this.name,
+        source: isPhysicalGold ? PHYSICAL_GOLD_MARKET_SOURCE : this.name,
       }];
     });
   }
+}
+
+function coinGeckoExternalId(asset: Parameters<MarketDataProvider["getCurrentPrices"]>[0]["assets"][number]) {
+  return asset.assetType === AssetType.PHYSICAL_GOLD
+    ? PHYSICAL_GOLD_COINGECKO_REFERENCE_ID
+    : asset.externalId;
 }

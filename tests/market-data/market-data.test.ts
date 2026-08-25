@@ -1,6 +1,14 @@
 import { AssetType, MarketPriceUnit, Prisma, type CachedMarketPrice } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { goldPricePerGram, GRAMS_PER_TROY_OUNCE } from "@/features/market-data/gold";
+import {
+  formatPhysicalGoldQuantity,
+  formatTroyOunces,
+  goldPricePerGram,
+  gramsToTroyOunces,
+  GRAMS_PER_TROY_OUNCE,
+  pricePerTroyOunce,
+  troyOuncesToGrams,
+} from "@/features/market-data/gold";
 import { BaseCurrencyMarketDataProvider } from "@/features/market-data/providers/base-currency";
 import { CoinGeckoMarketDataProvider } from "@/features/market-data/providers/coingecko";
 import { ManualMarketDataProvider, normalizeManualPrice } from "@/features/market-data/providers/manual";
@@ -21,6 +29,22 @@ const btc: MarketDataAsset = {
   currency: "BTC",
   externalId: "bitcoin",
 };
+const xaut: MarketDataAsset = {
+  id: "xaut-id",
+  symbol: "XAUT",
+  name: "Tether Gold",
+  assetType: AssetType.TOKENIZED_GOLD,
+  currency: "XAUT",
+  externalId: "tether-gold",
+};
+const physicalGold: MarketDataAsset = {
+  id: "physical-gold-id",
+  symbol: "PHYSICAL_GOLD",
+  name: "Physical Gold",
+  assetType: AssetType.PHYSICAL_GOLD,
+  currency: "XAU",
+  externalId: null,
+};
 
 beforeEach(() => resetMarketDataRuntimeCacheForTests());
 
@@ -29,6 +53,17 @@ describe("market data providers", () => {
     expect(GRAMS_PER_TROY_OUNCE).toBe("31.1034768");
     expect(goldPricePerGram("3110.34768", MarketPriceUnit.TROY_OUNCE).toString()).toBe("100");
     expect(goldPricePerGram("100", MarketPriceUnit.GRAM).toString()).toBe("100");
+    expect(troyOuncesToGrams("0.0643").toString()).toBe("1.99995355824");
+    expect(gramsToTroyOunces("5.42133600624").toString()).toBe("0.1743");
+    expect(pricePerTroyOunce("100").toString()).toBe("3110.34768");
+  });
+
+  it("formats physical gold with at most four decimal places and no trailing zeros", () => {
+    expect(formatTroyOunces("0.17430000")).toBe("0.1743");
+    expect(formatTroyOunces("0.11000000")).toBe("0.11");
+    expect(formatTroyOunces("123456.789123")).toBe("123456.7891");
+    expect(formatTroyOunces("0.000049")).toBe("0");
+    expect(formatPhysicalGoldQuantity("5.42133600624")).toBe("0.1743 oz");
   });
 
   it("normalizes CoinGecko prices and keeps the API key in a request header", async () => {
@@ -55,6 +90,27 @@ describe("market data providers", () => {
       source: "COINGECKO",
     })]);
     expect(JSON.stringify(prices)).not.toContain("server-secret");
+  });
+
+  it("uses one XAUT quote for tokenized and physical gold", async () => {
+    let requestedUrl = "";
+    const provider = new CoinGeckoMarketDataProvider("", async (input) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({
+        "tether-gold": { usd: 4630.37, last_updated_at: 1787603740 },
+      }), { status: 200 });
+    });
+
+    const prices = await provider.getCurrentPrices({ assets: [xaut, physicalGold], baseCurrency: "USD" });
+    const ids = new URL(requestedUrl).searchParams.get("ids");
+    const xautPrice = prices.find((price) => price.assetId === xaut.id);
+    const physicalPrice = prices.find((price) => price.assetId === physicalGold.id);
+
+    expect(ids).toBe("tether-gold");
+    expect(xautPrice).toEqual(expect.objectContaining({ price: "4630.37", source: "COINGECKO" }));
+    expect(physicalPrice).toEqual(expect.objectContaining({ source: "COINGECKO_XAUT" }));
+    expect(pricePerTroyOunce(physicalPrice?.price ?? "0").toDecimalPlaces(2).toString()).toBe("4630.37");
+    expect(physicalPrice?.timestamp).toEqual(xautPrice?.timestamp);
   });
 
   it("resolves a replaced CoinGecko key for every provider request", async () => {
@@ -158,6 +214,91 @@ describe("market data cache service", () => {
 
     expect(snapshot.prices).toHaveLength(1);
     expect(snapshot.unavailableAssetIds).toEqual([eth.id]);
+  });
+
+  it("refreshes XAUT and physical gold together and keeps their timestamps aligned", async () => {
+    const store = new FakeStore([
+      cachedPrice({ assetId: xaut.id, price: "4600", fetchedAt: new Date(now.getTime() - 1_000) }),
+    ]);
+    const provider: MarketDataProvider = {
+      name: "COINGECKO",
+      getCurrentPrices: vi.fn(async ({ assets }: { assets: MarketDataAsset[] }) => assets.map((asset) => ({
+        assetId: asset.id,
+        symbol: asset.symbol,
+        price: asset.assetType === AssetType.PHYSICAL_GOLD
+          ? goldPricePerGram("4630.37", MarketPriceUnit.TROY_OUNCE).toString()
+          : "4630.37",
+        currency: "USD",
+        timestamp: now,
+        source: asset.assetType === AssetType.PHYSICAL_GOLD ? "COINGECKO_XAUT" : "COINGECKO",
+      }))),
+    };
+    const snapshot = await new MarketDataService(store, [provider]).getCurrentPrices({
+      assets: [xaut, physicalGold],
+      now,
+    });
+    const requestedAssets = vi.mocked(provider.getCurrentPrices).mock.calls[0]?.[0].assets;
+    const xautPrice = snapshot.prices.find((price) => price.assetId === xaut.id);
+    const physicalPrice = snapshot.prices.find((price) => price.assetId === physicalGold.id);
+
+    expect(requestedAssets?.map((asset) => asset.id)).toEqual([physicalGold.id, xaut.id]);
+    expect(xautPrice?.timestamp).toEqual(physicalPrice?.timestamp);
+    expect(pricePerTroyOunce(physicalPrice?.price ?? "0").toDecimalPlaces(2).toString()).toBe(xautPrice?.price);
+  });
+
+  it("derives physical gold from cached XAUT when refresh fails", async () => {
+    const oldTimestamp = new Date(now.getTime() - 60 * 60 * 1_000);
+    const store = new FakeStore([
+      cachedPrice({ assetId: xaut.id, price: "4630.37", fetchedAt: oldTimestamp, timestamp: oldTimestamp }),
+    ]);
+    const failure: MarketDataProvider = {
+      name: "COINGECKO",
+      getCurrentPrices: vi.fn(async () => { throw new Error("Unavailable"); }),
+    };
+    const manual: MarketDataProvider = {
+      name: "MANUAL",
+      getCurrentPrices: vi.fn(async () => []),
+    };
+    const snapshot = await new MarketDataService(store, [failure, manual]).getCurrentPrices({
+      assets: [xaut, physicalGold],
+      now,
+    });
+    const physicalPrice = snapshot.prices.find((price) => price.assetId === physicalGold.id);
+
+    expect(physicalPrice).toEqual(expect.objectContaining({ source: "COINGECKO_XAUT", isStale: true }));
+    expect(pricePerTroyOunce(physicalPrice?.price ?? "0").toDecimalPlaces(2).toString()).toBe("4630.37");
+    expect(snapshot.unavailableAssetIds).not.toContain(physicalGold.id);
+    expect(manual.getCurrentPrices).not.toHaveBeenCalled();
+  });
+
+  it("uses a manual physical-gold quote only when XAUT data is unavailable", async () => {
+    const store = new FakeStore([]);
+    const failure: MarketDataProvider = {
+      name: "COINGECKO",
+      getCurrentPrices: vi.fn(async () => { throw new Error("Unavailable"); }),
+    };
+    const manual: MarketDataProvider = {
+      name: "MANUAL",
+      getCurrentPrices: vi.fn(async ({ assets }: { assets: MarketDataAsset[] }) => assets
+        .filter((asset) => asset.assetType === AssetType.PHYSICAL_GOLD)
+        .map((asset) => ({
+          assetId: asset.id,
+          symbol: asset.symbol,
+          price: "100",
+          currency: "USD",
+          timestamp: now,
+          source: "MANUAL",
+        }))),
+    };
+    const snapshot = await new MarketDataService(store, [failure, manual]).getCurrentPrices({
+      assets: [xaut, physicalGold],
+      now,
+    });
+
+    expect(snapshot.prices.find((price) => price.assetId === physicalGold.id)).toEqual(
+      expect.objectContaining({ price: "100", source: "MANUAL" }),
+    );
+    expect(snapshot.unavailableAssetIds).toContain(xaut.id);
   });
 
   it("does not coalesce concurrent refreshes for different asset sets", async () => {

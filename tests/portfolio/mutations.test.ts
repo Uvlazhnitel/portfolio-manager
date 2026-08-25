@@ -215,7 +215,7 @@ describe("portfolio mutations", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("normalizes physical gold grams and total purchase cost to price per gram", async () => {
+  it("normalizes physical gold troy ounces and total purchase cost to gram-based storage", async () => {
     const storage = await testDb.prisma.account.findFirstOrThrow({ where: { name: "Physical Storage" } });
     const gold = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "PHYSICAL_GOLD" } });
 
@@ -223,8 +223,8 @@ describe("portfolio mutations", () => {
       createPhysicalGoldInitialBalanceInput({
         accountId: storage.id,
         physicalGoldAssetId: gold.id,
-        weightGrams: "100",
-        totalPurchaseCost: "6250",
+        weightTroyOunces: "1",
+        totalPurchaseCost: "3110.34768",
         executedAt: new Date("2026-01-05"),
       }),
       testDb.prisma,
@@ -233,8 +233,30 @@ describe("portfolio mutations", () => {
     const transaction = await testDb.prisma.transaction.findFirstOrThrow({
       where: { accountId: storage.id, assetId: gold.id },
     });
-    expect(transaction.quantity.toString()).toBe("100");
-    expect(transaction.pricePerUnit?.toString()).toBe("62.5");
+    expect(transaction.quantity.toString()).toBe("31.1034768");
+    expect(transaction.pricePerUnit?.toString()).toBe("100");
+  });
+
+  it("normalizes a physical gold price per troy ounce before saving a buy", async () => {
+    const storage = await testDb.prisma.account.findFirstOrThrow({ where: { name: "Physical Storage" } });
+    const gold = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "PHYSICAL_GOLD" } });
+
+    await createTransactionMutation({
+      type: TransactionType.BUY,
+      accountId: storage.id,
+      assetMode: "existing",
+      assetId: gold.id,
+      physicalGoldWeightTroyOunces: "0.5",
+      pricePerUnit: "3200",
+      currency: "USD",
+      executedAt: new Date("2026-02-05"),
+    }, testDb.prisma);
+
+    const transaction = await testDb.prisma.transaction.findFirstOrThrow({
+      where: { accountId: storage.id, assetId: gold.id, executedAt: new Date("2026-02-05") },
+    });
+    expect(transaction.quantity.toString()).toBe("15.5517384");
+    expect(transaction.pricePerUnit?.mul(transaction.quantity).toDecimalPlaces(2).toString()).toBe("1600");
   });
 
   it("deletes transactions and lets holdings recalculate", async () => {

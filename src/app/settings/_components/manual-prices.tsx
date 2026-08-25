@@ -71,7 +71,7 @@ export function ManualPrices({ assets, currency }: { assets: MarketDataSettingsM
 
           {isPhysicalGold ? (
             <p className="rounded-lg border border-primary/25 bg-primary/10 p-3 text-sm text-muted">
-              Physical gold holdings are stored in grams. Troy-ounce quotes are normalized server-side using the exact precious-metals unit.
+              Physical gold automatically follows the XAUT price per troy ounce. This manual quote is used only when no XAUT or cached CoinGecko price is available. 1 troy oz = 31.1034768 g.
             </p>
           ) : null}
 

@@ -1,7 +1,12 @@
+import { AssetType, MarketPriceUnit } from "@prisma/client";
 import { serializeDecimal } from "@/lib/db/decimal";
 import { BaseCurrencyMarketDataProvider } from "@/features/market-data/providers/base-currency";
-import { CoinGeckoMarketDataProvider } from "@/features/market-data/providers/coingecko";
+import {
+  CoinGeckoMarketDataProvider,
+  PHYSICAL_GOLD_MARKET_SOURCE,
+} from "@/features/market-data/providers/coingecko";
 import { ManualMarketDataProvider } from "@/features/market-data/providers/manual";
+import { goldPricePerGram } from "@/features/market-data/gold";
 import {
   MarketDataRepository,
   type CachedPriceRecord,
@@ -57,10 +62,11 @@ export class MarketDataService {
     const refreshKey = buildRefreshKey(baseCurrency, input.assets);
     const cache = await this.store.listCachedPrices(input.assets.map((asset) => asset.id), baseCurrency);
     const cacheByAsset = new Map(cache.map((price) => [price.assetId, price]));
-    const needsRefresh = input.assets.filter((asset) => {
+    const initiallyNeedsRefresh = input.assets.filter((asset) => {
       const cached = cacheByAsset.get(asset.id);
       return input.forceRefresh || !cached || now.getTime() - cached.fetchedAt.getTime() >= MARKET_PRICE_CACHE_TTL_MS;
     });
+    const needsRefresh = expandGoldReferenceRefresh(input.assets, initiallyNeedsRefresh);
 
     if (needsRefresh.length === 0) {
       return buildSnapshot(input.assets, cache, now, false, null, null);
@@ -107,6 +113,7 @@ export class MarketDataService {
     const cachedByAsset = new Map(input.previousCache.map((price) => [price.assetId, price]));
     const refreshedByAsset = new Map<string, MarketPrice>();
     const warnings: string[] = [];
+    const xautAsset = findXautAsset(input.assets);
 
     for (const provider of this.providers) {
       const remainingAssets = input.needsRefresh.filter((asset) => {
@@ -114,8 +121,13 @@ export class MarketDataService {
           return false;
         }
 
-        if (provider.name === "MANUAL" && asset.externalId && cachedByAsset.has(asset.id)) {
-          return false;
+        if (provider.name === "MANUAL") {
+          if (asset.externalId && cachedByAsset.has(asset.id)) return false;
+          if (
+            asset.assetType === AssetType.PHYSICAL_GOLD &&
+            xautAsset &&
+            (cachedByAsset.has(xautAsset.id) || refreshedByAsset.has(xautAsset.id))
+          ) return false;
         }
 
         return true;
@@ -173,14 +185,24 @@ function buildSnapshot(
   warning: string | null,
 ): MarketDataSnapshot {
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
-  const prices = cachedPrices.flatMap<ResolvedMarketPrice>((cached) => {
-    const asset = assetsById.get(cached.assetId);
-    if (!asset) {
-      return [];
-    }
+  const cachedByAsset = new Map(cachedPrices.map((price) => [price.assetId, price]));
+  const xautAsset = findXautAsset(assets);
+  const xautCache = xautAsset ? cachedByAsset.get(xautAsset.id) : undefined;
+  const prices = assets.flatMap<ResolvedMarketPrice>((asset) => {
+    const directCache = cachedByAsset.get(asset.id);
+    const cached = asset.assetType === AssetType.PHYSICAL_GOLD && xautCache
+      ? {
+          ...xautCache,
+          assetId: asset.id,
+          price: goldPricePerGram(xautCache.price, MarketPriceUnit.TROY_OUNCE),
+          source: PHYSICAL_GOLD_MARKET_SOURCE,
+        }
+      : directCache;
+
+    if (!cached || !assetsById.has(asset.id)) return [];
 
     return [{
-      assetId: cached.assetId,
+      assetId: asset.id,
       symbol: asset.symbol,
       price: serializeDecimal(cached.price),
       currency: cached.currency,
@@ -204,6 +226,25 @@ function buildSnapshot(
     refreshBlockedUntil,
     warning,
   };
+}
+
+function expandGoldReferenceRefresh(assets: MarketDataAsset[], needsRefresh: MarketDataAsset[]) {
+  const goldReferenceAssets = assets.filter((asset) => (
+    asset.assetType === AssetType.PHYSICAL_GOLD || asset.symbol.toUpperCase() === "XAUT"
+  ));
+  const refreshesGoldReference = needsRefresh.some((asset) => (
+    asset.assetType === AssetType.PHYSICAL_GOLD || asset.symbol.toUpperCase() === "XAUT"
+  ));
+
+  if (!refreshesGoldReference) return needsRefresh;
+
+  const byId = new Map(needsRefresh.map((asset) => [asset.id, asset]));
+  for (const asset of goldReferenceAssets) byId.set(asset.id, asset);
+  return [...byId.values()];
+}
+
+function findXautAsset(assets: MarketDataAsset[]) {
+  return assets.find((asset) => asset.symbol.toUpperCase() === "XAUT");
 }
 
 export function toEngineMarketPrices(snapshot: MarketDataSnapshot) {

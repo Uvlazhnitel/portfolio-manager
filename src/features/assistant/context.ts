@@ -1,4 +1,4 @@
-import { PortfolioRuleType } from "@prisma/client";
+import { AssetType, PortfolioRuleType } from "@prisma/client";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
 import {
   buildContributionProjection,
@@ -14,6 +14,7 @@ import { PortfolioRepository } from "@/features/portfolio/repository";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { serializeDecimal } from "@/lib/db/decimal";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
+import { formatTroyOunces, gramsToTroyOunces } from "@/features/market-data/gold";
 
 type Assets = Awaited<ReturnType<PortfolioRepository["listAssets"]>>;
 type Accounts = Awaited<ReturnType<PortfolioRepository["listAccounts"]>>;
@@ -53,6 +54,7 @@ export type PortfolioAssistantContext = {
     symbol: string;
     assetClass: string;
     quantity: string;
+    quantityUnit: "ASSET_UNIT" | "TROY_OUNCE";
     currentValue: string | null;
   }>;
   accounts: Array<{ name: string; type: string; currentValue: string; isPartial: boolean }>;
@@ -173,7 +175,10 @@ export async function loadAssistantPortfolioRuntime({
       return {
         symbol: asset?.symbol ?? "UNKNOWN",
         assetClass: asset?.assetClass ?? "OTHER",
-        quantity: quantity.toString(),
+        quantity: asset?.assetType === AssetType.PHYSICAL_GOLD
+          ? formatTroyOunces(gramsToTroyOunces(quantity))
+          : quantity.toString(),
+        quantityUnit: asset?.assetType === AssetType.PHYSICAL_GOLD ? "TROY_OUNCE" : "ASSET_UNIT",
         currentValue: hasPrice ? (valueByAsset.get(assetId) ?? ZERO).toFixed(2) : null,
       };
     }),

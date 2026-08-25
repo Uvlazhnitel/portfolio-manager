@@ -68,7 +68,7 @@ afterAll(async () => {
 });
 
 describe("priced portfolio read models", () => {
-  it("calculates holding values, P&L, and weights including physical gold grams", async () => {
+  it("keeps gram-based valuation while presenting physical gold in troy ounces", async () => {
     resetMarketDataRuntimeCacheForTests();
     const model = await getPortfolioReadModel({
       repository: new PortfolioRepository(testDb.prisma),
@@ -82,7 +82,20 @@ describe("priced portfolio read models", () => {
     expect(model.valuation.isPartial).toBe(false);
     expect(model.strategyStatus?.totalCount).toBe(4);
     expect(btc).toEqual(expect.objectContaining({ currentValue: "50000.00", pnl: "10000.00", portfolioWeight: "98.04" }));
-    expect(gold).toEqual(expect.objectContaining({ quantityLabel: "10 g", currentValue: "1000.00", pnl: "200.00", priceSource: "MANUAL" }));
+    expect(gold).toEqual(expect.objectContaining({
+      quantityLabel: "0.3215 oz",
+      currentPrice: "3110.35",
+      averageAcquisitionPrice: "2488.278144",
+      currentValue: "1000.00",
+      pnl: "200.00",
+      priceSource: "MANUAL",
+    }));
+    const goldTransaction = model.transactions.find((transaction) => transaction.symbol === "PHYSICAL_GOLD");
+    expect(goldTransaction).toEqual(expect.objectContaining({
+      quantityLabel: "0.3215 oz",
+      displayPricePerUnit: "2488.278144",
+      displayPriceUnit: "troy oz",
+    }));
   });
 
   it("builds dashboard totals and strategy comparison from engine results", async () => {

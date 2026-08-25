@@ -1,4 +1,4 @@
-import type { AssetClass } from "@prisma/client";
+import { AssetType, type AssetClass } from "@prisma/client";
 import {
   buildContributionProjection,
   calculatePortfolio,
@@ -16,6 +16,7 @@ import { PortfolioRepository } from "@/features/portfolio/repository";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { serializeDecimal, serializeNullableDecimal } from "@/lib/db/decimal";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
+import { formatPhysicalGoldQuantity, pricePerTroyOunce } from "@/features/market-data/gold";
 
 export type DashboardReadModel = {
   valuation: {
@@ -49,7 +50,9 @@ export type DashboardReadModel = {
     assetName: string;
     accountName: string;
     quantity: string;
+    quantityLabel: string;
     pricePerUnit: string | null;
+    displayPriceUnit: "unit" | "troy oz";
     currency: string;
     executedAt: string;
   }>;
@@ -133,17 +136,28 @@ export async function getDashboardReadModel({
       status: comparison.status,
     })),
     contribution: { amount: contributionAmount, projection: contributionProjection },
-    recentActivity: transactions.slice(0, 5).map((transaction) => ({
-      id: transaction.id,
-      type: transaction.type,
-      symbol: transaction.asset.symbol,
-      assetName: transaction.asset.name,
-      accountName: transaction.account.name,
-      quantity: serializeDecimal(transaction.quantity),
-      pricePerUnit: serializeNullableDecimal(transaction.pricePerUnit),
-      currency: transaction.currency,
-      executedAt: transaction.executedAt.toISOString(),
-    })),
+    recentActivity: transactions.slice(0, 5).map((transaction) => {
+      const isPhysicalGold = transaction.asset.assetType === AssetType.PHYSICAL_GOLD;
+      return {
+        id: transaction.id,
+        type: transaction.type,
+        symbol: transaction.asset.symbol,
+        assetName: transaction.asset.name,
+        accountName: transaction.account.name,
+        quantity: serializeDecimal(transaction.quantity),
+        quantityLabel: isPhysicalGold
+          ? formatPhysicalGoldQuantity(transaction.quantity)
+          : serializeDecimal(transaction.quantity),
+        pricePerUnit: transaction.pricePerUnit
+          ? (isPhysicalGold
+              ? pricePerTroyOunce(transaction.pricePerUnit).toString()
+              : serializeNullableDecimal(transaction.pricePerUnit))
+          : null,
+        displayPriceUnit: isPhysicalGold ? "troy oz" : "unit",
+        currency: transaction.currency,
+        executedAt: transaction.executedAt.toISOString(),
+      };
+    }),
     accounts: accounts.map((account) => {
       const valued = accountAnalytics.get(account.id);
       return {

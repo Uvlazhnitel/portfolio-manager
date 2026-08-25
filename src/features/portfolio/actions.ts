@@ -65,7 +65,7 @@ export async function createTransactionAction(
               }
             : undefined,
         quantity: nullableString(formData.get("quantity")) ?? undefined,
-        physicalGoldWeightGrams: nullableString(formData.get("physicalGoldWeightGrams")) ?? undefined,
+        physicalGoldWeightTroyOunces: nullableString(formData.get("physicalGoldWeightTroyOunces")) ?? undefined,
         pricePerUnit: nullableString(formData.get("pricePerUnit")) ?? undefined,
         totalAmount: nullableString(formData.get("totalAmount")) ?? undefined,
         totalPurchaseCost: nullableString(formData.get("totalPurchaseCost")) ?? undefined,
@@ -111,7 +111,7 @@ export async function createPositionAction(
               metadata: imageUrl ? { imageUrl } : undefined,
             },
         quantity: nullableString(formData.get("quantity")) ?? undefined,
-        physicalGoldWeightGrams: nullableString(formData.get("physicalGoldWeightGrams")) ?? undefined,
+        physicalGoldWeightTroyOunces: nullableString(formData.get("physicalGoldWeightTroyOunces")) ?? undefined,
         pricePerUnit: nullableString(formData.get("pricePerUnit")) ?? undefined,
         totalAmount: nullableString(formData.get("totalAmount")) ?? nullableString(formData.get("totalPurchaseCost")) ?? undefined,
         fee: nullableString(formData.get("fee")) ?? undefined,

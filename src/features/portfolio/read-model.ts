@@ -1,4 +1,4 @@
-import { AssetType } from "@prisma/client";
+import { AssetType, type Prisma } from "@prisma/client";
 import { calculateHoldingCostBasis, calculatePortfolio, compareAllocationToStrategy } from "@/features/portfolio-engine";
 import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/service";
@@ -6,6 +6,10 @@ import { PortfolioRepository } from "@/features/portfolio/repository";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { serializeDecimal, serializeNullableDecimal } from "@/lib/db/decimal";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
+import {
+  formatPhysicalGoldQuantity,
+  pricePerTroyOunce,
+} from "@/features/market-data/gold";
 
 type TransactionWithRelations = Awaited<ReturnType<PortfolioRepository["listTransactions"]>>[number];
 type AssetRow = Awaited<ReturnType<PortfolioRepository["listAssets"]>>[number];
@@ -24,6 +28,7 @@ export type PortfolioHoldingRow = {
   priceTimestamp: string | null;
   isPriceStale: boolean;
   averageAcquisitionPrice: string | null;
+  displayPriceUnit: "unit" | "troy oz";
   pnl: string | null;
   assetClass: string;
   assetType: string;
@@ -39,7 +44,10 @@ export type PortfolioTransactionRow = {
   symbol: string;
   accountName: string;
   quantity: string;
+  quantityLabel: string;
   pricePerUnit: string | null;
+  displayPricePerUnit: string | null;
+  displayPriceUnit: "unit" | "troy oz";
   fee: string | null;
   currency: string;
   executedAt: string;
@@ -188,8 +196,10 @@ function buildHoldingRows(
     const costBasis = costBasisByHolding.get(holdingKey(holding.accountId, holding.assetId));
     const valuedHolding = valuedByHolding.get(holdingKey(holding.accountId, holding.assetId));
     const marketPrice = pricesByAsset.get(holding.assetId);
-    const averageAcquisitionPrice = costBasis?.status === "AVAILABLE"
-      ? costBasis.averageAcquisitionPrice
+    const isPhysicalGold = asset?.assetType === AssetType.PHYSICAL_GOLD;
+    const displayPriceUnit: PortfolioHoldingRow["displayPriceUnit"] = isPhysicalGold ? "troy oz" : "unit";
+    const averageAcquisitionPrice = costBasis?.status === "AVAILABLE" && costBasis.averageAcquisitionPrice !== null
+      ? displayUnitPrice(costBasis.averageAcquisitionPrice, isPhysicalGold).toString()
       : null;
 
     return {
@@ -200,11 +210,12 @@ function buildHoldingRows(
       accountName: account?.name ?? "Unknown account",
       quantity: holding.quantity,
       currentValue: marketPrice && valuedHolding ? decimal(valuedHolding.value).toFixed(2) : null,
-      currentPrice: marketPrice ? decimal(marketPrice.price).toFixed(2) : null,
+      currentPrice: marketPrice ? displayUnitPrice(marketPrice.price, isPhysicalGold).toFixed(2) : null,
       priceSource: marketPrice?.source ?? null,
       priceTimestamp: marketPrice?.timestamp.toISOString() ?? null,
       isPriceStale: marketPrice?.isStale ?? false,
       averageAcquisitionPrice,
+      displayPriceUnit,
       pnl:
         marketPrice && valuedHolding && costBasis?.status === "AVAILABLE" && costBasis.totalCost !== null
           ? decimal(valuedHolding.value).minus(costBasis.totalCost).toFixed(2)
@@ -212,7 +223,7 @@ function buildHoldingRows(
       assetClass: asset?.assetClass ?? "OTHER",
       assetType: asset?.assetType ?? "OTHER",
       portfolioWeight: null,
-      quantityLabel: asset?.assetType === AssetType.PHYSICAL_GOLD ? `${holding.quantity} g` : holding.quantity,
+      quantityLabel: isPhysicalGold ? formatPhysicalGoldQuantity(holding.quantity) : holding.quantity,
       imageUrl: imageUrlFromMetadata(asset?.metadata),
     };
   });
@@ -234,6 +245,8 @@ function imageUrlFromMetadata(metadata: unknown) {
 }
 
 export function serializeTransactionRow(transaction: TransactionWithRelations): PortfolioTransactionRow {
+  const isPhysicalGold = transaction.asset.assetType === AssetType.PHYSICAL_GOLD;
+
   return {
     id: transaction.id,
     type: transaction.type,
@@ -241,12 +254,23 @@ export function serializeTransactionRow(transaction: TransactionWithRelations): 
     symbol: transaction.asset.symbol,
     accountName: transaction.account.name,
     quantity: serializeDecimal(transaction.quantity),
+    quantityLabel: isPhysicalGold
+      ? formatPhysicalGoldQuantity(transaction.quantity)
+      : serializeDecimal(transaction.quantity),
     pricePerUnit: serializeNullableDecimal(transaction.pricePerUnit),
+    displayPricePerUnit: transaction.pricePerUnit
+      ? displayUnitPrice(transaction.pricePerUnit, isPhysicalGold).toString()
+      : null,
+    displayPriceUnit: isPhysicalGold ? "troy oz" : "unit",
     fee: serializeNullableDecimal(transaction.fee),
     currency: transaction.currency,
     executedAt: transaction.executedAt.toISOString(),
     note: transaction.note,
   };
+}
+
+function displayUnitPrice(value: Prisma.Decimal | string, isPhysicalGold: boolean) {
+  return isPhysicalGold ? pricePerTroyOunce(value) : decimal(value);
 }
 
 export function holdingKey(accountId: string, assetId: string) {

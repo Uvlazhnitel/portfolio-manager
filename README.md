@@ -8,7 +8,7 @@ Single-user investment portfolio manager and decision-support copilot. The MVP f
 - Holdings derived from transactions and initial balances; no manually editable Holding source of truth.
 - Deterministic Portfolio Engine for holdings, valuation, allocation, strategy compliance, P&L availability, contribution planning, and simulations.
 - Editable ETF, Crypto, Gold, and Cash targets/ranges with exact 100% target validation.
-- CoinGecko adapter for supported crypto, USD base-currency valuation, manual prices, physical-gold gram/troy-ounce normalization, persistent cache, and stale indicators.
+- CoinGecko adapter for supported crypto, XAUT-referenced physical-gold valuation, USD base-currency valuation, manual fallback prices, persistent cache, and stale indicators.
 - Encrypted in-app API-key management for OpenAI and CoinGecko with environment fallbacks.
 - Portfolio, Dashboard, Strategy, Contribution Planner, Scenarios, Settings, and read-only AI Assistant screens.
 - OpenAI Responses API assistant with compact trusted portfolio context and deterministic read-only tools.
@@ -32,7 +32,7 @@ The App Router pages call feature read models and server actions. Repositories a
 
 Transactions and initial balances are the portfolio source of truth. Per-holding cost basis and P&L are shown only when they can be derived reliably in the base currency. Missing acquisition data, unsupported currencies, or ambiguous account transfers are reported as unavailable rather than estimated.
 
-USD is the single MVP base currency. Transaction monetary values are stored in the currency recorded at entry and are never silently converted. USD cash is valued one-to-one; USDT is priced through CoinGecko. To hold EUR cash in a USD portfolio, configure a manual USD price per EUR unit in Settings. Physical-gold manual quotes can be entered in USD per gram or per troy ounce.
+USD is the single MVP base currency. Transaction monetary values are stored in the currency recorded at entry and are never silently converted. USD cash is valued one-to-one; USDT is priced through CoinGecko. To hold EUR cash in a USD portfolio, configure a manual USD price per EUR unit in Settings. Physical gold is entered and displayed in troy ounces (`oz`, up to four decimal places), follows the CoinGecko XAUT price per troy ounce, and remains gram-normalized inside the deterministic engine. Manual gold quotes are fallback-only when XAUT and its cached price are unavailable.
 
 The Portfolio screen supports chronological `Current balance`, `Buy`, and `Sell` entry. For Buy/Sell, enter either price per unit or the gross total; fees are stored separately. Enter older transactions first. A sale is checked against the selected account balance as of its historical date, and a required earlier purchase cannot be deleted while a later sale depends on it.
 
