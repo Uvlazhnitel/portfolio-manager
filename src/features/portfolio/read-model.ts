@@ -28,6 +28,7 @@ export type PortfolioHoldingRow = {
   assetType: string;
   portfolioWeight: string | null;
   quantityLabel: string;
+  imageUrl: string | null;
 };
 
 export type PortfolioTransactionRow = {
@@ -52,6 +53,7 @@ export type PortfolioReadModel = {
     assetClass: string;
     assetType: string;
     currency: string;
+    imageUrl: string | null;
   }>;
   accounts: Array<{
     id: string;
@@ -120,6 +122,7 @@ export async function getPortfolioReadModel({
       assetClass: asset.assetClass,
       assetType: asset.assetType,
       currency: asset.currency,
+      imageUrl: imageUrlFromMetadata(asset.metadata),
     })),
     accounts: accounts.map((account) => ({
       id: account.id,
@@ -208,6 +211,7 @@ function buildHoldingRows(
       assetType: asset?.assetType ?? "OTHER",
       portfolioWeight: null,
       quantityLabel: asset?.assetType === AssetType.PHYSICAL_GOLD ? `${holding.quantity} g` : holding.quantity,
+      imageUrl: imageUrlFromMetadata(asset?.metadata),
     };
   });
 
@@ -220,6 +224,11 @@ function buildHoldingRows(
         ? decimal(row.currentValue).div(totalAvailableValue).mul(100).toFixed(2)
         : null,
   }));
+}
+
+function imageUrlFromMetadata(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata) || !("imageUrl" in metadata)) return null;
+  return typeof metadata.imageUrl === "string" ? metadata.imageUrl : null;
 }
 
 export function serializeTransactionRow(transaction: TransactionWithRelations): PortfolioTransactionRow {

@@ -30,12 +30,12 @@ export const positiveMarketPriceStringSchema = moneyDecimalStringSchema.refine(
 );
 
 export const assetInputSchema = z.object({
-  symbol: z.string().trim().min(1).transform((value) => value.toUpperCase()),
-  name: z.string().trim().min(1),
+  symbol: z.string().trim().min(1).max(24).transform((value) => value.toUpperCase()),
+  name: z.string().trim().min(1).max(120),
   assetClass: z.enum(AssetClass),
   assetType: z.enum(AssetType),
   currency: z.string().trim().min(3).max(12).transform((value) => value.toUpperCase()),
-  externalId: z.string().trim().nullable().optional(),
+  externalId: z.string().trim().min(1).max(200).nullable().optional(),
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 

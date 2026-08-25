@@ -79,7 +79,7 @@ export async function createTransactionMutation(
   db: PrismaClient = prisma,
 ): Promise<PortfolioMutationResult> {
   const parsed = transactionMutationSchema.parse(input);
-  await withSerializableRetry(db, async (transaction) => {
+  const saved = await withSerializableRetry(db, async (transaction) => {
     const repository = new PortfolioRepository(transaction);
     const account = await repository.findAccount(parsed.accountId);
     if (!account) throw new PortfolioMutationError("Selected account does not exist.");
@@ -107,9 +107,20 @@ export async function createTransactionMutation(
       executedAt: parsed.executedAt,
       note: parsed.note || null,
     });
+
+    return {
+      accountName: account.name,
+      assetSymbol: asset.symbol,
+      quantity: normalized.quantity,
+    };
   });
 
-  return { ok: true, message: "Transaction saved." };
+  return {
+    ok: true,
+    message: parsed.type === TransactionType.INITIAL_BALANCE
+      ? `Added ${saved.quantity} ${saved.assetSymbol} to ${saved.accountName}.`
+      : "Transaction saved.",
+  };
 }
 
 export async function deleteTransactionMutation(
@@ -129,6 +140,11 @@ async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, d
     if (!parsed.newAsset) {
       throw new PortfolioMutationError("New asset details are required.");
     }
+
+    const existingByExternalId = parsed.newAsset.externalId
+      ? await db.asset.findFirst({ where: { externalId: parsed.newAsset.externalId } })
+      : null;
+    if (existingByExternalId) return existingByExternalId;
 
     const existing = await db.asset.findUnique({ where: { symbol: parsed.newAsset.symbol } });
     if (existing) {
@@ -178,7 +194,7 @@ function normalizeTransaction(parsed: z.infer<typeof transactionMutationSchema>,
 
   let pricePerUnit = parsed.pricePerUnit ?? null;
 
-  if (isPhysicalGold && parsed.totalPurchaseCost) {
+  if (parsed.totalPurchaseCost) {
     pricePerUnit = decimal(parsed.totalPurchaseCost).div(decimal(quantity)).toDecimalPlaces(8).toString();
   }
 

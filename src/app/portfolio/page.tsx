@@ -18,9 +18,9 @@ export default async function PortfolioPage() {
         action={
           <>
             <PriceRefresh compact />
-            <Button form="open-add-transaction" type="submit">
+            <Button form="open-add-asset" type="submit">
               <Plus className="mr-2 h-4 w-4" aria-hidden="true" />
-              Add
+              Add asset
             </Button>
           </>
         }

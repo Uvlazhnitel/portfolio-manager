@@ -72,6 +72,47 @@ describe("portfolio mutations", () => {
     expect(calculateHoldings(transactions)).toEqual([{ accountId: account.id, assetId: btc.id, quantity: "1.25" }]);
   });
 
+  it("normalizes total invested to an average acquisition price", async () => {
+    const account = await testDb.prisma.account.findFirstOrThrow({ where: { name: "Bybit" } });
+    const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
+
+    await createTransactionMutation({
+      type: TransactionType.INITIAL_BALANCE,
+      accountId: account.id,
+      assetMode: "existing",
+      assetId: btc.id,
+      quantity: "0.25",
+      totalPurchaseCost: "12000",
+      currency: "EUR",
+      executedAt: new Date("2026-01-01T12:00:00Z"),
+    }, testDb.prisma);
+
+    const transaction = await testDb.prisma.transaction.findFirstOrThrow({
+      where: { accountId: account.id, assetId: btc.id, quantity: "0.25" },
+    });
+    expect(transaction.pricePerUnit?.toString()).toBe("48000");
+  });
+
+  it("reuses an existing asset with the same external catalog id", async () => {
+    const account = await testDb.prisma.account.findFirstOrThrow({ where: { name: "Bybit" } });
+    const existing = await testDb.prisma.asset.create({
+      data: { symbol: "SOL", name: "Solana", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "SOL", externalId: "solana" },
+    });
+
+    await createTransactionMutation({
+      type: TransactionType.INITIAL_BALANCE,
+      accountId: account.id,
+      assetMode: "new",
+      newAsset: { symbol: "SOLANA", name: "Untrusted duplicate name", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "SOL", externalId: "solana" },
+      quantity: "5",
+      currency: "EUR",
+      executedAt: new Date("2026-01-01T12:00:00Z"),
+    }, testDb.prisma);
+
+    expect(await testDb.prisma.asset.count({ where: { externalId: "solana" } })).toBe(1);
+    expect(await testDb.prisma.transaction.count({ where: { assetId: existing.id, quantity: "5" } })).toBe(1);
+  });
+
   it("creates buy transactions", async () => {
     const account = await testDb.prisma.account.findFirstOrThrow({ where: { name: "Bybit" } });
     const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });

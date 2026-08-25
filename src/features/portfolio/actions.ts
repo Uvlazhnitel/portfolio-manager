@@ -76,6 +76,46 @@ export async function createTransactionAction(
   }
 }
 
+export async function createPositionAction(
+  previousState: PortfolioActionState = initialState,
+  formData: FormData,
+): Promise<PortfolioActionState> {
+  void previousState;
+
+  try {
+    const existingAssetId = nullableString(formData.get("existingAssetId"));
+    const imageUrl = safeCoinGeckoImageUrl(nullableString(formData.get("newAssetImageUrl")));
+    return await withPortfolioRevalidation(
+      createTransactionMutation({
+        type: TransactionType.INITIAL_BALANCE,
+        accountId: String(formData.get("accountId") ?? ""),
+        assetMode: existingAssetId ? "existing" : "new",
+        assetId: existingAssetId ?? undefined,
+        newAsset: existingAssetId
+          ? undefined
+          : {
+              symbol: String(formData.get("newAssetSymbol") ?? ""),
+              name: String(formData.get("newAssetName") ?? ""),
+              assetClass: String(formData.get("newAssetClass") ?? AssetClass.CRYPTO) as AssetClass,
+              assetType: String(formData.get("newAssetType") ?? AssetType.CRYPTO) as AssetType,
+              currency: String(formData.get("newAssetCurrency") ?? "EUR"),
+              externalId: nullableString(formData.get("newAssetExternalId")),
+              metadata: imageUrl ? { imageUrl } : undefined,
+            },
+        quantity: nullableString(formData.get("quantity")) ?? undefined,
+        physicalGoldWeightGrams: nullableString(formData.get("physicalGoldWeightGrams")) ?? undefined,
+        totalPurchaseCost: nullableString(formData.get("totalPurchaseCost")) ?? undefined,
+        currency: "EUR",
+        executedAt: String(formData.get("executedAt") ?? ""),
+        note: nullableString(formData.get("note")) ?? undefined,
+        allowOversell: false,
+      }),
+    );
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
 function parseImplementedTransactionType(value: string) {
   if (
     value === TransactionType.INITIAL_BALANCE ||
@@ -99,6 +139,18 @@ function nullableString(value: FormDataEntryValue | null) {
 
   const stringValue = String(value).trim();
   return stringValue.length > 0 ? stringValue : null;
+}
+
+function safeCoinGeckoImageUrl(value: string | null) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && ["assets.coingecko.com", "coin-images.coingecko.com"].includes(url.hostname)
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function toActionError(error: unknown): PortfolioActionState {
