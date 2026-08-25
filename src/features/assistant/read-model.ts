@@ -1,4 +1,5 @@
 import { AssistantRepository } from "@/features/assistant/repository";
+import { resolveOpenAIConfiguration } from "@/features/integrations/service";
 
 export type AssistantPageModel = {
   isConfigured: boolean;
@@ -12,7 +13,10 @@ export async function getAssistantPageModel(
   conversationId: string | null,
   repository = new AssistantRepository(),
 ): Promise<AssistantPageModel> {
-  const conversations = await repository.listConversations(10);
+  const [conversations, openAIConfiguration] = await Promise.all([
+    repository.listConversations(10),
+    resolveOpenAIConfiguration(),
+  ]);
   let selectedId = conversationId ?? conversations[0]?.id ?? null;
   let selected = selectedId ? await repository.findConversation(selectedId) : null;
   if (!selected && conversations[0]) {
@@ -21,8 +25,8 @@ export async function getAssistantPageModel(
   }
 
   return {
-    isConfigured: Boolean(process.env.OPENAI_API_KEY?.trim()),
-    model: process.env.OPENAI_MODEL?.trim() || "gpt-5-mini",
+    isConfigured: Boolean(openAIConfiguration.apiKey),
+    model: openAIConfiguration.model,
     selectedConversationId: selected?.id ?? null,
     conversations: conversations.map((conversation) => ({
       id: conversation.id,

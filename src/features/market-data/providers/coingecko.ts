@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { resolveCoinGeckoApiKey } from "@/features/integrations/service";
 import type { MarketDataProvider, MarketPrice } from "@/features/market-data/types";
 
 const responseSchema = z.record(
@@ -10,12 +11,13 @@ const responseSchema = z.record(
 );
 
 type FetchLike = typeof fetch;
+type ApiKeyResolver = () => Promise<string | undefined>;
 
 export class CoinGeckoMarketDataProvider implements MarketDataProvider {
   readonly name = "COINGECKO";
 
   constructor(
-    private readonly apiKey = process.env.COINGECKO_API_KEY,
+    private readonly apiKey: string | ApiKeyResolver | undefined = resolveCoinGeckoApiKey,
     private readonly fetcher: FetchLike = fetch,
   ) {}
 
@@ -37,8 +39,9 @@ export class CoinGeckoMarketDataProvider implements MarketDataProvider {
     url.searchParams.set("include_last_updated_at", "true");
 
     const headers = new Headers({ Accept: "application/json" });
-    if (this.apiKey) {
-      headers.set("x-cg-demo-api-key", this.apiKey);
+    const apiKey = typeof this.apiKey === "function" ? await this.apiKey() : this.apiKey;
+    if (apiKey) {
+      headers.set("x-cg-demo-api-key", apiKey);
     }
 
     const response = await this.fetcher(url, {

@@ -3,7 +3,6 @@ import type { Responses } from "openai/resources/responses/responses";
 import type { AssistantPortfolioRuntime } from "@/features/assistant/context";
 import { ASSISTANT_SYSTEM_INSTRUCTIONS } from "@/features/assistant/instructions";
 import { assistantToolDefinitions, executeAssistantTool } from "@/features/assistant/tools";
-import { getAssistantModel } from "@/features/assistant/openai";
 import { publicErrorMessage } from "@/lib/public-error";
 
 export type AssistantStreamEvent =
@@ -12,11 +11,13 @@ export type AssistantStreamEvent =
 
 export async function streamAssistantResponse({
   client,
+  model,
   runtime,
   history,
   onEvent,
 }: {
   client: OpenAI;
+  model: string;
   runtime: AssistantPortfolioRuntime;
   history: Array<{ role: "USER" | "ASSISTANT"; content: string }>;
   onEvent: (event: AssistantStreamEvent) => void;
@@ -35,7 +36,7 @@ export async function streamAssistantResponse({
 
   for (let round = 0; round < 5; round += 1) {
     const stream = await client.responses.create({
-      model: getAssistantModel(),
+      model,
       instructions: ASSISTANT_SYSTEM_INSTRUCTIONS,
       input,
       tools: assistantToolDefinitions,

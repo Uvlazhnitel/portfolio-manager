@@ -9,6 +9,7 @@ Single-user investment portfolio manager and decision-support copilot. The MVP f
 - Deterministic Portfolio Engine for holdings, valuation, allocation, strategy compliance, P&L availability, contribution planning, and simulations.
 - Editable ETF, Crypto, Gold, and Cash targets/ranges with exact 100% target validation.
 - CoinGecko adapter for supported crypto, EUR base-currency valuation, manual prices, physical-gold gram/troy-ounce normalization, persistent cache, and stale indicators.
+- Encrypted in-app API-key management for OpenAI and CoinGecko with environment fallbacks.
 - Portfolio, Dashboard, Strategy, Contribution Planner, Scenarios, Settings, and read-only AI Assistant screens.
 - OpenAI Responses API assistant with compact trusted portfolio context and deterministic read-only tools.
 - Responsive dark UI and installable PWA shell with conservative offline behavior.
@@ -88,9 +89,18 @@ Open [http://localhost:3000](http://localhost:3000). `/` redirects to `/dashboar
 
 - `DATABASE_URL` — required server-side PostgreSQL connection.
 - `TEST_DATABASE_URL` — PostgreSQL maintenance connection used only by integration tests.
-- `COINGECKO_API_KEY` — optional server-side CoinGecko Demo API key; public API fallback is used when empty.
-- `OPENAI_API_KEY` — optional and server-side only. Without it, `/assistant` shows a setup state.
-- `OPENAI_MODEL` — optional; defaults server-side to `gpt-5-mini`.
+- `APP_ENCRYPTION_KEY` — base64-encoded 32-byte server secret used to encrypt API keys stored through Settings.
+- `COINGECKO_API_KEY` — optional server-side fallback; the public CoinGecko API is used when no DB or environment key exists.
+- `OPENAI_API_KEY` — optional server-side fallback. Without a DB or environment key, `/assistant` shows a setup state.
+- `OPENAI_MODEL` — optional model fallback; defaults server-side to `gpt-5-mini`.
+
+Generate the encryption key once and place it in `.env` without printing it in application logs:
+
+```bash
+openssl rand -base64 32
+```
+
+After `APP_ENCRYPTION_KEY` is configured, OpenAI and CoinGecko keys can be saved, replaced, tested, or deleted from `/settings` without restarting the app. Database credentials override environment credentials; deleting a database key restores the environment/public fallback. The browser receives only the credential source and final four characters, never the complete key.
 
 Never prefix API keys with `NEXT_PUBLIC_` and never commit `.env`.
 
@@ -136,7 +146,9 @@ For the bundled app/PostgreSQL stack:
 docker compose up -d --build
 ```
 
-The app is available at [http://localhost:3010](http://localhost:3010). Container startup runs `prisma migrate deploy`, the idempotent seed, and then Next.js. Change the example PostgreSQL credentials before any non-local deployment.
+The app listens on [http://localhost:3010](http://localhost:3010) only. Container startup runs `prisma migrate deploy`, the idempotent seed, and then Next.js. Use a private reverse proxy such as the existing tailnet-only Tailscale Serve endpoint for remote access. Change the example PostgreSQL credentials before any non-local deployment.
+
+Back up `APP_ENCRYPTION_KEY` separately together with PostgreSQL backups. Encrypted integration keys cannot be recovered from the database without the same master key. Rotating the master key requires re-saving provider credentials.
 
 This MVP intentionally has no authentication. Do not expose it to the public internet; use a trusted private network until authentication is implemented.
 

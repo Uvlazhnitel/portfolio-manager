@@ -56,6 +56,19 @@ describe("market data providers", () => {
     expect(JSON.stringify(prices)).not.toContain("server-secret");
   });
 
+  it("resolves a replaced CoinGecko key for every provider request", async () => {
+    let key = "first-server-key";
+    const observedKeys: Array<string | null> = [];
+    const provider = new CoinGeckoMarketDataProvider(async () => key, async (_input, init) => {
+      observedKeys.push(new Headers(init?.headers).get("x-cg-demo-api-key"));
+      return new Response(JSON.stringify({ bitcoin: { eur: 60000 } }), { status: 200 });
+    });
+    await provider.getCurrentPrices({ assets: [btc], baseCurrency: "EUR" });
+    key = "second-server-key";
+    await provider.getCurrentPrices({ assets: [btc], baseCurrency: "EUR" });
+    expect(observedKeys).toEqual(["first-server-key", "second-server-key"]);
+  });
+
   it("returns deterministic one-to-one pricing for the EUR base asset", async () => {
     const eur = { ...btc, id: "eur-id", symbol: "EUR", currency: "EUR", externalId: null };
     const prices = await new BaseCurrencyMarketDataProvider().getCurrentPrices({ assets: [btc, eur], baseCurrency: "EUR" });

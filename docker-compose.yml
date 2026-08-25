@@ -25,6 +25,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://portfolio_manager:portfolio_manager@postgres:5432/portfolio_manager?schema=public
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
       COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
@@ -32,7 +33,7 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
     command: sh -c "pnpm db:deploy && pnpm db:seed && pnpm start"
     ports:
-      - "3010:3000"
+      - "127.0.0.1:3010:3000"
 
 volumes:
   portfolio_manager_postgres:

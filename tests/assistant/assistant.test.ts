@@ -6,7 +6,6 @@ import { AssistantConversationService, buildConversationTitle } from "@/features
 import { loadAssistantPortfolioRuntime } from "@/features/assistant/context";
 import { executeAssistantTool } from "@/features/assistant/tools";
 import { streamAssistantResponse } from "@/features/assistant/stream";
-import { getAssistantModel, isOpenAIConfigured } from "@/features/assistant/openai";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
 import { MarketDataService } from "@/features/market-data/service";
 import type { MarketDataStore } from "@/features/market-data/repository";
@@ -121,17 +120,6 @@ describe("assistant portfolio context and tools", () => {
 });
 
 describe("assistant OpenAI orchestration", () => {
-  it("defaults the model server-side and reports missing configuration", () => {
-    const previousKey = process.env.OPENAI_API_KEY;
-    const previousModel = process.env.OPENAI_MODEL;
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.OPENAI_MODEL;
-    expect(isOpenAIConfigured()).toBe(false);
-    expect(getAssistantModel()).toBe("gpt-5-mini");
-    if (previousKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previousKey;
-    if (previousModel === undefined) delete process.env.OPENAI_MODEL; else process.env.OPENAI_MODEL = previousModel;
-  });
-
   it("replays the function call with its call_id and streams the final explanation", async () => {
     const calls: Array<Record<string, unknown>> = [];
     const fakeClient = {
@@ -150,20 +138,22 @@ describe("assistant OpenAI orchestration", () => {
     const emitted: unknown[] = [];
     const text = await streamAssistantResponse({
       client: fakeClient,
+      model: "gpt-5-mini",
       runtime,
       history: [{ role: "USER", content: "Should I buy €500 of BTC?" }],
-      onEvent: (event) => emitted.push(event),
+      onEvent: (event) => { emitted.push(event); },
     });
 
     expect(text).toBe("BTC would exceed your range.");
     expect(emitted).toContainEqual({ type: "tool", name: "simulate_transaction" });
+    expect(calls[0].model).toBe("gpt-5-mini");
     const secondInput = calls[1].input as Array<Record<string, unknown>>;
     expect(secondInput).toContainEqual(expect.objectContaining({ type: "function_call_output", call_id: "call-btc" }));
   });
 
   it("surfaces a failed OpenAI stream without inventing output", async () => {
     const fakeClient = { responses: { create: async () => events([{ type: "response.failed" }]) } } as unknown as OpenAI;
-    await expect(streamAssistantResponse({ client: fakeClient, runtime, history: [], onEvent: () => undefined }))
+    await expect(streamAssistantResponse({ client: fakeClient, model: "gpt-5-mini", runtime, history: [], onEvent: () => undefined }))
       .rejects.toThrow("could not complete");
   });
 });

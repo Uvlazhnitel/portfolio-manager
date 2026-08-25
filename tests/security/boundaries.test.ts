@@ -22,6 +22,18 @@ describe("server and client security boundaries", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("keeps encryption and stored credential fields out of client components", () => {
+    const offenders = sourceFiles(sourceRoot).filter((file) => {
+      const content = readFileSync(file, "utf8");
+      return content.trimStart().startsWith('"use client"') && (
+        content.includes("encryptedApiKey")
+        || content.includes("features/integrations/crypto")
+        || content.includes("features/integrations/repository")
+      );
+    });
+    expect(offenders).toEqual([]);
+  });
+
   it("does not use raw HTML injection", () => {
     const offenders = sourceFiles(sourceRoot).filter((file) =>
       readFileSync(file, "utf8").includes("dangerouslySetInnerHTML"),

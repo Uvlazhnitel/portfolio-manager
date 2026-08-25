@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { loadAssistantPortfolioRuntime } from "@/features/assistant/context";
-import { getOpenAIClient, isOpenAIConfigured } from "@/features/assistant/openai";
+import { createOpenAIClient, getOpenAIConfiguration } from "@/features/assistant/openai";
 import { AssistantConversationService } from "@/features/assistant/service";
 import { streamAssistantResponse } from "@/features/assistant/stream";
 import { assistantMessageSchema } from "@/features/assistant/validation";
@@ -9,8 +9,11 @@ import { publicErrorMessage } from "@/lib/public-error";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  if (!isOpenAIConfigured()) {
-    return NextResponse.json({ error: "Assistant is not configured. Add OPENAI_API_KEY on the server." }, { status: 503 });
+  const openAIConfiguration = await getOpenAIConfiguration();
+  if (!openAIConfiguration.apiKey) {
+    return NextResponse.json({
+      error: openAIConfiguration.error ?? "Assistant is not configured. Add an OpenAI API key in Settings.",
+    }, { status: 503 });
   }
 
   let rawInput: unknown;
@@ -46,7 +49,8 @@ export async function POST(request: Request) {
         try {
           send({ type: "conversation", conversationId: prepared.conversationId });
           const content = await streamAssistantResponse({
-            client: getOpenAIClient(),
+            client: createOpenAIClient(openAIConfiguration.apiKey as string),
+            model: openAIConfiguration.model,
             runtime: runtimeSnapshot,
             history: history.map((message) => ({ role: message.role, content: message.content })),
             onEvent: send,

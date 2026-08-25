@@ -209,7 +209,9 @@ export function toEngineMarketPrices(snapshot: MarketDataSnapshot) {
   return Object.fromEntries(snapshot.prices.map((price) => [price.symbol, price.price]));
 }
 
-export function resetMarketDataRuntimeCacheForTests() {
+export function resetMarketDataRuntimeCache() {
   refreshAttempts.clear();
   inFlightRefreshes.clear();
 }
+
+export const resetMarketDataRuntimeCacheForTests = resetMarketDataRuntimeCache;
