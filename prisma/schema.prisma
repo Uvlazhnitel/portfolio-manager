@@ -80,8 +80,29 @@ model Asset {
   updatedAt    DateTime            @updatedAt
   transactions Transaction[]
   cachedPrices CachedMarketPrice[]
+  dailyPrices  DailyMarketPrice[]
   manualPrices ManualMarketPrice[]
   strategyAssetAllocations StrategyAssetAllocation[]
+}
+
+model DailyMarketPrice {
+  id               String   @id @default(cuid())
+  assetId          String
+  currency         String
+  date             DateTime @db.Date
+  price            Decimal  @db.Decimal(28, 8)
+  source           String
+  quoteTimestamp   DateTime
+  capturedAt       DateTime
+  isStaleAtCapture Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, currency, date])
+  @@index([currency, date])
+  @@index([date])
 }
 
 model CachedMarketPrice {

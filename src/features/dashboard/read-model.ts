@@ -22,6 +22,7 @@ export type DashboardReadModel = {
   valuation: {
     totalValue: string;
     totalUnrealizedPnl: string | null;
+    investmentGain: string | null;
     netInvested: string | null;
     externalContributions: string | null;
     externalWithdrawals: string | null;
@@ -127,6 +128,7 @@ export async function getDashboardReadModel({
     valuation: {
       totalValue: portfolio.totalValue,
       totalUnrealizedPnl: analytics.totalUnrealizedPnl,
+      investmentGain: analytics.investmentGain,
       netInvested: analytics.netInvested,
       externalContributions: analytics.externalContributions,
       externalWithdrawals: analytics.externalWithdrawals,

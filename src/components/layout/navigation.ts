@@ -12,6 +12,7 @@ import {
 export const navigationItems = [
   { label: "Dashboard", href: "/dashboard", icon: Gauge },
   { label: "Portfolio", href: "/portfolio", icon: Landmark },
+  { label: "Performance", href: "/performance", icon: ChartNoAxesCombined },
   {
     label: "Plan",
     href: "/plan",
@@ -30,5 +31,5 @@ export const mobileNavigationItems = [
   { label: "Home", href: "/dashboard", icon: Gauge },
   { label: "Portfolio", href: "/portfolio", icon: Landmark },
   { label: "Assistant", href: "/assistant", icon: Bot },
-  { label: "More", href: "/settings", icon: Settings },
+  { label: "More", href: "/more", icon: Settings },
 ] as const;

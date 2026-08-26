@@ -81,7 +81,7 @@ export function DashboardClient({ dashboard }: { dashboard: DashboardReadModel }
 }
 
 function TotalValueCard({ dashboard }: { dashboard: DashboardReadModel }) {
-  const pnl = dashboard.valuation.totalUnrealizedPnl;
+  const gain = dashboard.valuation.investmentGain;
   return (
     <Card className="order-1 min-w-0 md:order-1">
       <CardHeading title="Total portfolio value" icon={<CircleDollarSign className="h-5 w-5" />} />
@@ -90,18 +90,19 @@ function TotalValueCard({ dashboard }: { dashboard: DashboardReadModel }) {
         {dashboard.alignment.totalHoldings === 0 ? <Badge>No holdings</Badge> : dashboard.valuation.isPartial ? <Badge tone="warning">Partial value</Badge> : <Badge tone="success">All prices available</Badge>}
         {dashboard.valuation.hasStalePrices ? <Badge tone="warning">Stale prices</Badge> : null}
       </div>
-      {pnl !== null ? (
+      {gain !== null ? (
         <div className="mt-5 grid gap-3 border-t border-border pt-4">
           <div>
-            <p className="text-xs uppercase tracking-wide text-muted">Unrealized P&amp;L</p>
-            <p className={cn("mt-1 font-semibold", (decimalSign(pnl) ?? 0) >= 0 ? "text-success" : "text-destructive")}>{formatSignedCurrency(pnl, dashboard.valuation.currency)}</p>
+            <p className="text-xs uppercase tracking-wide text-muted">Investment gain</p>
+            <p className={cn("mt-1 font-semibold", (decimalSign(gain) ?? 0) >= 0 ? "text-success" : "text-destructive")}>{formatSignedCurrency(gain, dashboard.valuation.currency)}</p>
           </div>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <Metric label="Net invested" value={dashboard.valuation.netInvested ? formatCurrency(dashboard.valuation.netInvested, dashboard.valuation.currency) : "Unavailable"} />
             <Metric label="Simple return" value={dashboard.valuation.simpleReturnPercent ? formatPercent(dashboard.valuation.simpleReturnPercent) : "Unavailable"} />
           </div>
+          <Link href="/performance" className="text-sm font-medium text-primary hover:underline">View performance</Link>
         </div>
-      ) : <p className="mt-5 border-t border-border pt-4 text-sm text-muted">P&amp;L unavailable until price and acquisition cost coverage is complete.</p>}
+      ) : <p className="mt-5 border-t border-border pt-4 text-sm text-muted">Performance is unavailable until price and contribution coverage is complete.</p>}
     </Card>
   );
 }

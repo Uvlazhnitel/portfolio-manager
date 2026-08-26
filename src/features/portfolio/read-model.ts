@@ -80,6 +80,7 @@ export type PortfolioReadModel = {
     hasStalePrices: boolean;
     warning: string | null;
     totalUnrealizedPnl: string | null;
+    investmentGain: string | null;
     netInvested: string | null;
     externalContributions: string | null;
     externalWithdrawals: string | null;
@@ -156,6 +157,7 @@ export async function getPortfolioReadModel({
       hasStalePrices: marketData.hasStalePrices,
       warning: marketData.warning,
       totalUnrealizedPnl: analytics.totalUnrealizedPnl,
+      investmentGain: analytics.investmentGain,
       netInvested: analytics.netInvested,
       externalContributions: analytics.externalContributions,
       externalWithdrawals: analytics.externalWithdrawals,

@@ -4,13 +4,14 @@ Single-user investment portfolio manager and decision-support copilot. The MVP f
 
 ## MVP FEATURES
 
-- PostgreSQL-backed assets, accounts, complete Buy/Sell/Current Balance transaction history, strategy, market-price cache, contribution plan, and assistant conversations.
+- PostgreSQL-backed assets, accounts, transaction history, strategy, daily and current market prices, contribution plan, and assistant conversations.
 - Holdings derived from transactions and initial balances; no manually editable Holding source of truth.
 - Deterministic Portfolio Engine for holdings, valuation, allocation, strategy compliance, P&L availability, contribution planning, and assistant transaction checks.
-- Editable ETF, Crypto, Gold, and Cash targets/ranges with exact 100% target validation.
+- Editable class and nested asset targets/ranges with exact 100% validation at both levels.
 - CoinGecko adapter for supported crypto, XAUT-referenced physical-gold valuation, USD base-currency valuation, manual fallback prices, persistent cache, and stale indicators.
 - Encrypted in-app API-key management for OpenAI and CoinGecko with environment fallbacks.
 - Portfolio, Dashboard, Strategy, Contribution Planner, Settings, and read-only AI Assistant screens.
+- Historical Performance with daily portfolio value, net contributed capital, investment gain, and simple return.
 - OpenAI Responses API assistant with compact trusted portfolio context and deterministic read-only tools.
 - Responsive dark UI and installable PWA shell with conservative offline behavior.
 
@@ -23,7 +24,7 @@ Single-user investment portfolio manager and decision-support copilot. The MVP f
 - Bybit account sync
 - automated trades
 - tax calculations
-- advanced historical performance
+- advanced performance metrics (TWR, XIRR, YTD/1Y, max drawdown, and benchmarks)
 - push alerts
 
 ## Architecture
@@ -34,7 +35,9 @@ Transactions and initial balances are the portfolio source of truth. Per-holding
 
 USD is the single MVP base currency. Transaction monetary values are stored in the currency recorded at entry and are never silently converted. USD cash is valued one-to-one; USDT is priced through CoinGecko. To hold EUR cash in a USD portfolio, configure a manual USD price per EUR unit in Settings. Physical gold is entered and displayed in troy ounces (`oz`, up to four decimal places), follows the CoinGecko XAUT price per troy ounce, and remains gram-normalized inside the deterministic engine. Manual gold quotes are fallback-only when XAUT and its cached price are unavailable.
 
-The Portfolio screen supports chronological `Current balance`, `Buy`, and `Sell` entry. For Buy/Sell, enter either price per unit or the gross total; fees are stored separately. Enter older transactions first. A sale is checked against the selected account balance as of its historical date, and a required earlier purchase cannot be deleted while a later sale depends on it.
+The Portfolio screen supports chronological current balances, trades, transfers, and external cashflows. Enter older transactions first. A sale, withdrawal, or transfer is checked against the selected account balance as of its historical date.
+
+The Performance screen separates market gain from external money using `investment gain = portfolio value - net contributed`. `INITIAL_BALANCE` and `DEPOSIT` add contributed capital, `WITHDRAWAL` removes it, and trades/transfers do not change it. Performance accuracy therefore depends on recording every external deposit and withdrawal. A dedicated Docker worker stores one price observation per asset and UTC day from activation onward; earlier prices are not estimated or backfilled.
 
 ## Development setup
 
@@ -149,6 +152,8 @@ For the bundled app/PostgreSQL stack:
 ```bash
 docker compose up -d --build
 ```
+
+The Compose stack runs both the web application and a lightweight history worker. The worker captures prices immediately on startup, retries transient failures, and then records one observation per UTC day.
 
 The app listens on [http://localhost:3010](http://localhost:3010) only. Container startup runs `prisma migrate deploy`, the idempotent seed, and then Next.js. Use a private reverse proxy such as the existing tailnet-only Tailscale Serve endpoint for remote access. Change the example PostgreSQL credentials before any non-local deployment.
 

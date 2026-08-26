@@ -14,6 +14,7 @@ import type {
   CalculatePortfolioInput,
   CalculatePortfolioAnalyticsInput,
   CalculateHoldingCostBasisInput,
+  CalculateHistoricalPerformanceInput,
   CalculateStrategyAlignmentInput,
   ContributionAllocation,
   ContributionAssetRecommendation,
@@ -30,6 +31,7 @@ import type {
   ProjectContributionInput,
   PortfolioSnapshot,
   PortfolioAnalytics,
+  PortfolioPerformancePoint,
   ReasonCode,
   SimulatedTransactionInput,
   SimulateContributionInput,
@@ -155,10 +157,11 @@ export function calculatePortfolioAnalytics(input: CalculatePortfolioAnalyticsIn
 
   const totalHoldings = positiveHoldings.length;
   const totalUnrealizedPnl = calculateStrictUnrealizedPnl(input, assetById, missingSymbols);
-  const performance = calculatePerformanceSummary(input, assetById, totalUnrealizedPnl);
+  const performance = calculatePerformanceSummary(input, assetById);
 
   return {
     totalUnrealizedPnl: totalUnrealizedPnl ? toDecimalString(totalUnrealizedPnl) : null,
+    investmentGain: performance.investmentGain,
     netInvested: performance.netInvested,
     externalContributions: performance.externalContributions,
     externalWithdrawals: performance.externalWithdrawals,
@@ -174,6 +177,48 @@ export function calculatePortfolioAnalytics(input: CalculatePortfolioAnalyticsIn
       isPartial: account.isPartial,
     })),
   };
+}
+
+export function calculateHistoricalPerformance(
+  input: CalculateHistoricalPerformanceInput,
+): PortfolioPerformancePoint[] {
+  const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
+
+  return [...input.snapshots]
+    .sort((left, right) => left.date.localeCompare(right.date))
+    .map((snapshot) => {
+      const dayEnd = Date.parse(`${snapshot.date}T23:59:59.999Z`);
+      if (!Number.isFinite(dayEnd)) throw new Error(`Invalid historical snapshot date ${snapshot.date}.`);
+      const transactions = input.transactions.filter((transaction) => {
+        const executedAt = transaction.executedAt ? new Date(transaction.executedAt).getTime() : Number.NEGATIVE_INFINITY;
+        return Number.isFinite(executedAt) && executedAt <= dayEnd;
+      });
+      const portfolio = calculatePortfolio({
+        assets: input.assets,
+        transactions,
+        marketPrices: snapshot.marketPrices,
+      });
+      const cashflows = calculateExternalCashflows(transactions, assetById, input.baseCurrency);
+      const isComplete = portfolio.missingPriceSymbols.length === 0;
+      const portfolioValue = isComplete ? decimal(portfolio.totalValue) : null;
+      const investmentGain = portfolioValue && cashflows
+        ? portfolioValue.minus(cashflows.netInvested)
+        : null;
+      const simpleReturnPercent = investmentGain && cashflows && cashflows.netInvested.greaterThan(ZERO)
+        ? investmentGain.div(cashflows.netInvested).mul(ONE_HUNDRED)
+        : null;
+
+      return {
+        date: snapshot.date,
+        portfolioValue: portfolioValue ? toDecimalString(portfolioValue) : null,
+        netContributed: cashflows ? toDecimalString(cashflows.netInvested) : null,
+        investmentGain: investmentGain ? toDecimalString(investmentGain) : null,
+        simpleReturnPercent: simpleReturnPercent ? toDecimalString(simpleReturnPercent) : null,
+        isComplete,
+        missingPriceSymbols: portfolio.missingPriceSymbols,
+        hasStalePrices: snapshot.hasStalePrices,
+      };
+    });
 }
 
 export function calculateStrategyAlignment(input: CalculateStrategyAlignmentInput): StrategyAlignment {
@@ -1062,25 +1107,54 @@ function calculateStrictUnrealizedPnl(
 function calculatePerformanceSummary(
   input: CalculatePortfolioAnalyticsInput,
   assetById: Map<string, EngineAsset>,
-  totalUnrealizedPnl: Prisma.Decimal | null,
+) {
+  const cashflows = calculateExternalCashflows(input.transactions, assetById, input.baseCurrency);
+  if (!cashflows) {
+    return {
+      netInvested: null,
+      externalContributions: null,
+      externalWithdrawals: null,
+      investmentGain: null,
+      simpleReturnPercent: null,
+    };
+  }
+
+  const isComplete = input.portfolio.missingPriceSymbols.length === 0;
+  const investmentGain = isComplete
+    ? decimal(input.portfolio.totalValue).minus(cashflows.netInvested)
+    : null;
+  const simpleReturnPercent = investmentGain && cashflows.netInvested.greaterThan(ZERO)
+    ? investmentGain.div(cashflows.netInvested).mul(ONE_HUNDRED)
+    : null;
+
+  return {
+    netInvested: toDecimalString(cashflows.netInvested),
+    externalContributions: toDecimalString(cashflows.externalContributions),
+    externalWithdrawals: toDecimalString(cashflows.externalWithdrawals),
+    investmentGain: investmentGain ? toDecimalString(investmentGain) : null,
+    simpleReturnPercent: simpleReturnPercent ? toDecimalString(simpleReturnPercent) : null,
+  };
+}
+
+function calculateExternalCashflows(
+  transactions: EngineTransaction[],
+  assetById: Map<string, EngineAsset>,
+  baseCurrency: string,
 ) {
   let externalContributions = ZERO;
   let externalWithdrawals = ZERO;
 
-  for (const transaction of input.transactions) {
+  for (const transaction of transactions) {
+    const isContribution = transaction.type === TransactionType.INITIAL_BALANCE || transaction.type === TransactionType.DEPOSIT;
+    const isWithdrawal = transaction.type === TransactionType.WITHDRAWAL;
+    if (!isContribution && !isWithdrawal) continue;
+
     const asset = assetById.get(transaction.assetId);
     if (!asset) continue;
-    if (transaction.currency?.toUpperCase() !== input.baseCurrency.toUpperCase()) {
-      return {
-        netInvested: null,
-        externalContributions: null,
-        externalWithdrawals: null,
-        simpleReturnPercent: null,
-      };
-    }
+    if (transaction.currency?.toUpperCase() !== baseCurrency.toUpperCase()) return null;
     const quantity = decimal(transaction.quantity);
     const pricePerUnit = transaction.pricePerUnit === null || transaction.pricePerUnit === undefined
-      ? asset.assetType === "FIAT" && asset.currency?.toUpperCase() === input.baseCurrency.toUpperCase()
+      ? asset.assetType === "FIAT" && asset.currency?.toUpperCase() === baseCurrency.toUpperCase()
         ? decimal(1)
         : null
       : decimal(transaction.pricePerUnit);
@@ -1088,27 +1162,18 @@ function calculatePerformanceSummary(
       ? quantity.mul(pricePerUnit).plus(transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee))
       : null;
 
-    if (transaction.type === TransactionType.INITIAL_BALANCE || transaction.type === TransactionType.DEPOSIT) {
-      if (!cashflowValue) return { netInvested: null, externalContributions: null, externalWithdrawals: null, simpleReturnPercent: null };
+    if (isContribution) {
+      if (!cashflowValue) return null;
       externalContributions = externalContributions.plus(cashflowValue);
     }
-    if (transaction.type === TransactionType.WITHDRAWAL) {
-      if (!cashflowValue) return { netInvested: null, externalContributions: null, externalWithdrawals: null, simpleReturnPercent: null };
+    if (isWithdrawal) {
+      if (!cashflowValue) return null;
       externalWithdrawals = externalWithdrawals.plus(cashflowValue);
     }
   }
 
   const netInvested = externalContributions.minus(externalWithdrawals);
-  const simpleReturnPercent = totalUnrealizedPnl === null || netInvested.lessThanOrEqualTo(ZERO)
-    ? null
-    : totalUnrealizedPnl.div(netInvested).mul(ONE_HUNDRED);
-
-  return {
-    netInvested: toDecimalString(netInvested),
-    externalContributions: toDecimalString(externalContributions),
-    externalWithdrawals: toDecimalString(externalWithdrawals),
-    simpleReturnPercent: simpleReturnPercent ? toDecimalString(simpleReturnPercent) : null,
-  };
+  return { netInvested, externalContributions, externalWithdrawals };
 }
 
 function transactionTime(transaction: EngineTransaction, fallback: number) {

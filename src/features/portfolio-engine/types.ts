@@ -114,6 +114,7 @@ export type CalculatePortfolioInput = {
 
 export type PortfolioAnalytics = {
   totalUnrealizedPnl: string | null;
+  investmentGain: string | null;
   netInvested: string | null;
   externalContributions: string | null;
   externalWithdrawals: string | null;
@@ -128,6 +129,30 @@ export type PortfolioAnalytics = {
     value: string;
     isPartial: boolean;
   }>;
+};
+
+export type HistoricalMarketSnapshot = {
+  date: string;
+  marketPrices: MarketPrices;
+  hasStalePrices: boolean;
+};
+
+export type PortfolioPerformancePoint = {
+  date: string;
+  portfolioValue: string | null;
+  netContributed: string | null;
+  investmentGain: string | null;
+  simpleReturnPercent: string | null;
+  isComplete: boolean;
+  missingPriceSymbols: string[];
+  hasStalePrices: boolean;
+};
+
+export type CalculateHistoricalPerformanceInput = {
+  assets: EngineAsset[];
+  transactions: EngineTransaction[];
+  baseCurrency: string;
+  snapshots: HistoricalMarketSnapshot[];
 };
 
 export type HoldingCostBasisReason =

@@ -34,6 +34,28 @@ services:
     command: sh -c "pnpm db:deploy && pnpm db:seed && pnpm start"
     ports:
       - "127.0.0.1:3010:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/dashboard').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  history-worker:
+    build:
+      context: .
+    container_name: portfolio-manager-history-worker
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://portfolio_manager:portfolio_manager@postgres:5432/portfolio_manager?schema=public
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
+      COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: pnpm history:worker
 
 volumes:
   portfolio_manager_postgres:
