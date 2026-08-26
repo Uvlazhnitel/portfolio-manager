@@ -249,14 +249,14 @@ function ContributionPanel({ dashboard }: { dashboard: DashboardReadModel }) {
 
 function SectionHeading({ eyebrow, title, icon, children }: { eyebrow: string; title: string; icon: ReactNode; children?: ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-4">
-      <div className="min-w-0">
+    <div className="min-w-0">
+      <div className="flex items-center justify-between gap-4">
         <p className="truncate text-xs text-muted">{eyebrow}</p>
-        <h2 className="mt-1 text-lg font-semibold text-foreground">{title}</h2>
+        <span className="shrink-0 text-primary">{icon}</span>
       </div>
-      <div className="flex shrink-0 items-center gap-3 text-primary">
-        {children}
-        {icon}
+      <div className="mt-1 flex items-start justify-between gap-4">
+        <h2 className="min-w-0 text-lg font-semibold text-foreground">{title}</h2>
+        {children ? <div className="shrink-0">{children}</div> : null}
       </div>
     </div>
   );
@@ -295,9 +295,9 @@ function StatusLabel({ status }: { status: DashboardReadModel["allocation"][numb
 
 function dataHealth(dashboard: DashboardReadModel): { tone: "good" | "warning"; text: string } {
   const issues: string[] = [];
-  if (dashboard.valuation.isPartial) issues.push(`missing prices: ${dashboard.valuation.missingPriceSymbols.join(", ")}`);
-  if (dashboard.valuation.isCostBasisPartial) issues.push(`partial cost basis: ${dashboard.valuation.missingCostBasisSymbols.join(", ")}`);
-  if (dashboard.valuation.hasStalePrices) issues.push("stale prices included");
+  if (dashboard.valuation.isPartial) issues.push(`Missing prices: ${dashboard.valuation.missingPriceSymbols.join(", ")}`);
+  if (dashboard.valuation.isCostBasisPartial) issues.push(`Partial cost basis: ${dashboard.valuation.missingCostBasisSymbols.join(", ")}`);
+  if (dashboard.valuation.hasStalePrices) issues.push("Stale prices included");
   if (dashboard.valuation.warning) issues.push(dashboard.valuation.warning);
   return issues.length > 0
     ? { tone: "warning", text: issues.join(" · ") }
