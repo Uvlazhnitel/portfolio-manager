@@ -42,6 +42,7 @@ export class AlphaVantageMarketDataProvider implements MarketDataProvider {
   constructor(
     private readonly apiKey: string | ApiKeyResolver | undefined = resolveAlphaVantageApiKey,
     private readonly fetcher: FetchLike = fetch,
+    private readonly minimumRequestIntervalMs = 1_300,
   ) {}
 
   async getCurrentPrices({ assets, baseCurrency }: Parameters<MarketDataProvider["getCurrentPrices"]>[0]) {
@@ -51,14 +52,19 @@ export class AlphaVantageMarketDataProvider implements MarketDataProvider {
     const apiKey = typeof this.apiKey === "function" ? await this.apiKey() : this.apiKey;
     if (!apiKey) return [];
 
-    const quotes = await Promise.all(supportedAssets.map((asset) => this.fetchDailyClose(asset, apiKey)));
+    const quotes = [];
+    for (const asset of supportedAssets) {
+      quotes.push(await this.fetchDailyClose(asset, apiKey));
+    }
     const quoteCurrencies = [...new Set(supportedAssets.map((asset) => asset.currency.toUpperCase()))];
-    const fxEntries = await Promise.all(quoteCurrencies.map(async (currency): Promise<readonly [string, ResolvedExchangeRate]> => {
+    const fxEntries: Array<readonly [string, ResolvedExchangeRate]> = [];
+    for (const currency of quoteCurrencies) {
       if (currency === baseCurrency.toUpperCase()) {
-        return [currency, { rate: new Prisma.Decimal(1), timestamp: new Date() }];
+        fxEntries.push([currency, { rate: new Prisma.Decimal(1), timestamp: new Date() }]);
+        continue;
       }
-      return [currency, await this.fetchExchangeRate(currency, baseCurrency, apiKey)];
-    }));
+      fxEntries.push([currency, await this.fetchExchangeRate(currency, baseCurrency, apiKey)]);
+    }
     const fxByCurrency = new Map<string, ResolvedExchangeRate>(fxEntries);
 
     return quotes.map<MarketPrice>((quote, index) => {
@@ -117,6 +123,7 @@ export class AlphaVantageMarketDataProvider implements MarketDataProvider {
   }
 
   private async request(parameters: Record<string, string>, apiKey: string) {
+    await wait(this.minimumRequestIntervalMs);
     const url = new URL("https://www.alphavantage.co/query");
     for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, value);
     url.searchParams.set("apikey", apiKey);
@@ -130,6 +137,10 @@ export class AlphaVantageMarketDataProvider implements MarketDataProvider {
     if (apiProblemSchema.safeParse(payload).success) throw new Error("Alpha Vantage rejected or throttled the request.");
     return payload;
   }
+}
+
+function wait(durationMs: number) {
+  return durationMs > 0 ? new Promise((resolve) => setTimeout(resolve, durationMs)) : Promise.resolve();
 }
 
 function isSupportedAsset(asset: Parameters<MarketDataProvider["getCurrentPrices"]>[0]["assets"][number]): asset is SupportedAsset {

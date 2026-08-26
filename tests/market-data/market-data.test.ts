@@ -205,7 +205,7 @@ describe("market data providers", () => {
         },
       }), { status: 200 });
     });
-    const provider = new AlphaVantageMarketDataProvider("alpha-secret", fetcher as typeof fetch);
+    const provider = new AlphaVantageMarketDataProvider("alpha-secret", fetcher as typeof fetch, 0);
 
     const prices = await provider.getCurrentPrices({ assets: [alphaVwce, iwda], baseCurrency: "USD" });
 
@@ -218,19 +218,19 @@ describe("market data providers", () => {
   });
 
   it("rejects Alpha Vantage rate limits and malformed daily responses", async () => {
-    const limited = new AlphaVantageMarketDataProvider("alpha-secret", vi.fn(async () => new Response(JSON.stringify({ Note: "rate limit" }), { status: 200 })) as typeof fetch);
+    const limited = new AlphaVantageMarketDataProvider("alpha-secret", vi.fn(async () => new Response(JSON.stringify({ Note: "rate limit" }), { status: 200 })) as typeof fetch, 0);
     await expect(limited.getCurrentPrices({ assets: [alphaVwce], baseCurrency: "USD" })).rejects.toThrow("rejected");
 
     const malformed = new AlphaVantageMarketDataProvider("alpha-secret", vi.fn(async () => new Response(JSON.stringify({
       "Meta Data": { "2. Symbol": "VWCE.DEX" },
       "Time Series (Daily)": { "2026-08-24": { "4. close": 120.5 } },
-    }), { status: 200 })) as typeof fetch);
+    }), { status: 200 })) as typeof fetch, 0);
     await expect(malformed.getCurrentPrices({ assets: [alphaVwce], baseCurrency: "USD" })).rejects.toThrow();
   });
 
   it("does not call Alpha Vantage until a key is configured", async () => {
     const fetcher = vi.fn();
-    const provider = new AlphaVantageMarketDataProvider(async () => undefined, fetcher as typeof fetch);
+    const provider = new AlphaVantageMarketDataProvider(async () => undefined, fetcher as typeof fetch, 0);
     await expect(provider.getCurrentPrices({ assets: [alphaVwce], baseCurrency: "USD" })).resolves.toEqual([]);
     expect(fetcher).not.toHaveBeenCalled();
   });

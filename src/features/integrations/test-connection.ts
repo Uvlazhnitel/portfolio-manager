@@ -135,10 +135,9 @@ async function probeAlphaVantage(apiKey: string) {
   fx.searchParams.set("to_currency", "USD");
   fx.searchParams.set("apikey", apiKey);
 
-  const [dailyResponse, fxResponse] = await Promise.all([
-    fetch(daily, { cache: "no-store", signal: AbortSignal.timeout(8_000) }),
-    fetch(fx, { cache: "no-store", signal: AbortSignal.timeout(8_000) }),
-  ]);
+  const dailyResponse = await fetch(daily, { cache: "no-store", signal: AbortSignal.timeout(8_000) });
+  await wait(1_300);
+  const fxResponse = await fetch(fx, { cache: "no-store", signal: AbortSignal.timeout(8_000) });
   if (!dailyResponse.ok || !fxResponse.ok) throw new Error("Alpha Vantage request failed.");
 
   const problemSchema = z.union([
@@ -164,4 +163,8 @@ async function probeAlphaVantage(apiKey: string) {
       "5. Exchange Rate": z.string().regex(/^\d+(?:\.\d+)?$/),
     }),
   }).parse(fxPayload);
+}
+
+function wait(durationMs: number) {
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
 }
