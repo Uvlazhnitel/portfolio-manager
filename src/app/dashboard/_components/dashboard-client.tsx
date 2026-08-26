@@ -91,13 +91,23 @@ function TotalValueCard({ dashboard }: { dashboard: DashboardReadModel }) {
         {dashboard.valuation.hasStalePrices ? <Badge tone="warning">Stale prices</Badge> : null}
       </div>
       {pnl !== null ? (
-        <div className="mt-5 border-t border-border pt-4">
-          <p className="text-xs uppercase tracking-wide text-muted">Unrealized P&amp;L</p>
-          <p className={cn("mt-1 font-semibold", (decimalSign(pnl) ?? 0) >= 0 ? "text-success" : "text-destructive")}>{formatSignedCurrency(pnl, dashboard.valuation.currency)}</p>
+        <div className="mt-5 grid gap-3 border-t border-border pt-4">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-muted">Unrealized P&amp;L</p>
+            <p className={cn("mt-1 font-semibold", (decimalSign(pnl) ?? 0) >= 0 ? "text-success" : "text-destructive")}>{formatSignedCurrency(pnl, dashboard.valuation.currency)}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <Metric label="Net invested" value={dashboard.valuation.netInvested ? formatCurrency(dashboard.valuation.netInvested, dashboard.valuation.currency) : "Unavailable"} />
+            <Metric label="Simple return" value={dashboard.valuation.simpleReturnPercent ? formatPercent(dashboard.valuation.simpleReturnPercent) : "Unavailable"} />
+          </div>
         </div>
       ) : <p className="mt-5 border-t border-border pt-4 text-sm text-muted">P&amp;L unavailable until price and acquisition cost coverage is complete.</p>}
     </Card>
   );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return <div><p className="text-xs uppercase tracking-wide text-muted">{label}</p><p className="mt-1 font-semibold text-foreground">{value}</p></div>;
 }
 
 function AlignmentCard({ dashboard, onDetails }: { dashboard: DashboardReadModel; onDetails: () => void }) {

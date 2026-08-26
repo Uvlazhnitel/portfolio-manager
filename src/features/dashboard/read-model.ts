@@ -22,6 +22,10 @@ export type DashboardReadModel = {
   valuation: {
     totalValue: string;
     totalUnrealizedPnl: string | null;
+    netInvested: string | null;
+    externalContributions: string | null;
+    externalWithdrawals: string | null;
+    simpleReturnPercent: string | null;
     currency: string;
     isPartial: boolean;
     missingPriceSymbols: string[];
@@ -123,6 +127,10 @@ export async function getDashboardReadModel({
     valuation: {
       totalValue: portfolio.totalValue,
       totalUnrealizedPnl: analytics.totalUnrealizedPnl,
+      netInvested: analytics.netInvested,
+      externalContributions: analytics.externalContributions,
+      externalWithdrawals: analytics.externalWithdrawals,
+      simpleReturnPercent: analytics.simpleReturnPercent,
       currency: baseCurrency,
       isPartial: portfolio.missingPriceSymbols.length > 0,
       missingPriceSymbols: portfolio.missingPriceSymbols,

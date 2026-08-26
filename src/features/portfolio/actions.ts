@@ -4,6 +4,7 @@ import { AccountType, AssetClass, AssetType, TransactionType } from "@prisma/cli
 import { revalidatePath } from "next/cache";
 import {
   createAccountMutation,
+  createTransferMutation,
   createTransactionMutation,
   deleteTransactionMutation,
   type PortfolioMutationResult,
@@ -80,6 +81,33 @@ export async function createTransactionAction(
   }
 }
 
+export async function createTransferAction(
+  previousState: PortfolioActionState = initialState,
+  formData: FormData,
+): Promise<PortfolioActionState> {
+  void previousState;
+
+  try {
+    const strategy = await new StrategyRepository().findActiveStrategy();
+    const baseCurrency = strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
+
+    return await withPortfolioRevalidation(
+      createTransferMutation({
+        assetId: String(formData.get("assetId") ?? ""),
+        fromAccountId: String(formData.get("fromAccountId") ?? ""),
+        toAccountId: String(formData.get("toAccountId") ?? ""),
+        quantity: nullableString(formData.get("quantity")) ?? undefined,
+        physicalGoldWeightTroyOunces: nullableString(formData.get("physicalGoldWeightTroyOunces")) ?? undefined,
+        currency: String(formData.get("currency") ?? baseCurrency),
+        executedAt: String(formData.get("executedAt") ?? ""),
+        note: nullableString(formData.get("note")) ?? undefined,
+      }),
+    );
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
 export async function createPositionAction(
   previousState: PortfolioActionState = initialState,
   formData: FormData,
@@ -128,7 +156,11 @@ function parseImplementedTransactionType(value: string) {
   if (
     value === TransactionType.INITIAL_BALANCE ||
     value === TransactionType.BUY ||
-    value === TransactionType.SELL
+    value === TransactionType.SELL ||
+    value === TransactionType.DEPOSIT ||
+    value === TransactionType.WITHDRAWAL ||
+    value === TransactionType.TRANSFER_IN ||
+    value === TransactionType.TRANSFER_OUT
   ) {
     return value;
   }

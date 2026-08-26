@@ -114,6 +114,10 @@ export type CalculatePortfolioInput = {
 
 export type PortfolioAnalytics = {
   totalUnrealizedPnl: string | null;
+  netInvested: string | null;
+  externalContributions: string | null;
+  externalWithdrawals: string | null;
+  simpleReturnPercent: string | null;
   priceCoverage: {
     pricedHoldings: number;
     totalHoldings: number;

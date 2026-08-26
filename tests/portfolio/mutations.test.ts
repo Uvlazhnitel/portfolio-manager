@@ -4,6 +4,7 @@ import { calculateHoldings } from "@/features/portfolio-engine";
 import {
   createAccountMutation,
   createPhysicalGoldInitialBalanceInput,
+  createTransferMutation,
   createTransactionMutation,
   deleteTransactionMutation,
 } from "@/features/portfolio/mutations";
@@ -211,6 +212,54 @@ describe("portfolio mutations", () => {
       } as never,
       testDb.prisma,
     )).rejects.toThrow("Add a starting balance or earlier buy first");
+  });
+
+  it("creates a transfer as paired rows and moves holdings between accounts", async () => {
+    const from = await testDb.prisma.account.create({ data: { name: "Transfer Source", type: AccountType.EXCHANGE } });
+    const to = await testDb.prisma.account.create({ data: { name: "Transfer Target", type: AccountType.WALLET } });
+    const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
+    await createTransactionMutation({ type: TransactionType.BUY, accountId: from.id, assetMode: "existing", assetId: btc.id, quantity: "1", totalAmount: "1000", currency: "EUR", executedAt: new Date("2026-03-01") }, testDb.prisma);
+
+    await createTransferMutation({
+      assetId: btc.id,
+      fromAccountId: from.id,
+      toAccountId: to.id,
+      quantity: "0.4",
+      currency: "EUR",
+      executedAt: new Date("2026-03-02"),
+    }, testDb.prisma);
+
+    const rows = await testDb.prisma.transaction.findMany({ where: { assetId: btc.id, accountId: { in: [from.id, to.id] } }, orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }] });
+    expect(rows.filter((row) => row.type === TransactionType.TRANSFER_OUT)).toHaveLength(1);
+    expect(rows.filter((row) => row.type === TransactionType.TRANSFER_IN)).toHaveLength(1);
+    expect(calculateHoldings(rows).sort((left, right) => left.accountId.localeCompare(right.accountId))).toEqual([
+      { accountId: from.id, assetId: btc.id, quantity: "0.6" },
+      { accountId: to.id, assetId: btc.id, quantity: "0.4" },
+    ].sort((left, right) => left.accountId.localeCompare(right.accountId)));
+  });
+
+  it("rejects invalid transfers", async () => {
+    const from = await testDb.prisma.account.create({ data: { name: "Invalid Transfer Source", type: AccountType.EXCHANGE } });
+    const to = await testDb.prisma.account.create({ data: { name: "Invalid Transfer Target", type: AccountType.WALLET } });
+    const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
+
+    await expect(createTransferMutation({ assetId: btc.id, fromAccountId: from.id, toAccountId: from.id, quantity: "1", currency: "EUR", executedAt: new Date("2026-04-01") }, testDb.prisma)).rejects.toThrow("must be different");
+    await expect(createTransferMutation({ assetId: btc.id, fromAccountId: from.id, toAccountId: to.id, quantity: "1", currency: "EUR", executedAt: new Date("2026-04-01") }, testDb.prisma)).rejects.toThrow("earlier buy first");
+  });
+
+  it("creates CASH deposits and withdrawals and rejects unsupported cashflows", async () => {
+    const account = await testDb.prisma.account.create({ data: { name: "Cashflow Account", type: AccountType.BANK } });
+    const eur = await testDb.prisma.asset.create({ data: { symbol: "EUR_CASH_TEST", name: "Euro Cash Test", assetClass: AssetClass.CASH, assetType: AssetType.FIAT, currency: "EUR" } });
+    const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
+
+    await createTransactionMutation({ type: TransactionType.DEPOSIT, accountId: account.id, assetMode: "existing", assetId: eur.id, quantity: "1000", currency: "EUR", executedAt: new Date("2026-05-01") }, testDb.prisma);
+    await createTransactionMutation({ type: TransactionType.WITHDRAWAL, accountId: account.id, assetMode: "existing", assetId: eur.id, quantity: "250", currency: "EUR", executedAt: new Date("2026-05-02") }, testDb.prisma);
+
+    const rows = await testDb.prisma.transaction.findMany({ where: { accountId: account.id, assetId: eur.id } });
+    expect(calculateHoldings(rows)).toEqual([{ accountId: account.id, assetId: eur.id, quantity: "750" }]);
+    expect(rows.map((row) => row.pricePerUnit?.toString()).sort()).toEqual(["1", "1"]);
+    await expect(createTransactionMutation({ type: TransactionType.DEPOSIT, accountId: account.id, assetMode: "existing", assetId: btc.id, quantity: "1", currency: "EUR", executedAt: new Date("2026-05-03") }, testDb.prisma)).rejects.toThrow("only available for CASH");
+    await expect(createTransactionMutation({ type: TransactionType.WITHDRAWAL, accountId: account.id, assetMode: "existing", assetId: eur.id, quantity: "1000", currency: "EUR", executedAt: new Date("2026-05-04") }, testDb.prisma)).rejects.toThrow("earlier buy first");
   });
 
   it("normalizes physical gold troy ounces and total purchase cost to gram-based storage", async () => {

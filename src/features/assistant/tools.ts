@@ -36,7 +36,7 @@ export const assistantToolDefinitions: Responses.Tool[] = [
   {
     type: "function",
     name: "simulate_transaction",
-    description: "Simulate a BUY or SELL as an external cashflow in the portfolio's trusted base currency without changing real data. Always use this before discussing the allocation effect of a proposed transaction.",
+    description: "Simulate a BUY or SELL trade in the portfolio's trusted base currency without changing real data. Transfers are account movements, not trades, and are not simulated by this tool.",
     strict: true,
     parameters: {
       type: "object",

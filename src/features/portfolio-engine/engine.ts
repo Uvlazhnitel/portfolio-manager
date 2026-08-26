@@ -25,6 +25,7 @@ import type {
   EngineTransaction,
   Holding,
   HoldingCostBasis,
+  HoldingCostBasisReason,
   PlanContributionInput,
   ProjectContributionInput,
   PortfolioSnapshot,
@@ -154,9 +155,14 @@ export function calculatePortfolioAnalytics(input: CalculatePortfolioAnalyticsIn
 
   const totalHoldings = positiveHoldings.length;
   const totalUnrealizedPnl = calculateStrictUnrealizedPnl(input, assetById, missingSymbols);
+  const performance = calculatePerformanceSummary(input, assetById, totalUnrealizedPnl);
 
   return {
     totalUnrealizedPnl: totalUnrealizedPnl ? toDecimalString(totalUnrealizedPnl) : null,
+    netInvested: performance.netInvested,
+    externalContributions: performance.externalContributions,
+    externalWithdrawals: performance.externalWithdrawals,
+    simpleReturnPercent: performance.simpleReturnPercent,
     priceCoverage: {
       pricedHoldings,
       totalHoldings,
@@ -800,18 +806,11 @@ function projectContribution(portfolio: PortfolioSnapshot, allocations: Contribu
 
 export function calculateHoldingCostBasis(input: CalculateHoldingCostBasisInput): HoldingCostBasis[] {
   const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
-  const transactionsByHolding = new Map<string, EngineTransaction[]>();
-
-  for (const transaction of input.transactions) {
-    const key = `${transaction.accountId}:${transaction.assetId}`;
-    const current = transactionsByHolding.get(key) ?? [];
-    current.push(transaction);
-    transactionsByHolding.set(key, current);
-  }
+  const pools = calculateCostPools(input, assetById);
 
   return input.portfolio.holdings.map((holding) => {
-    const asset = requireAsset(assetById, holding.assetId);
     const quantity = decimal(holding.quantity);
+    const pool = pools.get(`${holding.accountId}:${holding.assetId}`);
     const unavailable = (reason: HoldingCostBasis["reason"]): HoldingCostBasis => ({
       accountId: holding.accountId,
       assetId: holding.assetId,
@@ -822,63 +821,15 @@ export function calculateHoldingCostBasis(input: CalculateHoldingCostBasisInput)
     });
 
     if (!quantity.greaterThan(ZERO)) return unavailable("NON_POSITIVE_HOLDING");
-
-    if (asset.assetType === "FIAT" && asset.currency?.toUpperCase() === input.baseCurrency.toUpperCase()) {
-      return {
-        accountId: holding.accountId,
-        assetId: holding.assetId,
-        status: "AVAILABLE",
-        totalCost: toDecimalString(quantity),
-        averageAcquisitionPrice: toDecimalString(decimal(1)),
-        reason: null,
-      };
-    }
-
-    const transactions = [...(transactionsByHolding.get(`${holding.accountId}:${holding.assetId}`) ?? [])]
-      .map((transaction, index) => ({ transaction, index }))
-      .sort((left, right) => transactionTime(left.transaction, left.index) - transactionTime(right.transaction, right.index))
-      .map(({ transaction }) => transaction);
-    let trackedQuantity = ZERO;
-    let trackedCost = ZERO;
-
-    for (const transaction of transactions) {
-      const transactionQuantity = decimal(transaction.quantity);
-      if (transaction.type === TransactionType.TRANSFER_IN || transaction.type === TransactionType.TRANSFER_OUT) {
-        return unavailable("ACCOUNT_TRANSFER_COST_UNKNOWN");
-      }
-      if (transaction.type === TransactionType.DEPOSIT || transaction.type === TransactionType.WITHDRAWAL) {
-        return unavailable("UNSUPPORTED_QUANTITY_MOVEMENT");
-      }
-      if (transaction.type === TransactionType.INITIAL_BALANCE || transaction.type === TransactionType.BUY) {
-        if (transaction.pricePerUnit === null || transaction.pricePerUnit === undefined) {
-          return unavailable("MISSING_ACQUISITION_PRICE");
-        }
-        if (transaction.currency?.toUpperCase() !== input.baseCurrency.toUpperCase()) {
-          return unavailable("UNSUPPORTED_TRANSACTION_CURRENCY");
-        }
-        trackedQuantity = trackedQuantity.plus(transactionQuantity);
-        trackedCost = trackedCost
-          .plus(transactionQuantity.mul(decimal(transaction.pricePerUnit)))
-          .plus(transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee));
-      }
-      if (transaction.type === TransactionType.SELL) {
-        if (trackedQuantity.equals(ZERO) || transactionQuantity.greaterThan(trackedQuantity)) {
-          return unavailable("INCONSISTENT_TRANSACTION_HISTORY");
-        }
-        const averageCost = trackedCost.div(trackedQuantity);
-        trackedQuantity = trackedQuantity.minus(transactionQuantity);
-        trackedCost = trackedCost.minus(averageCost.mul(transactionQuantity));
-      }
-    }
-
-    if (!trackedQuantity.equals(quantity)) return unavailable("INCONSISTENT_TRANSACTION_HISTORY");
+    if (!pool || pool.reason) return unavailable(pool?.reason ?? "INCONSISTENT_TRANSACTION_HISTORY");
+    if (!pool.quantity.equals(quantity)) return unavailable("INCONSISTENT_TRANSACTION_HISTORY");
 
     return {
       accountId: holding.accountId,
       assetId: holding.assetId,
       status: "AVAILABLE",
-      totalCost: toDecimalString(trackedCost),
-      averageAcquisitionPrice: toDecimalString(trackedCost.div(quantity)),
+      totalCost: toDecimalString(pool.cost),
+      averageAcquisitionPrice: toDecimalString(pool.cost.div(quantity)),
       reason: null,
     };
   });
@@ -923,6 +874,147 @@ function requireMoney(value: Parameters<typeof decimal>[0], label: string) {
   return amount;
 }
 
+type CostPool = {
+  quantity: Prisma.Decimal;
+  cost: Prisma.Decimal;
+  reason: HoldingCostBasisReason | null;
+};
+
+type TransferLot = {
+  quantity: Prisma.Decimal;
+  cost: Prisma.Decimal;
+};
+
+function calculateCostPools(
+  input: CalculateHoldingCostBasisInput,
+  assetById: Map<string, EngineAsset>,
+) {
+  const pools = new Map<string, CostPool>();
+  const transferLotsByAsset = new Map<string, TransferLot[]>();
+  const affectedAssetIds = new Set<string>();
+  const transactions = input.transactions
+    .map((transaction, index) => ({ transaction, index }))
+    .sort((left, right) => {
+      const timeCompare = transactionTime(left.transaction, left.index) - transactionTime(right.transaction, right.index);
+      if (timeCompare !== 0) return timeCompare;
+      const priorityCompare = transactionPriority(left.transaction.type) - transactionPriority(right.transaction.type);
+      return priorityCompare === 0 ? left.index - right.index : priorityCompare;
+    })
+    .map(({ transaction }) => transaction);
+
+  const poolFor = (accountId: string, assetId: string) => {
+    const key = `${accountId}:${assetId}`;
+    const pool = pools.get(key) ?? { quantity: ZERO, cost: ZERO, reason: null };
+    pools.set(key, pool);
+    return pool;
+  };
+  const markAssetUnavailable = (assetId: string, reason: HoldingCostBasisReason) => {
+    affectedAssetIds.add(assetId);
+    for (const [key, pool] of pools) {
+      if (key.endsWith(`:${assetId}`)) pool.reason = reason;
+    }
+  };
+
+  for (const transaction of transactions) {
+    const asset = assetById.get(transaction.assetId);
+    if (!asset) continue;
+    affectedAssetIds.add(transaction.assetId);
+    const pool = poolFor(transaction.accountId, transaction.assetId);
+    const quantity = decimal(transaction.quantity);
+    const implicitBaseCashPrice = asset.assetType === "FIAT" &&
+      asset.currency?.toUpperCase() === input.baseCurrency.toUpperCase() &&
+      (transaction.pricePerUnit === null || transaction.pricePerUnit === undefined);
+    const pricePerUnit = implicitBaseCashPrice ? decimal(1) : transaction.pricePerUnit === null || transaction.pricePerUnit === undefined ? null : decimal(transaction.pricePerUnit);
+    const transactionCost = pricePerUnit
+      ? quantity.mul(pricePerUnit).plus(transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee))
+      : ZERO;
+
+    if (transaction.type === TransactionType.INITIAL_BALANCE || transaction.type === TransactionType.BUY || transaction.type === TransactionType.DEPOSIT) {
+      if (!pricePerUnit) {
+        pool.reason = "MISSING_ACQUISITION_PRICE";
+        continue;
+      }
+      if (transaction.currency?.toUpperCase() !== input.baseCurrency.toUpperCase()) {
+        pool.reason = "UNSUPPORTED_TRANSACTION_CURRENCY";
+        continue;
+      }
+      pool.quantity = pool.quantity.plus(quantity);
+      pool.cost = pool.cost.plus(transactionCost);
+      continue;
+    }
+
+    if (transaction.type === TransactionType.SELL || transaction.type === TransactionType.WITHDRAWAL || transaction.type === TransactionType.TRANSFER_OUT) {
+      if (pool.quantity.equals(ZERO) || quantity.greaterThan(pool.quantity)) {
+        pool.reason = "INCONSISTENT_TRANSACTION_HISTORY";
+        continue;
+      }
+      const averageCost = pool.cost.div(pool.quantity);
+      const movedCost = averageCost.mul(quantity);
+      pool.quantity = pool.quantity.minus(quantity);
+      pool.cost = pool.cost.minus(movedCost);
+
+      if (transaction.type === TransactionType.TRANSFER_OUT) {
+        const lots = transferLotsByAsset.get(transaction.assetId) ?? [];
+        lots.push({ quantity, cost: movedCost });
+        transferLotsByAsset.set(transaction.assetId, lots);
+      }
+      continue;
+    }
+
+    if (transaction.type === TransactionType.TRANSFER_IN) {
+      const lots = transferLotsByAsset.get(transaction.assetId) ?? [];
+      let remainingQuantity = quantity;
+      let movedCost = ZERO;
+      while (remainingQuantity.greaterThan(ZERO) && lots.length > 0) {
+        const lot = lots[0];
+        const consumedQuantity = remainingQuantity.lessThan(lot.quantity) ? remainingQuantity : lot.quantity;
+        const consumedCost = lot.cost.mul(consumedQuantity).div(lot.quantity);
+        remainingQuantity = remainingQuantity.minus(consumedQuantity);
+        lot.quantity = lot.quantity.minus(consumedQuantity);
+        lot.cost = lot.cost.minus(consumedCost);
+        movedCost = movedCost.plus(consumedCost);
+        if (lot.quantity.equals(ZERO)) lots.shift();
+      }
+
+      if (remainingQuantity.greaterThan(ZERO)) {
+        pool.reason = "ACCOUNT_TRANSFER_COST_UNKNOWN";
+        markAssetUnavailable(transaction.assetId, "ACCOUNT_TRANSFER_COST_UNKNOWN");
+        continue;
+      }
+
+      pool.quantity = pool.quantity.plus(quantity);
+      pool.cost = pool.cost.plus(movedCost);
+    }
+  }
+
+  for (const [assetId, lots] of transferLotsByAsset) {
+    if (lots.some((lot) => lot.quantity.greaterThan(ZERO))) {
+      markAssetUnavailable(assetId, "ACCOUNT_TRANSFER_COST_UNKNOWN");
+    }
+  }
+
+  for (const assetId of affectedAssetIds) {
+    for (const [key, pool] of pools) {
+      if (key.endsWith(`:${assetId}`) && pool.reason) {
+        markAssetUnavailable(assetId, pool.reason);
+      }
+    }
+  }
+
+  return pools;
+}
+
+function transactionPriority(type: TransactionType) {
+  if (
+    type === TransactionType.INITIAL_BALANCE ||
+    type === TransactionType.BUY ||
+    type === TransactionType.DEPOSIT
+  ) return 0;
+  if (type === TransactionType.TRANSFER_OUT) return 1;
+  if (type === TransactionType.TRANSFER_IN) return 2;
+  return 3;
+}
+
 function calculateStrictUnrealizedPnl(
   input: CalculatePortfolioAnalyticsInput,
   assetById: Map<string, EngineAsset>,
@@ -945,6 +1037,7 @@ function calculateStrictUnrealizedPnl(
     );
   }
 
+  const pools = calculateCostPools(input, assetById);
   let totalCost = ZERO;
   let totalCurrentValue = ZERO;
   for (const [assetId, currentQuantity] of activeAssets) {
@@ -952,57 +1045,70 @@ function calculateStrictUnrealizedPnl(
     if (missingSymbols.has(asset.symbol)) return null;
     const currentValue = currentValueByAsset.get(assetId) ?? ZERO;
     totalCurrentValue = totalCurrentValue.plus(currentValue);
-
-    if (asset.assetType === "FIAT" && asset.currency?.toUpperCase() === input.baseCurrency.toUpperCase()) {
-      totalCost = totalCost.plus(currentValue);
-      continue;
-    }
-
-    const assetTransactions = input.transactions
-      .filter((transaction) => transaction.assetId === assetId)
-      .map((transaction, index) => ({ transaction, index }))
-      .sort((left, right) => transactionTime(left.transaction, left.index) - transactionTime(right.transaction, right.index))
-      .map(({ transaction }) => transaction);
-    const transferIn = sumTransactionQuantity(assetTransactions, TransactionType.TRANSFER_IN);
-    const transferOut = sumTransactionQuantity(assetTransactions, TransactionType.TRANSFER_OUT);
-    if (!transferIn.equals(transferOut)) return null;
-
-    let trackedQuantity = ZERO;
-    let trackedCost = ZERO;
-    for (const transaction of assetTransactions) {
-      const quantity = decimal(transaction.quantity);
-      if (transaction.type === TransactionType.TRANSFER_IN || transaction.type === TransactionType.TRANSFER_OUT) {
-        continue;
-      }
-      if (transaction.type === TransactionType.DEPOSIT || transaction.type === TransactionType.WITHDRAWAL) {
-        return null;
-      }
-      if (transaction.type === TransactionType.INITIAL_BALANCE || transaction.type === TransactionType.BUY) {
-        if (transaction.pricePerUnit === null || transaction.pricePerUnit === undefined) return null;
-        if (transaction.currency?.toUpperCase() !== input.baseCurrency.toUpperCase()) return null;
-        trackedQuantity = trackedQuantity.plus(quantity);
-        trackedCost = trackedCost
-          .plus(quantity.mul(decimal(transaction.pricePerUnit)))
-          .plus(transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee));
-      }
-      if (transaction.type === TransactionType.SELL) {
-        if (quantity.greaterThan(trackedQuantity) || trackedQuantity.equals(ZERO)) return null;
-        const averageCost = trackedCost.div(trackedQuantity);
-        trackedQuantity = trackedQuantity.minus(quantity);
-        trackedCost = trackedCost.minus(averageCost.mul(quantity));
-      }
-    }
-    if (!trackedQuantity.equals(currentQuantity)) return null;
-    totalCost = totalCost.plus(trackedCost);
+    const assetCost = [...pools.entries()]
+      .filter(([key]) => key.endsWith(`:${assetId}`))
+      .reduce((sum, [, pool]) => pool.reason ? sum : sum.plus(pool.cost), ZERO);
+    const assetQuantity = [...pools.entries()]
+      .filter(([key]) => key.endsWith(`:${assetId}`))
+      .reduce((sum, [, pool]) => pool.reason ? sum : sum.plus(pool.quantity), ZERO);
+    if (!assetQuantity.equals(currentQuantity)) return null;
+    if ([...pools.entries()].some(([key, pool]) => key.endsWith(`:${assetId}`) && pool.reason)) return null;
+    totalCost = totalCost.plus(assetCost);
   }
 
   return totalCurrentValue.minus(totalCost);
 }
 
-function sumTransactionQuantity(transactions: EngineTransaction[], type: TransactionType) {
-  return transactions
-    .filter((transaction) => transaction.type === type)
-    .reduce((sum, transaction) => sum.plus(decimal(transaction.quantity)), ZERO);
+function calculatePerformanceSummary(
+  input: CalculatePortfolioAnalyticsInput,
+  assetById: Map<string, EngineAsset>,
+  totalUnrealizedPnl: Prisma.Decimal | null,
+) {
+  let externalContributions = ZERO;
+  let externalWithdrawals = ZERO;
+
+  for (const transaction of input.transactions) {
+    const asset = assetById.get(transaction.assetId);
+    if (!asset) continue;
+    if (transaction.currency?.toUpperCase() !== input.baseCurrency.toUpperCase()) {
+      return {
+        netInvested: null,
+        externalContributions: null,
+        externalWithdrawals: null,
+        simpleReturnPercent: null,
+      };
+    }
+    const quantity = decimal(transaction.quantity);
+    const pricePerUnit = transaction.pricePerUnit === null || transaction.pricePerUnit === undefined
+      ? asset.assetType === "FIAT" && asset.currency?.toUpperCase() === input.baseCurrency.toUpperCase()
+        ? decimal(1)
+        : null
+      : decimal(transaction.pricePerUnit);
+    const cashflowValue = pricePerUnit
+      ? quantity.mul(pricePerUnit).plus(transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee))
+      : null;
+
+    if (transaction.type === TransactionType.INITIAL_BALANCE || transaction.type === TransactionType.DEPOSIT) {
+      if (!cashflowValue) return { netInvested: null, externalContributions: null, externalWithdrawals: null, simpleReturnPercent: null };
+      externalContributions = externalContributions.plus(cashflowValue);
+    }
+    if (transaction.type === TransactionType.WITHDRAWAL) {
+      if (!cashflowValue) return { netInvested: null, externalContributions: null, externalWithdrawals: null, simpleReturnPercent: null };
+      externalWithdrawals = externalWithdrawals.plus(cashflowValue);
+    }
+  }
+
+  const netInvested = externalContributions.minus(externalWithdrawals);
+  const simpleReturnPercent = totalUnrealizedPnl === null || netInvested.lessThanOrEqualTo(ZERO)
+    ? null
+    : totalUnrealizedPnl.div(netInvested).mul(ONE_HUNDRED);
+
+  return {
+    netInvested: toDecimalString(netInvested),
+    externalContributions: toDecimalString(externalContributions),
+    externalWithdrawals: toDecimalString(externalWithdrawals),
+    simpleReturnPercent: simpleReturnPercent ? toDecimalString(simpleReturnPercent) : null,
+  };
 }
 
 function transactionTime(transaction: EngineTransaction, fallback: number) {

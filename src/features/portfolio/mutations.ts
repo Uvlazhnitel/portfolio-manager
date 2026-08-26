@@ -1,4 +1,5 @@
 import {
+  AssetClass,
   AssetType,
   MarketPriceUnit,
   Prisma,
@@ -27,6 +28,10 @@ const implementedTransactionTypes = [
   TransactionType.INITIAL_BALANCE,
   TransactionType.BUY,
   TransactionType.SELL,
+  TransactionType.DEPOSIT,
+  TransactionType.WITHDRAWAL,
+  TransactionType.TRANSFER_IN,
+  TransactionType.TRANSFER_OUT,
 ] as const;
 
 export type PortfolioMutationResult = {
@@ -60,6 +65,19 @@ export const transactionMutationSchema = z.object({
 
 export type TransactionMutationInput = z.input<typeof transactionMutationSchema>;
 
+export const transferMutationSchema = z.object({
+  assetId: z.string().min(1),
+  fromAccountId: z.string().min(1),
+  toAccountId: z.string().min(1),
+  quantity: positiveDecimalStringSchema.optional(),
+  physicalGoldWeightTroyOunces: positiveDecimalStringSchema.optional(),
+  currency: z.string().trim().min(3).max(12).default(DEFAULT_BASE_CURRENCY).transform((value) => value.toUpperCase()),
+  executedAt: z.coerce.date(),
+  note: z.string().trim().optional(),
+});
+
+export type TransferMutationInput = z.input<typeof transferMutationSchema>;
+
 export async function createAccountMutation(
   input: z.input<typeof accountInputSchema>,
   db: PrismaClient = prisma,
@@ -92,9 +110,12 @@ export async function createTransactionMutation(
     if (!account) throw new PortfolioMutationError("Selected account does not exist.");
 
     const asset = await resolveAsset(parsed, transaction);
-    const normalized = normalizeTransaction(parsed, asset.assetType);
+    if ((parsed.type === TransactionType.DEPOSIT || parsed.type === TransactionType.WITHDRAWAL) && asset.assetClass !== AssetClass.CASH) {
+      throw new PortfolioMutationError("Deposits and withdrawals are only available for CASH assets.");
+    }
+    const normalized = normalizeTransaction(parsed, asset);
 
-    if (parsed.type === TransactionType.SELL) {
+    if (parsed.type === TransactionType.SELL || parsed.type === TransactionType.WITHDRAWAL || parsed.type === TransactionType.TRANSFER_OUT) {
       await assertEnoughQuantityForSell({
         db: transaction,
         accountId: parsed.accountId,
@@ -129,6 +150,77 @@ export async function createTransactionMutation(
     message: parsed.type === TransactionType.INITIAL_BALANCE
       ? `Added ${saved.quantityLabel} to ${saved.accountName}.`
       : "Transaction saved.",
+  };
+}
+
+export async function createTransferMutation(
+  input: TransferMutationInput,
+  db: PrismaClient = prisma,
+): Promise<PortfolioMutationResult> {
+  const parsed = transferMutationSchema.parse(input);
+  if (parsed.fromAccountId === parsed.toAccountId) {
+    throw new PortfolioMutationError("Transfer source and destination accounts must be different.");
+  }
+
+  const saved = await withSerializableRetry(db, async (transaction) => {
+    const repository = new PortfolioRepository(transaction);
+    const [fromAccount, toAccount, asset] = await Promise.all([
+      repository.findAccount(parsed.fromAccountId),
+      repository.findAccount(parsed.toAccountId),
+      repository.findAsset(parsed.assetId),
+    ]);
+    if (!fromAccount) throw new PortfolioMutationError("Source account does not exist.");
+    if (!toAccount) throw new PortfolioMutationError("Destination account does not exist.");
+    if (!asset) throw new PortfolioMutationError("Selected asset does not exist.");
+
+    const normalized = normalizeTransfer(parsed, asset.assetType);
+    await assertEnoughQuantityForSell({
+      db: transaction,
+      accountId: fromAccount.id,
+      assetId: asset.id,
+      quantity: normalized.quantity,
+      executedAt: parsed.executedAt,
+    });
+
+    await transaction.transaction.createMany({
+      data: [
+        {
+          assetId: asset.id,
+          accountId: fromAccount.id,
+          type: TransactionType.TRANSFER_OUT,
+          quantity: normalized.quantity,
+          pricePerUnit: null,
+          fee: null,
+          currency: parsed.currency,
+          executedAt: parsed.executedAt,
+          note: parsed.note || null,
+        },
+        {
+          assetId: asset.id,
+          accountId: toAccount.id,
+          type: TransactionType.TRANSFER_IN,
+          quantity: normalized.quantity,
+          pricePerUnit: null,
+          fee: null,
+          currency: parsed.currency,
+          executedAt: parsed.executedAt,
+          note: parsed.note || null,
+        },
+      ],
+    });
+
+    return {
+      fromAccountName: fromAccount.name,
+      toAccountName: toAccount.name,
+      quantityLabel: asset.assetType === AssetType.PHYSICAL_GOLD
+        ? formatPhysicalGoldQuantity(normalized.quantity)
+        : `${normalized.quantity} ${asset.symbol}`,
+    };
+  });
+
+  return {
+    ok: true,
+    message: `Transferred ${saved.quantityLabel} from ${saved.fromAccountName} to ${saved.toAccountName}.`,
   };
 }
 
@@ -203,7 +295,8 @@ async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, d
   return asset;
 }
 
-function normalizeTransaction(parsed: z.infer<typeof transactionMutationSchema>, assetType: AssetType) {
+function normalizeTransaction(parsed: z.infer<typeof transactionMutationSchema>, asset: { assetType: AssetType; currency: string }) {
+  const assetType = asset.assetType;
   const isPhysicalGold = assetType === AssetType.PHYSICAL_GOLD;
   const inputQuantity = isPhysicalGold
     ? parsed.physicalGoldWeightTroyOunces
@@ -242,10 +335,38 @@ function normalizeTransaction(parsed: z.infer<typeof transactionMutationSchema>,
     throw new PortfolioMutationError("Enter either price per unit or the total amount for this transaction.");
   }
 
+  if ((parsed.type === TransactionType.DEPOSIT || parsed.type === TransactionType.WITHDRAWAL) && !pricePerUnit) {
+    if (asset.currency.toUpperCase() !== parsed.currency.toUpperCase()) {
+      throw new PortfolioMutationError("Enter either price per unit or the total amount for this cashflow.");
+    }
+    pricePerUnit = "1";
+  }
+
+  if ((parsed.type === TransactionType.TRANSFER_IN || parsed.type === TransactionType.TRANSFER_OUT) && (pricePerUnit || parsed.fee)) {
+    throw new PortfolioMutationError("Transfers do not store price or fee. Use Buy or Sell for trades.");
+  }
+
   return {
     quantity,
     pricePerUnit,
     fee: parsed.fee ?? null,
+  };
+}
+
+function normalizeTransfer(parsed: z.infer<typeof transferMutationSchema>, assetType: AssetType) {
+  const isPhysicalGold = assetType === AssetType.PHYSICAL_GOLD;
+  const inputQuantity = isPhysicalGold
+    ? parsed.physicalGoldWeightTroyOunces
+    : parsed.quantity;
+
+  if (!inputQuantity) {
+    throw new PortfolioMutationError(isPhysicalGold ? "Weight in troy ounces is required." : "Quantity is required.");
+  }
+
+  return {
+    quantity: isPhysicalGold
+      ? troyOuncesToGrams(inputQuantity).toDecimalPlaces(18).toString()
+      : inputQuantity,
   };
 }
 

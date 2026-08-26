@@ -16,6 +16,7 @@ import type { AssetCatalogResult } from "@/features/asset-catalog/types";
 import {
   createAccountAction,
   createPositionAction,
+  createTransferAction,
   createTransactionAction,
   deleteTransactionAction,
 } from "@/features/portfolio/actions";
@@ -35,12 +36,21 @@ type DialogState =
   | { kind: "transaction"; assetId?: string; accountId?: string }
   | null;
 type AssetSelection = AssetCatalogResult | { source: "CUSTOM" };
+type TransactionOperation = "INITIAL_BALANCE" | "BUY" | "SELL" | "TRANSFER" | "DEPOSIT" | "WITHDRAWAL";
 
 type PortfolioClientProps = { portfolio: PortfolioReadModel };
 
 const accountTypes = ["EXCHANGE", "BROKER", "WALLET", "PHYSICAL", "BANK", "OTHER"] as const;
 const assetClasses = ["ETF", "CRYPTO", "GOLD", "CASH", "OTHER"] as const;
 const assetTypes = ["CRYPTO", "ETF", "PHYSICAL_GOLD", "TOKENIZED_GOLD", "FIAT", "STABLECOIN", "OTHER"] as const;
+const operationChoices: Array<[TransactionOperation, string]> = [
+  ["INITIAL_BALANCE", "Current balance"],
+  ["BUY", "Buy"],
+  ["SELL", "Sell"],
+  ["TRANSFER", "Transfer"],
+  ["DEPOSIT", "Deposit"],
+  ["WITHDRAWAL", "Withdrawal"],
+];
 
 export function PortfolioClient({ portfolio }: PortfolioClientProps) {
   const [activeTab, setActiveTab] = useState<PortfolioTab>("holdings");
@@ -56,6 +66,10 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
           <p className="mt-1 break-words text-2xl font-semibold text-foreground">
             {formatCurrency(portfolio.valuation.totalValue, portfolio.valuation.currency)}
           </p>
+        </div>
+        <div className="grid gap-2 text-sm sm:grid-cols-2 sm:text-right">
+          <Metric label="Net invested" value={portfolio.valuation.netInvested ? formatCurrency(portfolio.valuation.netInvested, portfolio.valuation.currency) : "Unavailable"} />
+          <Metric label="Simple return" value={portfolio.valuation.simpleReturnPercent ? `${portfolio.valuation.simpleReturnPercent}%` : "Unavailable"} />
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           {portfolio.valuation.isPartial ? <Badge tone="warning">Partial valuation</Badge> : <Badge tone="success">All prices available</Badge>}
@@ -236,15 +250,20 @@ function PositionForm({
   const [assetType, setAssetType] = useState(asset?.assetType ?? "OTHER");
   const [showAdvanced, setShowAdvanced] = useState(isCustom);
   const isPhysicalGold = asset?.assetType === "PHYSICAL_GOLD" || assetType === "PHYSICAL_GOLD";
-  const [type, setType] = useState<"INITIAL_BALANCE" | "BUY" | "SELL">("BUY");
+  const isCash = (asset?.assetClass ?? assetClass) === "CASH";
+  const [type, setType] = useState<TransactionOperation>("BUY");
   const [state, action, isSaving] = useActionState(createPositionAction, { ok: false, message: "" });
+  const [transferState, transferAction, isTransferSaving] = useActionState(createTransferAction, { ok: false, message: "" });
+  const isTransfer = type === "TRANSFER";
+  const actionState = isTransfer ? transferState : state;
+  const isPending = isTransfer ? isTransferSaving : isSaving;
 
-  if (state.ok) {
-    return <div className="space-y-5"><div className="rounded-xl border border-success/30 bg-success/10 p-5"><p className="font-medium text-success">Transaction saved</p><p className="mt-2 text-sm text-foreground">{state.message}</p><p className="mt-2 text-sm text-muted">Holdings and allocation were recalculated.</p></div><div className="grid gap-2 sm:grid-cols-2"><Button type="button" variant="secondary" onClick={onAddAnother}>Save and add another</Button><Button type="button" onClick={onDone}>Done</Button></div></div>;
+  if (actionState.ok) {
+    return <div className="space-y-5"><div className="rounded-xl border border-success/30 bg-success/10 p-5"><p className="font-medium text-success">Transaction saved</p><p className="mt-2 text-sm text-foreground">{actionState.message}</p><p className="mt-2 text-sm text-muted">Holdings and allocation were recalculated.</p></div><div className="grid gap-2 sm:grid-cols-2"><Button type="button" variant="secondary" onClick={onAddAnother}>Save and add another</Button><Button type="button" onClick={onDone}>Done</Button></div></div>;
   }
 
   return (
-    <form action={action} className="space-y-5">
+    <form action={isTransfer ? transferAction : action} className="space-y-5">
       <button type="button" onClick={onBack} className="inline-flex min-h-11 items-center gap-2 text-sm text-muted hover:text-foreground">
         <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Choose another asset
       </button>
@@ -261,8 +280,9 @@ function PositionForm({
       ) : null}
 
       <input type="hidden" name="existingAssetId" value={asset?.existingAssetId ?? ""} />
-      <input type="hidden" name="type" value={type} />
+      <input type="hidden" name="type" value={type === "TRANSFER" ? "TRANSFER_OUT" : type} />
       <input type="hidden" name="currency" value={currency} />
+      {isTransfer ? <input type="hidden" name="assetId" value={asset?.existingAssetId ?? ""} /> : null}
       <input type="hidden" name="newAssetExternalId" value={asset?.externalId ?? ""} />
       <input type="hidden" name="newAssetImageUrl" value={asset?.imageUrl ?? ""} />
       {!isCustom ? (
@@ -281,12 +301,14 @@ function PositionForm({
         </div>
       ) : null}
 
-      <div className="grid grid-cols-3 gap-2">
-        {([['INITIAL_BALANCE', 'Current balance'], ['BUY', 'Buy'], ['SELL', 'Sell']] as const).map(([value, label]) => (
-          <Button key={value} type="button" variant={type === value ? "primary" : "secondary"} disabled={value === "SELL" && !asset?.existingAssetId} onClick={() => setType(value)}>{label}</Button>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {operationChoices.map(([value, label]) => (
+          <Button key={value} type="button" variant={type === value ? "primary" : "secondary"} disabled={(value === "SELL" || value === "TRANSFER" || value === "WITHDRAWAL") && !asset?.existingAssetId} onClick={() => setType(value)}>{label}</Button>
         ))}
       </div>
       {type === "SELL" && !asset?.existingAssetId ? <p className="text-sm text-warning">Add a starting balance or earlier buy first.</p> : null}
+      {(type === "DEPOSIT" || type === "WITHDRAWAL") && !isCash ? <p className="text-sm text-warning">Deposits and withdrawals are only available for CASH assets.</p> : null}
+      {type === "TRANSFER" && !asset?.existingAssetId ? <p className="text-sm text-warning">Create the asset first, then transfer it between accounts.</p> : null}
 
       {asset?.source === "COINGECKO" || isCustom ? (
         <div>
@@ -322,31 +344,40 @@ function PositionForm({
         <p className="rounded-lg border border-warning/30 bg-warning/10 p-4 text-sm text-warning">Create an account first, then add the asset.</p>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Where do you hold it?">
-            <select name="accountId" required className={inputClassName} value={accountId || preferredAccountId(accounts, isPhysicalGold)} onChange={(event) => onAccountIdChange(event.target.value)}>
+          <Field label={isTransfer ? "From account" : "Where do you hold it?"}>
+            <select name={isTransfer ? "fromAccountId" : "accountId"} required className={inputClassName} value={accountId || preferredAccountId(accounts, isPhysicalGold)} onChange={(event) => onAccountIdChange(event.target.value)}>
               {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
             </select>
           </Field>
+          {isTransfer ? (
+            <Field label="To account">
+              <select name="toAccountId" required className={inputClassName} defaultValue={accounts.find((account) => account.id !== (accountId || preferredAccountId(accounts, isPhysicalGold)))?.id ?? ""}>
+                {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+              </select>
+            </Field>
+          ) : null}
           {isPhysicalGold ? (
             <Field label="Weight (troy oz)"><input name="physicalGoldWeightTroyOunces" required className={inputClassName} inputMode="decimal" placeholder="0.1743" /></Field>
           ) : (
-            <Field label={`How much do you own${asset?.symbol ? ` (${asset.symbol})` : ""}?`}><input name="quantity" required className={inputClassName} inputMode="decimal" placeholder="0.25" /></Field>
+            <Field label={type === "DEPOSIT" || type === "WITHDRAWAL" ? "Cash amount" : `How much do you own${asset?.symbol ? ` (${asset.symbol})` : ""}?`}><input name="quantity" required className={inputClassName} inputMode="decimal" placeholder="0.25" /></Field>
           )}
-          <Field label={type === "INITIAL_BALANCE" ? "Total invested (optional)" : type === "BUY" ? "Total spent" : "Total received"}>
+          {!isTransfer ? <Field label={type === "INITIAL_BALANCE" ? "Total invested (optional)" : type === "BUY" || type === "DEPOSIT" ? "Total spent" : "Total received"}>
             <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">{currency === "USD" ? "$" : currency}</span><input name="totalAmount" className={cn(inputClassName, "pl-8")} inputMode="decimal" placeholder="12000.00" /></div>
-          </Field>
+          </Field> : null}
           <Field label={type === "INITIAL_BALANCE" ? "Balance date" : "Transaction date"}><input name="executedAt" required type="date" className={inputClassName} defaultValue={today()} /></Field>
-          {type !== "INITIAL_BALANCE" ? <Field label={isPhysicalGold ? "Price per troy ounce (alternative)" : "Price per unit (alternative)"}><input name="pricePerUnit" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
-          {type !== "INITIAL_BALANCE" ? <Field label="Fee (optional)"><input name="fee" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
+          {type !== "INITIAL_BALANCE" && !isTransfer ? <Field label={isPhysicalGold ? "Price per troy ounce (alternative)" : "Price per unit (alternative)"}><input name="pricePerUnit" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
+          {type !== "INITIAL_BALANCE" && !isTransfer && type !== "DEPOSIT" && type !== "WITHDRAWAL" ? <Field label="Fee (optional)"><input name="fee" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
         </div>
       )}
 
       {isPhysicalGold ? <p className="rounded-lg border border-primary/25 bg-primary/10 p-3 text-sm text-muted">Physical gold uses troy ounces (oz), the precious-metals unit. Values are normalized server-side for deterministic calculations.</p> : null}
-      {type !== "INITIAL_BALANCE" ? <p className="text-xs text-muted">Enter price per unit or the gross total. If you enter both, they must agree within one cent. Fee is stored separately.</p> : null}
+      {isTransfer ? <p className="text-xs text-muted">Transfers move quantity and cost basis between accounts without creating a sale.</p> : null}
+      {type === "DEPOSIT" || type === "WITHDRAWAL" ? <p className="text-xs text-muted">Cashflows affect invested capital tracking and simple return.</p> : null}
+      {type !== "INITIAL_BALANCE" && !isTransfer ? <p className="text-xs text-muted">Enter price per unit or the gross total. If you enter both, they must agree within one cent. Fee is stored separately.</p> : null}
       <Field label="Note (optional)"><textarea name="note" className={textareaClassName} rows={3} /></Field>
-      <ActionMessage state={state} />
-      <Button type="submit" disabled={isSaving || accounts.length === 0} className="w-full sm:w-auto">
-        {isSaving ? "Saving…" : "Save transaction"}
+      <ActionMessage state={actionState} />
+      <Button type="submit" disabled={isPending || accounts.length === 0 || (isTransfer && (!asset?.existingAssetId || accounts.length < 2)) || ((type === "DEPOSIT" || type === "WITHDRAWAL") && !isCash)} className="w-full sm:w-auto">
+        {isPending ? "Saving…" : "Save transaction"}
       </Button>
     </form>
   );
@@ -372,35 +403,45 @@ function AddAccountDialog({ onClose }: { onClose: () => void }) {
 }
 
 function AddTransactionDialog({ portfolio, initialAssetId, initialAccountId, onClose }: PortfolioClientProps & { initialAssetId?: string; initialAccountId?: string; onClose: () => void }) {
-  const [type, setType] = useState<"BUY" | "SELL">("BUY");
+  const [type, setType] = useState<TransactionOperation>("BUY");
   const [assetId, setAssetId] = useState(initialAssetId ?? portfolio.assets[0]?.id ?? "");
+  const [accountId, setAccountId] = useState(initialAccountId ?? portfolio.accounts[0]?.id ?? "");
   const [state, action, isPending] = useActionState(createTransactionAction, { ok: false, message: "" });
+  const [transferState, transferAction, isTransferPending] = useActionState(createTransferAction, { ok: false, message: "" });
   const asset = portfolio.assets.find((candidate) => candidate.id === assetId);
   const isPhysicalGold = asset?.assetType === "PHYSICAL_GOLD";
+  const isCash = asset?.assetClass === "CASH";
+  const isTransfer = type === "TRANSFER";
+  const actionState = isTransfer ? transferState : state;
+  const pending = isTransfer ? isTransferPending : isPending;
 
   return (
     <DialogShell title="Add transaction" description="Record a specific purchase or sale." onClose={onClose}>
-      {state.ok ? (
-        <div className="space-y-4"><ActionMessage state={state} /><Button type="button" onClick={onClose} className="w-full">Done</Button></div>
+      {actionState.ok ? (
+        <div className="space-y-4"><ActionMessage state={actionState} /><Button type="button" onClick={onClose} className="w-full">Done</Button></div>
       ) : (
-        <form action={action} className="space-y-5">
-          <input type="hidden" name="type" value={type} />
+        <form action={isTransfer ? transferAction : action} className="space-y-5">
+          <input type="hidden" name="type" value={type === "TRANSFER" ? "TRANSFER_OUT" : type} />
           <input type="hidden" name="assetMode" value="existing" />
           <input type="hidden" name="currency" value={portfolio.valuation.currency} />
-          <div className="grid grid-cols-2 gap-2">
-            {(["BUY", "SELL"] as const).map((choice) => <Button key={choice} type="button" variant={type === choice ? "primary" : "secondary"} onClick={() => setType(choice)}>{formatType(choice)}</Button>)}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {operationChoices.map(([choice, label]) => <Button key={choice} type="button" variant={type === choice ? "primary" : "secondary"} disabled={(choice === "DEPOSIT" || choice === "WITHDRAWAL") && !isCash} onClick={() => setType(choice)}>{label}</Button>)}
           </div>
+          {(type === "DEPOSIT" || type === "WITHDRAWAL") && !isCash ? <p className="text-sm text-warning">Deposits and withdrawals are only available for CASH assets.</p> : null}
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Asset"><select name="assetId" required className={inputClassName} value={assetId} onChange={(event) => setAssetId(event.target.value)}>{portfolio.assets.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.symbol})</option>)}</select></Field>
-            <Field label="Account"><select name="accountId" required className={inputClassName} defaultValue={initialAccountId ?? portfolio.accounts[0]?.id}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
-            {isPhysicalGold ? <Field label="Weight (troy oz)"><input name="physicalGoldWeightTroyOunces" required className={inputClassName} inputMode="decimal" placeholder="0.1743" /></Field> : <Field label="Quantity"><input name="quantity" required className={inputClassName} inputMode="decimal" placeholder="0.25" /></Field>}
-            <Field label={isPhysicalGold ? "Price per troy ounce" : "Price per unit"}><input name="pricePerUnit" required className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
-            <Field label="Fee (optional)"><input name="fee" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
+            <Field label={isTransfer ? "From account" : "Account"}><select name={isTransfer ? "fromAccountId" : "accountId"} required className={inputClassName} value={accountId} onChange={(event) => setAccountId(event.target.value)}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
+            {isTransfer ? <Field label="To account"><select name="toAccountId" required className={inputClassName} defaultValue={portfolio.accounts.find((account) => account.id !== accountId)?.id ?? ""}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field> : null}
+            {isPhysicalGold ? <Field label="Weight (troy oz)"><input name="physicalGoldWeightTroyOunces" required className={inputClassName} inputMode="decimal" placeholder="0.1743" /></Field> : <Field label={type === "DEPOSIT" || type === "WITHDRAWAL" ? "Cash amount" : "Quantity"}><input name="quantity" required className={inputClassName} inputMode="decimal" placeholder="0.25" /></Field>}
+            {!isTransfer ? <Field label={isPhysicalGold ? "Price per troy ounce" : "Price per unit"}><input name="pricePerUnit" required={type === "BUY" || type === "SELL"} className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
+            {type === "BUY" || type === "SELL" ? <Field label="Fee (optional)"><input name="fee" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
             <Field label="Date"><input name="executedAt" required type="date" className={inputClassName} defaultValue={today()} /></Field>
           </div>
+          {isTransfer ? <p className="text-xs text-muted">Transfers move quantity and cost basis between accounts without creating a sale.</p> : null}
+          {type === "DEPOSIT" || type === "WITHDRAWAL" ? <p className="text-xs text-muted">Cashflows affect invested capital tracking and simple return.</p> : null}
           <Field label="Note (optional)"><textarea name="note" className={textareaClassName} rows={3} /></Field>
-          <ActionMessage state={state} />
-          <Button type="submit" disabled={isPending || !assetId || portfolio.accounts.length === 0} className="w-full sm:w-auto">{isPending ? "Saving…" : "Save transaction"}</Button>
+          <ActionMessage state={actionState} />
+          <Button type="submit" disabled={pending || !assetId || portfolio.accounts.length === 0 || (isTransfer && portfolio.accounts.length < 2) || ((type === "DEPOSIT" || type === "WITHDRAWAL") && !isCash)} className="w-full sm:w-auto">{pending ? "Saving…" : "Save transaction"}</Button>
         </form>
       )}
     </DialogShell>
@@ -478,9 +519,14 @@ function preferredAccountId(accounts: PortfolioReadModel["accounts"], physicalGo
 function today() { return new Date().toISOString().slice(0, 10); }
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block text-sm"><span className="mb-2 block font-medium text-muted">{label}</span>{children}</label>; }
 function Info({ label, value }: { label: string; value: string }) { return <div><dt className="text-xs text-muted">{label}</dt><dd className="mt-1 break-words text-foreground">{value}</dd></div>; }
+function Metric({ label, value }: { label: string; value: string }) { return <div><p className="text-xs uppercase tracking-wide text-muted">{label}</p><p className="mt-1 font-semibold text-foreground">{value}</p></div>; }
 function ActionMessage({ state }: { state: { ok: boolean; message: string } }) { return state.message ? <p className={cn("rounded-lg border p-3 text-sm", state.ok ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/10 text-destructive")}>{state.message}</p> : null; }
 function PriceBadge({ holding }: { holding: PortfolioReadModel["holdings"][number] }) { if (!holding.currentPrice) return <Badge>Unavailable</Badge>; if (holding.isPriceStale) return <Badge tone="warning">Stale</Badge>; return <Badge tone={holding.priceSource === "MANUAL" ? "primary" : "success"}>{holding.priceSource}</Badge>; }
-function formatType(type: string) { return type.replaceAll("_", " ").toLowerCase().replace(/^\w/, (letter) => letter.toUpperCase()); }
+function formatType(type: string) {
+  if (type === "TRANSFER_OUT") return "Transfer out";
+  if (type === "TRANSFER_IN") return "Transfer in";
+  return type.replaceAll("_", " ").toLowerCase().replace(/^\w/, (letter) => letter.toUpperCase());
+}
 function formatMoneyOrUnavailable(value: string | null, currency: string) { return value ? <span className="text-foreground">{formatCurrency(value, currency)}</span> : <span className="text-muted">Price unavailable</span>; }
 function formatMoneyOrUnavailableText(value: string | null, currency: string) { return value ? formatCurrency(value, currency) : "Price unavailable"; }
 function formatUnitPriceOrDash(value: string | null, currency: string, unit: "unit" | "troy oz") { return value ? <span className="text-foreground">{formatCurrency(value, currency)} / {unit}</span> : <span className="text-muted">—</span>; }

@@ -1,5 +1,5 @@
 import { AssetType, type Prisma } from "@prisma/client";
-import { calculateHoldingCostBasis, calculatePortfolio, compareAllocationToStrategy } from "@/features/portfolio-engine";
+import { calculateHoldingCostBasis, calculatePortfolio, calculatePortfolioAnalytics, compareAllocationToStrategy } from "@/features/portfolio-engine";
 import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/service";
 import { PortfolioRepository } from "@/features/portfolio/repository";
@@ -79,6 +79,11 @@ export type PortfolioReadModel = {
     lastUpdated: string | null;
     hasStalePrices: boolean;
     warning: string | null;
+    totalUnrealizedPnl: string | null;
+    netInvested: string | null;
+    externalContributions: string | null;
+    externalWithdrawals: string | null;
+    simpleReturnPercent: string | null;
   };
   strategyStatus: {
     name: string;
@@ -119,6 +124,7 @@ export async function getPortfolioReadModel({
     transactions,
     marketPrices: toEngineMarketPrices(marketData),
   });
+  const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency: resolvedBaseCurrency });
   const holdings = buildHoldingRows(assets, accounts, transactions, portfolio, marketData.prices, resolvedBaseCurrency);
   const strategyComparisons = strategy
     ? compareAllocationToStrategy(portfolio, strategy.allocations)
@@ -149,6 +155,11 @@ export async function getPortfolioReadModel({
       lastUpdated: marketData.lastUpdated,
       hasStalePrices: marketData.hasStalePrices,
       warning: marketData.warning,
+      totalUnrealizedPnl: analytics.totalUnrealizedPnl,
+      netInvested: analytics.netInvested,
+      externalContributions: analytics.externalContributions,
+      externalWithdrawals: analytics.externalWithdrawals,
+      simpleReturnPercent: analytics.simpleReturnPercent,
     },
     strategyStatus: strategy
       ? {

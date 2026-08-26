@@ -649,6 +649,54 @@ describe("portfolio engine dashboard analytics", () => {
     ]));
   });
 
+  it("keeps allocation unchanged and carries holding cost basis across transfers", () => {
+    const transactions: EngineTransaction[] = [
+      { assetId: "btc", accountId: "bybit", type: TransactionType.BUY, quantity: "1", pricePerUnit: "10000", currency: "EUR", executedAt: "2026-01-01" },
+      { assetId: "btc", accountId: "bybit", type: TransactionType.TRANSFER_OUT, quantity: "0.4", currency: "EUR", executedAt: "2026-01-02" },
+      { assetId: "btc", accountId: "wallet", type: TransactionType.TRANSFER_IN, quantity: "0.4", currency: "EUR", executedAt: "2026-01-02" },
+    ];
+    const before = calculatePortfolio({ assets, transactions: [transactions[0]], marketPrices: prices });
+    const after = calculatePortfolio({ assets, transactions, marketPrices: prices });
+    const basis = calculateHoldingCostBasis({ portfolio: after, assets, transactions, baseCurrency: "EUR" });
+
+    expect(before.totalValue).toBe(after.totalValue);
+    expect(allocationFor(before, AssetClass.CRYPTO).percentage).toBe(allocationFor(after, AssetClass.CRYPTO).percentage);
+    expect(basis.find((row) => row.accountId === "wallet" && row.assetId === "btc")).toEqual(expect.objectContaining({
+      status: "AVAILABLE",
+      totalCost: "4000.00",
+      averageAcquisitionPrice: "10000.00",
+    }));
+  });
+
+  it("marks unmatched manual transfer rows as unavailable cost basis", () => {
+    const transactions: EngineTransaction[] = [
+      { assetId: "btc", accountId: "wallet", type: TransactionType.TRANSFER_IN, quantity: "0.4", currency: "EUR", executedAt: "2026-01-02" },
+    ];
+    const portfolio = calculatePortfolio({ assets, transactions, marketPrices: prices });
+    const basis = calculateHoldingCostBasis({ portfolio, assets, transactions, baseCurrency: "EUR" });
+
+    expect(basis[0]).toEqual(expect.objectContaining({
+      status: "UNAVAILABLE",
+      reason: "ACCOUNT_TRANSFER_COST_UNKNOWN",
+    }));
+  });
+
+  it("uses deposits and withdrawals for net invested and simple return", () => {
+    const engineAssets = assets.map((asset) => asset.id === "eur" ? { ...asset, currency: "EUR" } : asset);
+    const transactions: EngineTransaction[] = [
+      { assetId: "eur", accountId: "bank", type: TransactionType.DEPOSIT, quantity: "1000", pricePerUnit: "1", currency: "EUR", executedAt: "2026-01-01" },
+      { assetId: "eur", accountId: "bank", type: TransactionType.WITHDRAWAL, quantity: "200", pricePerUnit: "1", currency: "EUR", executedAt: "2026-01-02" },
+    ];
+    const portfolio = calculatePortfolio({ assets: engineAssets, transactions, marketPrices: { EUR: "1" } });
+    const analytics = calculatePortfolioAnalytics({ portfolio, assets: engineAssets, transactions, baseCurrency: "EUR" });
+
+    expect(analytics.externalContributions).toBe("1000.00");
+    expect(analytics.externalWithdrawals).toBe("200.00");
+    expect(analytics.netInvested).toBe("800.00");
+    expect(analytics.totalUnrealizedPnl).toBe("0.00");
+    expect(analytics.simpleReturnPercent).toBe("0.00");
+  });
+
   it("marks an account partial while preserving its available value", () => {
     const transactions: EngineTransaction[] = [
       { assetId: "btc", accountId: "mixed", type: TransactionType.INITIAL_BALANCE, quantity: "1" },
