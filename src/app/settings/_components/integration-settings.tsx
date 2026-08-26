@@ -36,7 +36,7 @@ export function IntegrationSettings({ model }: { model: IntegrationSettingsReadM
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-4 xl:grid-cols-3">
         {model.integrations.map((integration) => (
           <IntegrationCard key={integration.provider} integration={integration} />
         ))}
@@ -60,7 +60,7 @@ function IntegrationCard({ integration }: { integration: Integration }) {
             {isOpenAI ? <PlugZap className="h-5 w-5" /> : <KeyRound className="h-5 w-5" />}
           </span>
           <div className="min-w-0">
-            <h2 className="font-semibold text-foreground">{isOpenAI ? "OpenAI" : "CoinGecko"}</h2>
+            <h2 className="font-semibold text-foreground">{providerName(integration.provider)}</h2>
             <p className="truncate text-sm text-muted">{providerDescription(integration.provider)}</p>
           </div>
         </div>
@@ -125,7 +125,7 @@ function IntegrationCard({ integration }: { integration: Integration }) {
             action={deleteAction}
             className="flex-1"
             onSubmit={(event) => {
-              if (!window.confirm(`Delete the stored ${isOpenAI ? "OpenAI" : "CoinGecko"} API key?`)) event.preventDefault();
+              if (!window.confirm(`Delete the stored ${providerName(integration.provider)} API key?`)) event.preventDefault();
             }}
           >
             <input type="hidden" name="provider" value={integration.provider} />
@@ -152,7 +152,15 @@ function ActionMessage({ state, className }: { state: { ok: boolean; message: st
 }
 
 function providerDescription(provider: IntegrationProviderName) {
-  return provider === IntegrationProvider.OPENAI ? "Portfolio decision-support assistant" : "Crypto market prices";
+  if (provider === IntegrationProvider.OPENAI) return "Portfolio decision-support assistant";
+  if (provider === IntegrationProvider.COINGECKO) return "Crypto market prices";
+  return "ETF listings and market prices";
+}
+
+function providerName(provider: IntegrationProviderName) {
+  if (provider === IntegrationProvider.OPENAI) return "OpenAI";
+  if (provider === IntegrationProvider.COINGECKO) return "CoinGecko";
+  return "Twelve Data";
 }
 
 function sourceLabel(source: Integration["source"]) {

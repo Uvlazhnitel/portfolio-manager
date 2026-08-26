@@ -6,6 +6,7 @@ import {
   PHYSICAL_GOLD_MARKET_SOURCE,
 } from "@/features/market-data/providers/coingecko";
 import { ManualMarketDataProvider } from "@/features/market-data/providers/manual";
+import { TwelveDataMarketDataProvider } from "@/features/market-data/providers/twelve-data";
 import { goldPricePerGram } from "@/features/market-data/gold";
 import {
   MarketDataRepository,
@@ -38,6 +39,7 @@ export class MarketDataService {
     this.providers = providers ?? [
       new BaseCurrencyMarketDataProvider(),
       new CoinGeckoMarketDataProvider(),
+      new TwelveDataMarketDataProvider(),
       new ManualMarketDataProvider(async (currency) => {
         const records = await this.store.listManualPrices(currency);
         return records.map((record) => ({
@@ -122,7 +124,7 @@ export class MarketDataService {
         }
 
         if (provider.name === "MANUAL") {
-          if (asset.externalId && cachedByAsset.has(asset.id)) return false;
+          if ((asset.externalId || asset.quoteProvider) && cachedByAsset.has(asset.id)) return false;
           if (
             asset.assetType === AssetType.PHYSICAL_GOLD &&
             xautAsset &&

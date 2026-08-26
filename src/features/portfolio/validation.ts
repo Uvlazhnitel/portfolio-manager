@@ -1,4 +1,4 @@
-import { AccountType, AssetClass, AssetType, Prisma, TransactionType } from "@prisma/client";
+import { AccountType, AssetClass, AssetQuoteProvider, AssetType, Prisma, TransactionType } from "@prisma/client";
 import { z } from "zod";
 
 function decimalInputSchema({ integerDigits, decimalPlaces }: { integerDigits: number; decimalPlaces: number }) {
@@ -29,6 +29,10 @@ export const positiveMarketPriceStringSchema = moneyDecimalStringSchema.refine(
   { message: "Must be greater than 0." },
 );
 
+const quoteProviderSchema = z.enum(AssetQuoteProvider).nullable().optional();
+const quoteSymbolSchema = z.string().trim().min(1).max(24).transform((value) => value.toUpperCase()).nullable().optional();
+const quoteMicCodeSchema = z.string().trim().length(4).regex(/^[A-Za-z0-9]+$/).transform((value) => value.toUpperCase()).nullable().optional();
+
 export const assetInputSchema = z.object({
   symbol: z.string().trim().min(1).max(24).transform((value) => value.toUpperCase()),
   name: z.string().trim().min(1).max(120),
@@ -36,7 +40,18 @@ export const assetInputSchema = z.object({
   assetType: z.enum(AssetType),
   currency: z.string().trim().min(3).max(12).transform((value) => value.toUpperCase()),
   externalId: z.string().trim().min(1).max(200).nullable().optional(),
+  quoteProvider: quoteProviderSchema,
+  quoteSymbol: quoteSymbolSchema,
+  quoteMicCode: quoteMicCodeSchema,
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+}).superRefine(validateQuoteIdentity);
+
+export const assetQuoteLinkSchema = z.object({
+  assetId: z.string().min(1),
+  currency: z.string().trim().length(3).transform((value) => value.toUpperCase()),
+  quoteProvider: z.enum(AssetQuoteProvider),
+  quoteSymbol: z.string().trim().min(1).max(24).transform((value) => value.toUpperCase()),
+  quoteMicCode: z.string().trim().length(4).regex(/^[A-Za-z0-9]+$/).transform((value) => value.toUpperCase()),
 });
 
 export const accountInputSchema = z.object({
@@ -60,3 +75,21 @@ export const transactionInputSchema = z.object({
 export type AssetInput = z.infer<typeof assetInputSchema>;
 export type AccountInput = z.infer<typeof accountInputSchema>;
 export type TransactionInput = z.infer<typeof transactionInputSchema>;
+
+function validateQuoteIdentity(value: {
+  assetClass: AssetClass;
+  assetType: AssetType;
+  quoteProvider?: AssetQuoteProvider | null;
+  quoteSymbol?: string | null;
+  quoteMicCode?: string | null;
+}, context: z.RefinementCtx) {
+  const fields = [value.quoteProvider, value.quoteSymbol, value.quoteMicCode];
+  const hasAny = fields.some(Boolean);
+  const hasAll = fields.every(Boolean);
+  if (hasAny && !hasAll) {
+    context.addIssue({ code: "custom", path: ["quoteProvider"], message: "Quote provider, symbol, and MIC must be provided together." });
+  }
+  if (hasAny && (value.assetClass !== AssetClass.ETF || value.assetType !== AssetType.ETF)) {
+    context.addIssue({ code: "custom", path: ["quoteProvider"], message: "Automatic exchange quotes are only available for ETF assets." });
+  }
+}

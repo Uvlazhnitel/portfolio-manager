@@ -12,6 +12,7 @@ import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 import { PortfolioRepository } from "@/features/portfolio/repository";
 import {
   accountInputSchema,
+  assetQuoteLinkSchema,
   assetInputSchema,
   nonNegativeDecimalStringSchema,
   positiveDecimalStringSchema,
@@ -90,6 +91,8 @@ export const transferMutationSchema = z.object({
 
 export type TransferMutationInput = z.input<typeof transferMutationSchema>;
 
+export type AssetQuoteLinkInput = z.input<typeof assetQuoteLinkSchema>;
+
 export async function createAccountMutation(
   input: z.input<typeof accountInputSchema>,
   db: PrismaClient = prisma,
@@ -109,6 +112,31 @@ export async function createAccountMutation(
   }
 
   return { ok: true, message: "Account created." };
+}
+
+export async function linkAssetQuoteMutation(
+  input: AssetQuoteLinkInput,
+  db: PrismaClient = prisma,
+): Promise<PortfolioMutationResult> {
+  const parsed = assetQuoteLinkSchema.parse(input);
+  await db.$transaction(async (transaction) => {
+    const asset = await transaction.asset.findUnique({ where: { id: parsed.assetId } });
+    if (!asset) throw new PortfolioMutationError("Selected asset does not exist.");
+    if (asset.assetClass !== AssetClass.ETF || asset.assetType !== AssetType.ETF) {
+      throw new PortfolioMutationError("Automatic exchange quotes are only available for ETF assets.");
+    }
+    await transaction.asset.update({
+      where: { id: asset.id },
+      data: {
+        currency: parsed.currency,
+        quoteProvider: parsed.quoteProvider,
+        quoteSymbol: parsed.quoteSymbol,
+        quoteMicCode: parsed.quoteMicCode,
+      },
+    });
+    await transaction.cachedMarketPrice.deleteMany({ where: { assetId: asset.id } });
+  });
+  return { ok: true, message: "ETF market quote linked." };
 }
 
 export async function createTransactionMutation(
@@ -314,6 +342,17 @@ async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, d
       : null;
     if (existingByExternalId) return existingByExternalId;
 
+    const existingByQuoteIdentity = parsed.newAsset.quoteProvider && parsed.newAsset.quoteSymbol && parsed.newAsset.quoteMicCode
+      ? await db.asset.findFirst({
+          where: {
+            quoteProvider: parsed.newAsset.quoteProvider,
+            quoteSymbol: parsed.newAsset.quoteSymbol,
+            quoteMicCode: parsed.newAsset.quoteMicCode,
+          },
+        })
+      : null;
+    if (existingByQuoteIdentity) return existingByQuoteIdentity;
+
     const existing = await db.asset.findUnique({ where: { symbol: parsed.newAsset.symbol } });
     if (existing) {
       throw new PortfolioMutationError(`Asset symbol ${parsed.newAsset.symbol} already exists. Select the existing asset.`);
@@ -328,6 +367,9 @@ async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, d
           assetType: parsed.newAsset.assetType,
           currency: parsed.newAsset.currency,
           externalId: parsed.newAsset.externalId || null,
+          quoteProvider: parsed.newAsset.quoteProvider || null,
+          quoteSymbol: parsed.newAsset.quoteSymbol || null,
+          quoteMicCode: parsed.newAsset.quoteMicCode || null,
           metadata: parsed.newAsset.metadata as Prisma.InputJsonValue | undefined,
         },
       });

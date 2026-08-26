@@ -1,4 +1,4 @@
-import { AccountType, AssetClass, AssetType, PortfolioRuleType, TransactionType } from "@prisma/client";
+import { AccountType, AssetClass, AssetQuoteProvider, AssetType, PortfolioRuleType, TransactionType } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { calculateHoldings } from "@/features/portfolio-engine";
 import {
@@ -7,6 +7,7 @@ import {
   createTransferMutation,
   createTransactionMutation,
   deleteTransactionMutation,
+  linkAssetQuoteMutation,
   updateTransactionMutation,
 } from "@/features/portfolio/mutations";
 import { createTestDatabase, type TestDatabase } from "../helpers/test-db";
@@ -113,6 +114,61 @@ describe("portfolio mutations", () => {
 
     expect(await testDb.prisma.asset.count({ where: { externalId: "solana" } })).toBe(1);
     expect(await testDb.prisma.transaction.count({ where: { assetId: existing.id, quantity: "5" } })).toBe(1);
+  });
+
+  it("persists a selected Twelve Data listing when creating an ETF", async () => {
+    const account = await testDb.prisma.account.create({ data: { name: "ETF Broker", type: AccountType.BROKER } });
+
+    await createTransactionMutation({
+      type: TransactionType.INITIAL_BALANCE,
+      accountId: account.id,
+      assetMode: "new",
+      newAsset: {
+        symbol: "IWDA",
+        name: "iShares Core MSCI World UCITS ETF",
+        assetClass: AssetClass.ETF,
+        assetType: AssetType.ETF,
+        currency: "EUR",
+        quoteProvider: AssetQuoteProvider.TWELVE_DATA,
+        quoteSymbol: "IWDA",
+        quoteMicCode: "XAMS",
+      },
+      quantity: "2",
+      totalAmount: "200",
+      currency: "USD",
+      executedAt: new Date("2026-01-01"),
+    }, testDb.prisma);
+
+    await expect(testDb.prisma.asset.findUniqueOrThrow({ where: { symbol: "IWDA" } })).resolves.toMatchObject({
+      currency: "EUR",
+      quoteProvider: AssetQuoteProvider.TWELVE_DATA,
+      quoteSymbol: "IWDA",
+      quoteMicCode: "XAMS",
+    });
+  });
+
+  it("remaps an existing ETF listing and clears its cached quote", async () => {
+    const etf = await testDb.prisma.asset.create({
+      data: { symbol: "CSPX", name: "iShares Core S&P 500 UCITS ETF", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "USD" },
+    });
+    await testDb.prisma.cachedMarketPrice.create({
+      data: { assetId: etf.id, currency: "USD", price: "600", timestamp: new Date(), fetchedAt: new Date(), source: "MANUAL" },
+    });
+
+    await linkAssetQuoteMutation({
+      assetId: etf.id,
+      currency: "EUR",
+      quoteProvider: AssetQuoteProvider.TWELVE_DATA,
+      quoteSymbol: "SXR8",
+      quoteMicCode: "XETR",
+    }, testDb.prisma);
+
+    await expect(testDb.prisma.asset.findUniqueOrThrow({ where: { id: etf.id } })).resolves.toMatchObject({
+      currency: "EUR",
+      quoteSymbol: "SXR8",
+      quoteMicCode: "XETR",
+    });
+    expect(await testDb.prisma.cachedMarketPrice.count({ where: { assetId: etf.id } })).toBe(0);
   });
 
   it("creates buy transactions", async () => {

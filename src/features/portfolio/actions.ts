@@ -7,6 +7,7 @@ import {
   createTransferMutation,
   createTransactionMutation,
   deleteTransactionMutation,
+  linkAssetQuoteMutation,
   updateTransactionMutation,
   type PortfolioMutationResult,
 } from "@/features/portfolio/mutations";
@@ -64,6 +65,9 @@ export async function createTransactionAction(
                 assetClass: String(formData.get("newAssetClass") ?? AssetClass.OTHER) as AssetClass,
                 assetType: String(formData.get("newAssetType") ?? AssetType.OTHER) as AssetType,
                 currency: String(formData.get("newAssetCurrency") ?? baseCurrency),
+                quoteProvider: nullableString(formData.get("newAssetQuoteProvider")) as "TWELVE_DATA" | null,
+                quoteSymbol: nullableString(formData.get("newAssetQuoteSymbol")),
+                quoteMicCode: nullableString(formData.get("newAssetQuoteMicCode")),
               }
             : undefined,
         quantity: nullableString(formData.get("quantity")) ?? undefined,
@@ -136,6 +140,9 @@ export async function createPositionAction(
               assetType: String(formData.get("newAssetType") ?? AssetType.CRYPTO) as AssetType,
               currency: String(formData.get("newAssetCurrency") ?? baseCurrency),
               externalId: nullableString(formData.get("newAssetExternalId")),
+              quoteProvider: nullableString(formData.get("newAssetQuoteProvider")) as "TWELVE_DATA" | null,
+              quoteSymbol: nullableString(formData.get("newAssetQuoteSymbol")),
+              quoteMicCode: nullableString(formData.get("newAssetQuoteMicCode")),
               metadata: imageUrl ? { imageUrl } : undefined,
             },
         quantity: nullableString(formData.get("quantity")) ?? undefined,
@@ -148,6 +155,24 @@ export async function createPositionAction(
         note: nullableString(formData.get("note")) ?? undefined,
       }),
     );
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
+export async function linkAssetQuoteAction(
+  previousState: PortfolioActionState = initialState,
+  formData: FormData,
+): Promise<PortfolioActionState> {
+  void previousState;
+  try {
+    return await withPortfolioRevalidation(linkAssetQuoteMutation({
+      assetId: String(formData.get("assetId") ?? ""),
+      currency: String(formData.get("quoteCurrency") ?? ""),
+      quoteProvider: String(formData.get("quoteProvider") ?? "") as "TWELVE_DATA",
+      quoteSymbol: String(formData.get("quoteSymbol") ?? ""),
+      quoteMicCode: String(formData.get("quoteMicCode") ?? ""),
+    }));
   } catch (error) {
     return toActionError(error);
   }

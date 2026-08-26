@@ -2,6 +2,7 @@ import "dotenv/config";
 import {
   AccountType,
   AssetClass,
+  AssetQuoteProvider,
   AssetType,
   PortfolioRuleType,
   PrismaClient,
@@ -50,7 +51,16 @@ async function main() {
     prisma.asset.upsert({
       where: { symbol: "VWCE" },
       update: {},
-      create: { symbol: "VWCE", name: "Vanguard FTSE All-World UCITS ETF", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "USD" },
+      create: {
+        symbol: "VWCE",
+        name: "Vanguard FTSE All-World UCITS ETF",
+        assetClass: AssetClass.ETF,
+        assetType: AssetType.ETF,
+        currency: "EUR",
+        quoteProvider: AssetQuoteProvider.TWELVE_DATA,
+        quoteSymbol: "VWCE",
+        quoteMicCode: "XETR",
+      },
     }),
     prisma.asset.upsert({
       where: { symbol: "BTC" },

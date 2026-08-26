@@ -27,6 +27,9 @@ export const saveIntegrationSettingSchema = z.object({
   if (value.provider === IntegrationProvider.COINGECKO && !value.apiKey) {
     context.addIssue({ code: "custom", path: ["apiKey"], message: "CoinGecko API key is required." });
   }
+  if (value.provider === IntegrationProvider.TWELVE_DATA && !value.apiKey) {
+    context.addIssue({ code: "custom", path: ["apiKey"], message: "Twelve Data API key is required." });
+  }
   if (value.provider === IntegrationProvider.OPENAI && !value.apiKey && !value.model) {
     context.addIssue({ code: "custom", message: "Enter an OpenAI API key or model to save." });
   }

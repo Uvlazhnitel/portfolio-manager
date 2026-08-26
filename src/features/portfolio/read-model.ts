@@ -66,6 +66,9 @@ export type PortfolioReadModel = {
     assetClass: string;
     assetType: string;
     currency: string;
+    quoteProvider: string | null;
+    quoteSymbol: string | null;
+    quoteMicCode: string | null;
     imageUrl: string | null;
   }>;
   accounts: Array<{
@@ -145,6 +148,9 @@ export async function getPortfolioReadModel({
       assetClass: asset.assetClass,
       assetType: asset.assetType,
       currency: asset.currency,
+      quoteProvider: asset.quoteProvider,
+      quoteSymbol: asset.quoteSymbol,
+      quoteMicCode: asset.quoteMicCode,
       imageUrl: imageUrlFromMetadata(asset.metadata),
     })),
     accounts: accounts.map((account) => ({

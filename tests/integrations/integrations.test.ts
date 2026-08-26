@@ -8,7 +8,7 @@ import {
 } from "@/features/integrations/crypto";
 import { getIntegrationSettingsReadModel } from "@/features/integrations/read-model";
 import { IntegrationSettingsRepository, type IntegrationSettingsStore } from "@/features/integrations/repository";
-import { IntegrationSettingsService, resolveOpenAIConfiguration } from "@/features/integrations/service";
+import { IntegrationSettingsService, resolveOpenAIConfiguration, resolveTwelveDataApiKey } from "@/features/integrations/service";
 import { testIntegrationConnection } from "@/features/integrations/test-connection";
 import { apiKeySchema, saveIntegrationSettingSchema } from "@/features/integrations/validation";
 import { IntegrationProvider } from "@/lib/domain/enums";
@@ -63,6 +63,7 @@ describe("integration runtime configuration", () => {
   it("falls back to environment, public CoinGecko, and the default OpenAI model", async () => {
     const environmentService = new IntegrationSettingsService(new MemoryIntegrationStore(), {
       OPENAI_API_KEY: "sk-environment-secret",
+      TWELVE_DATA_API_KEY: "twelve-environment-secret",
     });
     expect(await environmentService.resolve(IntegrationProvider.OPENAI)).toEqual(expect.objectContaining({
       apiKey: "sk-environment-secret",
@@ -73,6 +74,11 @@ describe("integration runtime configuration", () => {
       apiKey: null,
       source: "PUBLIC",
     }));
+    expect(await environmentService.resolve(IntegrationProvider.TWELVE_DATA)).toEqual(expect.objectContaining({
+      apiKey: "twelve-environment-secret",
+      source: "ENVIRONMENT",
+    }));
+    expect(await resolveTwelveDataApiKey(environmentService)).toBe("twelve-environment-secret");
   });
 
   it("applies replacement and deletion immediately without restarting", async () => {
@@ -118,6 +124,7 @@ describe("integration runtime configuration", () => {
     expect(apiKeySchema.safeParse("contains whitespace").success).toBe(false);
     expect(apiKeySchema.safeParse(`valid-${"x".repeat(600)}`).success).toBe(false);
     expect(saveIntegrationSettingSchema.safeParse({ provider: IntegrationProvider.COINGECKO, apiKey: "" }).success).toBe(false);
+    expect(saveIntegrationSettingSchema.safeParse({ provider: IntegrationProvider.TWELVE_DATA, apiKey: "" }).success).toBe(false);
     await expect(new IntegrationSettingsService(new MemoryIntegrationStore(), {}).save({
       provider: IntegrationProvider.OPENAI,
       apiKey: "sk-database-secret",
@@ -132,6 +139,18 @@ describe("integration runtime configuration", () => {
     const result = await testIntegrationConnection(IntegrationProvider.OPENAI, { service, testOpenAI: openAIProbe });
     expect(result.message).toContain("succeeded");
     expect(openAIProbe).toHaveBeenCalledWith("sk-environment-secret", "gpt-5-mini");
+    expect(store.writeCount).toBe(0);
+  });
+
+  it("tests Twelve Data with the configured key through the Grow-aware probe", async () => {
+    const store = new MemoryIntegrationStore();
+    const service = new IntegrationSettingsService(store, { TWELVE_DATA_API_KEY: "twelve-environment-secret" });
+    const probe = vi.fn(async () => undefined);
+
+    const result = await testIntegrationConnection(IntegrationProvider.TWELVE_DATA, { service, testTwelveData: probe });
+
+    expect(result.message).toContain("VWCE/XETR");
+    expect(probe).toHaveBeenCalledWith("twelve-environment-secret");
     expect(store.writeCount).toBe(0);
   });
 });

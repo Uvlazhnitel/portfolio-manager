@@ -65,24 +65,34 @@ enum AssistantMessageRole {
 enum IntegrationProvider {
   OPENAI
   COINGECKO
+  TWELVE_DATA
+}
+
+enum AssetQuoteProvider {
+  TWELVE_DATA
 }
 
 model Asset {
-  id           String              @id @default(cuid())
-  symbol       String              @unique
-  name         String
-  assetClass   AssetClass
-  assetType    AssetType
-  currency     String
-  externalId   String?
-  metadata     Json?
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
-  transactions Transaction[]
-  cachedPrices CachedMarketPrice[]
-  dailyPrices  DailyMarketPrice[]
-  manualPrices ManualMarketPrice[]
+  id                       String                    @id @default(cuid())
+  symbol                   String                    @unique
+  name                     String
+  assetClass               AssetClass
+  assetType                AssetType
+  currency                 String
+  externalId               String?
+  quoteProvider            AssetQuoteProvider?
+  quoteSymbol              String?
+  quoteMicCode             String?
+  metadata                 Json?
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  transactions             Transaction[]
+  cachedPrices             CachedMarketPrice[]
+  dailyPrices              DailyMarketPrice[]
+  manualPrices             ManualMarketPrice[]
   strategyAssetAllocations StrategyAssetAllocation[]
+
+  @@index([quoteProvider, quoteSymbol, quoteMicCode])
 }
 
 model DailyMarketPrice {
@@ -205,7 +215,7 @@ model StrategyAllocation {
   minPercent    Decimal    @db.Decimal(5, 2)
   maxPercent    Decimal    @db.Decimal(5, 2)
 
-  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+  strategy         Strategy                  @relation(fields: [strategyId], references: [id], onDelete: Cascade)
   assetAllocations StrategyAssetAllocation[]
 
   @@unique([strategyId, assetClass])

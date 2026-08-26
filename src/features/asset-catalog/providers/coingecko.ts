@@ -70,6 +70,12 @@ export class CoinGeckoAssetCatalogProvider implements AssetCatalogProvider {
         existingAssetId: null,
         ...classification,
         currency: symbol,
+        quoteProvider: null,
+        quoteSymbol: null,
+        quoteMicCode: null,
+        exchange: null,
+        country: null,
+        accessPlan: null,
         isSymbolConflict: false,
       };
     });

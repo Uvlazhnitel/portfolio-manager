@@ -29,6 +29,7 @@ export type PortfolioRuleType = (typeof PortfolioRuleType)[keyof typeof Portfoli
 export const IntegrationProvider = {
   OPENAI: "OPENAI",
   COINGECKO: "COINGECKO",
+  TWELVE_DATA: "TWELVE_DATA",
 } as const;
 
 export type IntegrationProvider = (typeof IntegrationProvider)[keyof typeof IntegrationProvider];

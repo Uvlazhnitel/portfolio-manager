@@ -1,4 +1,4 @@
-import type { AssetType, MarketPriceUnit } from "@prisma/client";
+import type { AssetQuoteProvider, AssetType, MarketPriceUnit } from "@prisma/client";
 
 export type MarketDataAsset = {
   id: string;
@@ -7,6 +7,9 @@ export type MarketDataAsset = {
   assetType: AssetType;
   currency: string;
   externalId: string | null;
+  quoteProvider: AssetQuoteProvider | null;
+  quoteSymbol: string | null;
+  quoteMicCode: string | null;
 };
 
 export type MarketPrice = {

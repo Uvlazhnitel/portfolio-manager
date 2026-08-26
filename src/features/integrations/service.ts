@@ -27,6 +27,7 @@ type IntegrationEnvironment = {
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
   COINGECKO_API_KEY?: string;
+  TWELVE_DATA_API_KEY?: string;
 };
 
 export class IntegrationSettingsService {
@@ -65,9 +66,7 @@ export class IntegrationSettingsService {
       }
     }
 
-    const environmentKey = provider === IntegrationProvider.OPENAI
-      ? this.environment.OPENAI_API_KEY?.trim()
-      : this.environment.COINGECKO_API_KEY?.trim();
+    const environmentKey = environmentApiKey(provider, this.environment);
     if (environmentKey) {
       return {
         provider,
@@ -133,6 +132,16 @@ export async function resolveOpenAIConfiguration(service = new IntegrationSettin
 
 export async function resolveCoinGeckoApiKey(service = new IntegrationSettingsService()) {
   return (await service.resolve(IntegrationProvider.COINGECKO)).apiKey ?? undefined;
+}
+
+export async function resolveTwelveDataApiKey(service = new IntegrationSettingsService()) {
+  return (await service.resolve(IntegrationProvider.TWELVE_DATA)).apiKey ?? undefined;
+}
+
+function environmentApiKey(provider: IntegrationProviderName, environment: IntegrationEnvironment) {
+  if (provider === IntegrationProvider.OPENAI) return environment.OPENAI_API_KEY?.trim();
+  if (provider === IntegrationProvider.COINGECKO) return environment.COINGECKO_API_KEY?.trim();
+  return environment.TWELVE_DATA_API_KEY?.trim();
 }
 
 function configuredModel(config: Prisma.JsonValue | undefined, environmentModel: string | undefined) {

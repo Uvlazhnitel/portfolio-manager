@@ -1,4 +1,4 @@
-import { AssetType, MarketPriceUnit, Prisma, type CachedMarketPrice } from "@prisma/client";
+import { AssetQuoteProvider, AssetType, MarketPriceUnit, Prisma, type CachedMarketPrice } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   formatPhysicalGoldQuantity,
@@ -12,6 +12,7 @@ import {
 import { BaseCurrencyMarketDataProvider } from "@/features/market-data/providers/base-currency";
 import { CoinGeckoMarketDataProvider } from "@/features/market-data/providers/coingecko";
 import { ManualMarketDataProvider, normalizeManualPrice } from "@/features/market-data/providers/manual";
+import { TwelveDataMarketDataProvider } from "@/features/market-data/providers/twelve-data";
 import type { MarketDataStore } from "@/features/market-data/repository";
 import {
   MARKET_PRICE_CACHE_TTL_MS,
@@ -28,6 +29,9 @@ const btc: MarketDataAsset = {
   assetType: AssetType.CRYPTO,
   currency: "BTC",
   externalId: "bitcoin",
+  quoteProvider: null,
+  quoteSymbol: null,
+  quoteMicCode: null,
 };
 const xaut: MarketDataAsset = {
   id: "xaut-id",
@@ -36,6 +40,9 @@ const xaut: MarketDataAsset = {
   assetType: AssetType.TOKENIZED_GOLD,
   currency: "XAUT",
   externalId: "tether-gold",
+  quoteProvider: null,
+  quoteSymbol: null,
+  quoteMicCode: null,
 };
 const physicalGold: MarketDataAsset = {
   id: "physical-gold-id",
@@ -44,6 +51,20 @@ const physicalGold: MarketDataAsset = {
   assetType: AssetType.PHYSICAL_GOLD,
   currency: "XAU",
   externalId: null,
+  quoteProvider: null,
+  quoteSymbol: null,
+  quoteMicCode: null,
+};
+const vwce: MarketDataAsset = {
+  id: "vwce-id",
+  symbol: "VWCE",
+  name: "Vanguard FTSE All-World UCITS ETF",
+  assetType: AssetType.ETF,
+  currency: "EUR",
+  externalId: null,
+  quoteProvider: AssetQuoteProvider.TWELVE_DATA,
+  quoteSymbol: "VWCE",
+  quoteMicCode: "XETR",
 };
 
 beforeEach(() => resetMarketDataRuntimeCacheForTests());
@@ -124,6 +145,47 @@ describe("market data providers", () => {
     key = "second-server-key";
     await provider.getCurrentPrices({ assets: [btc], baseCurrency: "EUR" });
     expect(observedKeys).toEqual(["first-server-key", "second-server-key"]);
+  });
+
+  it("converts Twelve Data ETF quotes to USD and deduplicates FX requests", async () => {
+    const iwda = { ...vwce, id: "iwda-id", symbol: "IWDA", name: "iShares Core MSCI World", quoteSymbol: "IWDA", quoteMicCode: "XAMS" };
+    const requestedUrls: URL[] = [];
+    const fetcher = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      requestedUrls.push(url);
+      expect(url.searchParams.get("apikey")).toBe("twelve-secret");
+      if (url.pathname === "/quote") {
+        const symbol = url.searchParams.get("symbol") ?? "";
+        const mic = url.searchParams.get("mic_code") ?? "";
+        return new Response(JSON.stringify({ symbol, mic_code: mic, currency: "EUR", close: symbol === "VWCE" ? "120.5" : "95", timestamp: 1787603700, last_quote_at: 1787603740 }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ symbol: "EUR/USD", rate: 1.17, timestamp: 1787603600 }), { status: 200 });
+    });
+    const provider = new TwelveDataMarketDataProvider("twelve-secret", fetcher as typeof fetch);
+
+    const prices = await provider.getCurrentPrices({ assets: [vwce, iwda], baseCurrency: "USD" });
+
+    expect(prices).toEqual([
+      expect.objectContaining({ assetId: "vwce-id", price: "140.985", currency: "USD", source: "TWELVE_DATA", timestamp: new Date(1787603600 * 1_000) }),
+      expect.objectContaining({ assetId: "iwda-id", price: "111.15", currency: "USD", source: "TWELVE_DATA", timestamp: new Date(1787603600 * 1_000) }),
+    ]);
+    expect(requestedUrls.filter((url) => url.pathname === "/quote")).toHaveLength(2);
+    expect(requestedUrls.filter((url) => url.pathname === "/exchange_rate")).toHaveLength(1);
+  });
+
+  it("rejects Twelve Data plan errors and malformed listing responses", async () => {
+    const planRestricted = new TwelveDataMarketDataProvider("twelve-secret", vi.fn(async () => new Response(JSON.stringify({ status: "error", code: 401, message: "Grow plan required" }), { status: 200 })) as typeof fetch);
+    await expect(planRestricted.getCurrentPrices({ assets: [vwce], baseCurrency: "USD" })).rejects.toThrow("rejected");
+
+    const malformed = new TwelveDataMarketDataProvider("twelve-secret", vi.fn(async () => new Response(JSON.stringify({ symbol: "VWCE", mic_code: "XETR", currency: "EUR", close: 120.5, timestamp: 1787603700 }), { status: 200 })) as typeof fetch);
+    await expect(malformed.getCurrentPrices({ assets: [vwce], baseCurrency: "USD" })).rejects.toThrow();
+  });
+
+  it("does not call Twelve Data until a key is configured", async () => {
+    const fetcher = vi.fn();
+    const provider = new TwelveDataMarketDataProvider(async () => undefined, fetcher as typeof fetch);
+    await expect(provider.getCurrentPrices({ assets: [vwce], baseCurrency: "USD" })).resolves.toEqual([]);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("returns deterministic one-to-one pricing for the USD base asset", async () => {
@@ -299,6 +361,30 @@ describe("market data cache service", () => {
       expect.objectContaining({ price: "100", source: "MANUAL" }),
     );
     expect(snapshot.unavailableAssetIds).toContain(xaut.id);
+  });
+
+  it("falls back to a manual ETF price when Twelve Data is unavailable", async () => {
+    const store = new FakeStore([]);
+    const failure: MarketDataProvider = {
+      name: "TWELVE_DATA",
+      getCurrentPrices: vi.fn(async () => { throw new Error("Grow access unavailable"); }),
+    };
+    const manual: MarketDataProvider = {
+      name: "MANUAL",
+      getCurrentPrices: vi.fn(async ({ assets }: { assets: MarketDataAsset[] }) => assets.map((asset) => ({
+        assetId: asset.id,
+        symbol: asset.symbol,
+        price: "140",
+        currency: "USD",
+        timestamp: now,
+        source: "MANUAL",
+      }))),
+    };
+
+    const snapshot = await new MarketDataService(store, [failure, manual]).getCurrentPrices({ assets: [vwce], now });
+
+    expect(snapshot.prices).toEqual([expect.objectContaining({ assetId: vwce.id, price: "140", source: "MANUAL" })]);
+    expect(snapshot.warning).toContain("TWELVE_DATA");
   });
 
   it("does not coalesce concurrent refreshes for different asset sets", async () => {

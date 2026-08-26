@@ -1,7 +1,8 @@
 import "server-only";
 
 import { CoinGeckoAssetCatalogProvider } from "@/features/asset-catalog/providers/coingecko";
-import type { AssetCatalogProvider, AssetCatalogResult, AssetCatalogSearchResult } from "@/features/asset-catalog/types";
+import { TwelveDataAssetCatalogProvider } from "@/features/asset-catalog/providers/twelve-data";
+import type { AssetCatalogKind, AssetCatalogProvider, AssetCatalogResult, AssetCatalogSearchResult } from "@/features/asset-catalog/types";
 import { PortfolioRepository } from "@/features/portfolio/repository";
 
 export const ASSET_CATALOG_CACHE_TTL_MS = 15 * 60 * 1_000;
@@ -16,16 +17,20 @@ const inFlightSearches = new Map<string, Promise<AssetCatalogResult[]>>();
 export class AssetCatalogService {
   constructor(
     private readonly store: CatalogStore = new PortfolioRepository(),
-    private readonly provider: AssetCatalogProvider = new CoinGeckoAssetCatalogProvider(),
+    private readonly providers: Record<AssetCatalogKind, AssetCatalogProvider> = {
+      CRYPTO: new CoinGeckoAssetCatalogProvider(),
+      ETF: new TwelveDataAssetCatalogProvider(),
+    },
   ) {}
 
-  async search(query: string, now = Date.now()): Promise<AssetCatalogSearchResult> {
+  async search(query: string, kind: AssetCatalogKind = "CRYPTO", now = Date.now()): Promise<AssetCatalogSearchResult> {
     const normalizedQuery = query.trim().toLowerCase();
     const assets = await this.store.listAssets();
-    const local = localMatches(assets, normalizedQuery);
+    const local = localMatches(assets, normalizedQuery, kind);
+    const provider = this.providers[kind];
 
     try {
-      const remote = await cachedSearch(this.provider, normalizedQuery, now);
+      const remote = await cachedSearch(provider, normalizedQuery, now);
       return { results: mergeResults(local, remote, assets), warning: null };
     } catch {
       return {
@@ -36,8 +41,9 @@ export class AssetCatalogService {
   }
 }
 
-function localMatches(assets: CatalogAsset[], query: string): AssetCatalogResult[] {
+function localMatches(assets: CatalogAsset[], query: string, kind: AssetCatalogKind): AssetCatalogResult[] {
   return assets
+    .filter((asset) => (kind === "ETF" ? asset.assetType === "ETF" : asset.assetType !== "ETF"))
     .filter((asset) => asset.symbol.toLowerCase().includes(query) || asset.name.toLowerCase().includes(query))
     .map((asset) => ({
       source: "LOCAL" as const,
@@ -50,6 +56,12 @@ function localMatches(assets: CatalogAsset[], query: string): AssetCatalogResult
       assetClass: asset.assetClass,
       assetType: asset.assetType,
       currency: asset.currency,
+      quoteProvider: asset.quoteProvider,
+      quoteSymbol: asset.quoteSymbol,
+      quoteMicCode: asset.quoteMicCode,
+      exchange: asset.quoteMicCode,
+      country: null,
+      accessPlan: null,
       isSymbolConflict: false,
     }));
 }
@@ -73,22 +85,35 @@ function mergeResults(local: AssetCatalogResult[], remote: AssetCatalogResult[],
   const localExternalIds = new Set(local.map((asset) => asset.externalId).filter(Boolean));
   const localIds = new Set(local.map((asset) => asset.existingAssetId));
   const existingByExternalId = new Map(assets.filter((asset) => asset.externalId).map((asset) => [asset.externalId, asset]));
+  const existingByQuoteIdentity = new Map(assets.flatMap((asset) => {
+    const identity = quoteIdentity(asset);
+    return identity ? [[identity, asset] as const] : [];
+  }));
   const existingBySymbol = new Map(assets.map((asset) => [asset.symbol.toUpperCase(), asset]));
 
   const merged = [...local];
   for (const candidate of remote) {
     if (candidate.externalId && localExternalIds.has(candidate.externalId)) continue;
     const byExternalId = candidate.externalId ? existingByExternalId.get(candidate.externalId) : undefined;
+    const candidateQuoteIdentity = quoteIdentity(candidate);
+    const byQuoteIdentity = candidateQuoteIdentity ? existingByQuoteIdentity.get(candidateQuoteIdentity) : undefined;
     const bySymbol = existingBySymbol.get(candidate.symbol.toUpperCase());
-    const existing = byExternalId ?? bySymbol;
-    if (existing && localIds.has(existing.id)) continue;
+    const remappableEtf = candidate.source === "TWELVE_DATA" && bySymbol?.assetType === "ETF" ? bySymbol : undefined;
+    const exactExisting = byExternalId ?? byQuoteIdentity;
+    if (exactExisting && localIds.has(exactExisting.id)) continue;
     merged.push({
       ...candidate,
-      existingAssetId: byExternalId?.id ?? null,
-      isSymbolConflict: Boolean(bySymbol && bySymbol.externalId !== candidate.externalId),
+      existingAssetId: (byExternalId ?? byQuoteIdentity ?? remappableEtf)?.id ?? null,
+      isSymbolConflict: Boolean(bySymbol && !remappableEtf && bySymbol.externalId !== candidate.externalId),
     });
   }
   return merged.slice(0, 12);
+}
+
+function quoteIdentity(asset: Pick<AssetCatalogResult, "quoteProvider" | "quoteSymbol" | "quoteMicCode"> | CatalogAsset) {
+  return asset.quoteProvider && asset.quoteSymbol && asset.quoteMicCode
+    ? `${asset.quoteProvider}:${asset.quoteSymbol.toUpperCase()}:${asset.quoteMicCode.toUpperCase()}`
+    : null;
 }
 
 function imageUrlFromMetadata(metadata: unknown) {

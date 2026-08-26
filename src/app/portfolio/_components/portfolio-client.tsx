@@ -13,12 +13,14 @@ import {
 import { ArrowLeft, ChevronRight, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { searchAssetsAction } from "@/features/asset-catalog/actions";
 import type { AssetCatalogResult } from "@/features/asset-catalog/types";
+import type { AssetCatalogKind } from "@/features/asset-catalog/types";
 import {
   createAccountAction,
   createPositionAction,
   createTransferAction,
   createTransactionAction,
   deleteTransactionAction,
+  linkAssetQuoteAction,
   updateTransactionAction,
 } from "@/features/portfolio/actions";
 import type { PortfolioReadModel } from "@/features/portfolio/read-model";
@@ -147,6 +149,7 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
 function AddAssetDialog({ portfolio, onClose }: PortfolioClientProps & { onClose: () => void }) {
   const [selection, setSelection] = useState<AssetSelection | null>(null);
   const [query, setQuery] = useState("");
+  const [catalogKind, setCatalogKind] = useState<AssetCatalogKind>("CRYPTO");
   const [remoteResults, setRemoteResults] = useState<AssetCatalogResult[] | null>(null);
   const [searchMessage, setSearchMessage] = useState<string | null>(null);
   const [searchWarning, setSearchWarning] = useState<string | null>(null);
@@ -157,8 +160,10 @@ function AddAssetDialog({ portfolio, onClose }: PortfolioClientProps & { onClose
   const localAssets = useMemo(() => portfolio.assets.map(toCatalogResult), [portfolio.assets]);
   const visibleLocal = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return localAssets.filter((asset) => !needle || asset.symbol.toLowerCase().includes(needle) || asset.name.toLowerCase().includes(needle));
-  }, [localAssets, query]);
+    return localAssets
+      .filter((asset) => catalogKind === "ETF" ? asset.assetType === "ETF" : asset.assetType !== "ETF")
+      .filter((asset) => !needle || asset.symbol.toLowerCase().includes(needle) || asset.name.toLowerCase().includes(needle));
+  }, [catalogKind, localAssets, query]);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -168,7 +173,7 @@ function AddAssetDialog({ portfolio, onClose }: PortfolioClientProps & { onClose
     const currentRequest = ++requestId.current;
     const timer = window.setTimeout(() => {
       startSearch(async () => {
-        const result = await searchAssetsAction(trimmed);
+        const result = await searchAssetsAction(trimmed, catalogKind);
         if (requestId.current !== currentRequest) return;
         setRemoteResults(result.results);
         setSearchMessage(result.message);
@@ -176,7 +181,7 @@ function AddAssetDialog({ portfolio, onClose }: PortfolioClientProps & { onClose
       });
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [query]);
+  }, [catalogKind, query]);
 
   const results = remoteResults ?? visibleLocal;
 
@@ -186,6 +191,25 @@ function AddAssetDialog({ portfolio, onClose }: PortfolioClientProps & { onClose
         <PositionForm key={entryKey} selection={selection} accounts={portfolio.accounts} accountId={accountId} onAccountIdChange={setAccountId} currency={portfolio.valuation.currency} onDone={onClose} onAddAnother={() => setEntryKey((value) => value + 1)} onBack={() => setSelection(null)} />
       ) : (
         <div className="space-y-4">
+          <div className="grid grid-cols-2 rounded-lg border border-border bg-surface p-1" aria-label="Asset catalog">
+            {(["CRYPTO", "ETF"] as const).map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => {
+                  requestId.current += 1;
+                  setCatalogKind(kind);
+                  setQuery("");
+                  setRemoteResults(null);
+                  setSearchMessage(null);
+                  setSearchWarning(null);
+                }}
+                className={cn("min-h-10 rounded-md px-3 text-sm font-medium transition", catalogKind === kind ? "bg-primary text-white" : "text-muted hover:text-foreground")}
+              >
+                {kind === "ETF" ? "ETFs" : "Coins & tokens"}
+              </button>
+            ))}
+          </div>
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden="true" />
             <input
@@ -200,18 +224,18 @@ function AddAssetDialog({ portfolio, onClose }: PortfolioClientProps & { onClose
                 setSearchWarning(null);
               }}
               className={cn(inputClassName, "pl-10")}
-              placeholder="Search BTC, ETH, XAUT…"
+              placeholder={catalogKind === "ETF" ? "Search VWCE, IWDA, CSPX…" : "Search BTC, ETH, XAUT…"}
               aria-label="Search assets"
             />
           </div>
 
           <div className="min-h-52 space-y-2">
-            {isSearchPending ? <p className="px-2 py-4 text-sm text-muted">Searching CoinGecko…</p> : null}
+            {isSearchPending ? <p className="px-2 py-4 text-sm text-muted">Searching {catalogKind === "ETF" ? "Twelve Data" : "CoinGecko"}…</p> : null}
             {!isSearchPending && results.length === 0 ? (
               <p className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">No matching assets found.</p>
             ) : null}
             {!isSearchPending ? results.map((asset) => (
-              <AssetResultButton key={`${asset.source}:${asset.externalId ?? asset.existingAssetId}`} asset={asset} onSelect={() => setSelection(asset)} />
+              <AssetResultButton key={`${asset.source}:${asset.externalId ?? asset.quoteMicCode ?? asset.existingAssetId}`} asset={asset} onSelect={() => setSelection(asset)} />
             )) : null}
           </div>
 
@@ -220,6 +244,11 @@ function AddAssetDialog({ portfolio, onClose }: PortfolioClientProps & { onClose
           {remoteResults?.some((asset) => asset.source === "COINGECKO") ? (
             <p className="text-xs text-muted">
               Data provided by <a href="https://www.coingecko.com/en/api" target="_blank" rel="noreferrer" className="text-primary hover:underline">CoinGecko</a>
+            </p>
+          ) : null}
+          {remoteResults?.some((asset) => asset.source === "TWELVE_DATA") ? (
+            <p className="text-xs text-muted">
+              Market listings provided by <a href="https://twelvedata.com" target="_blank" rel="noreferrer" className="text-primary hover:underline">Twelve Data</a>
             </p>
           ) : null}
 
@@ -262,6 +291,7 @@ function PositionForm({
   const [type, setType] = useState<TransactionOperation>("BUY");
   const [state, action, isSaving] = useActionState(createPositionAction, { ok: false, message: "" });
   const [transferState, transferAction, isTransferSaving] = useActionState(createTransferAction, { ok: false, message: "" });
+  const [linkState, linkAction, isLinking] = useActionState(linkAssetQuoteAction, { ok: false, message: "" });
   const isTransfer = type === "TRANSFER";
   const actionState = isTransfer ? transferState : state;
   const isPending = isTransfer ? isTransferSaving : isSaving;
@@ -281,7 +311,7 @@ function PositionForm({
           <AssetAvatar asset={asset} size={44} />
           <div className="min-w-0">
             <p className="truncate font-medium text-foreground">{asset.name}</p>
-            <p className="text-sm text-muted">{asset.symbol}</p>
+            <p className="text-sm text-muted">{asset.symbol}{asset.exchange ? ` · ${asset.exchange} · ${asset.currency}` : ""}</p>
           </div>
           <Badge tone="primary" className="ml-auto">{asset.assetClass}</Badge>
         </div>
@@ -290,9 +320,16 @@ function PositionForm({
       <input type="hidden" name="existingAssetId" value={asset?.existingAssetId ?? ""} />
       <input type="hidden" name="type" value={type === "TRANSFER" ? "TRANSFER_OUT" : type} />
       <input type="hidden" name="currency" value={currency} />
-      {isTransfer ? <input type="hidden" name="assetId" value={asset?.existingAssetId ?? ""} /> : null}
       <input type="hidden" name="newAssetExternalId" value={asset?.externalId ?? ""} />
       <input type="hidden" name="newAssetImageUrl" value={asset?.imageUrl ?? ""} />
+      <input type="hidden" name="newAssetQuoteProvider" value={asset?.quoteProvider ?? ""} />
+      <input type="hidden" name="newAssetQuoteSymbol" value={asset?.quoteSymbol ?? ""} />
+      <input type="hidden" name="newAssetQuoteMicCode" value={asset?.quoteMicCode ?? ""} />
+      <input type="hidden" name="assetId" value={asset?.existingAssetId ?? ""} />
+      <input type="hidden" name="quoteProvider" value={asset?.quoteProvider ?? ""} />
+      <input type="hidden" name="quoteSymbol" value={asset?.quoteSymbol ?? ""} />
+      <input type="hidden" name="quoteMicCode" value={asset?.quoteMicCode ?? ""} />
+      <input type="hidden" name="quoteCurrency" value={asset?.currency ?? ""} />
       {!isCustom ? (
         <>
           <input type="hidden" name="newAssetSymbol" value={asset?.symbol ?? ""} />
@@ -300,6 +337,23 @@ function PositionForm({
           <input type="hidden" name="newAssetCurrency" value={asset?.currency ?? asset?.symbol ?? currency} />
         </>
       ) : null}
+
+      {asset?.source === "TWELVE_DATA" ? (
+        <>
+          <input type="hidden" name="newAssetClass" value="ETF" />
+          <input type="hidden" name="newAssetType" value="ETF" />
+        </>
+      ) : null}
+
+      {asset?.source === "TWELVE_DATA" && asset.existingAssetId ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted">{asset.quoteSymbol} · {asset.quoteMicCode} · {asset.currency}</p>
+          <Button type="submit" formAction={linkAction} variant="secondary" disabled={isLinking}>
+            {isLinking ? "Linking…" : linkState.ok ? "Quote linked" : "Link market quote"}
+          </Button>
+        </div>
+      ) : null}
+      {linkState.message ? <ActionMessage state={linkState} /> : null}
 
       {isCustom ? (
         <div className="grid gap-4 sm:grid-cols-2">
@@ -510,7 +564,7 @@ function AssetResultButton({ asset, onSelect }: { asset: AssetCatalogResult; onS
   return (
     <button type="button" onClick={onSelect} disabled={asset.isSymbolConflict} className="flex min-h-16 w-full items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2.5 text-left transition hover:border-primary/45 hover:bg-surface-strong disabled:cursor-not-allowed disabled:opacity-50">
       <AssetAvatar asset={asset} size={40} />
-      <span className="min-w-0 flex-1"><span className="block truncate font-medium text-foreground">{asset.name}</span><span className="block text-xs text-muted">{asset.symbol}{asset.marketCapRank ? ` · Rank #${asset.marketCapRank}` : ""}</span></span>
+      <span className="min-w-0 flex-1"><span className="block truncate font-medium text-foreground">{asset.name}</span><span className="block text-xs text-muted">{asset.symbol}{asset.marketCapRank ? ` · Rank #${asset.marketCapRank}` : ""}{asset.exchange ? ` · ${asset.exchange} · ${asset.currency}` : ""}{asset.accessPlan ? ` · ${asset.accessPlan}` : ""}</span></span>
       {asset.existingAssetId ? <Badge tone="success">In portfolio</Badge> : asset.isSymbolConflict ? <Badge tone="warning">Symbol used</Badge> : <ChevronRight className="h-4 w-4 text-muted" aria-hidden="true" />}
     </button>
   );
@@ -547,7 +601,7 @@ function TransactionsSection({ portfolio, onAddTransaction, onEditTransaction }:
 }
 
 function toCatalogResult(asset: PortfolioReadModel["assets"][number]): AssetCatalogResult {
-  return { source: "LOCAL", externalId: null, symbol: asset.symbol, name: asset.name, imageUrl: asset.imageUrl, marketCapRank: null, existingAssetId: asset.id, assetClass: asset.assetClass as AssetCatalogResult["assetClass"], assetType: asset.assetType as AssetCatalogResult["assetType"], currency: asset.currency, isSymbolConflict: false };
+  return { source: "LOCAL", externalId: null, symbol: asset.symbol, name: asset.name, imageUrl: asset.imageUrl, marketCapRank: null, existingAssetId: asset.id, assetClass: asset.assetClass as AssetCatalogResult["assetClass"], assetType: asset.assetType as AssetCatalogResult["assetType"], currency: asset.currency, quoteProvider: asset.quoteProvider as AssetCatalogResult["quoteProvider"], quoteSymbol: asset.quoteSymbol, quoteMicCode: asset.quoteMicCode, exchange: asset.quoteMicCode, country: null, accessPlan: null, isSymbolConflict: false };
 }
 
 function preferredAccountId(accounts: PortfolioReadModel["accounts"], physicalGold: boolean) {
