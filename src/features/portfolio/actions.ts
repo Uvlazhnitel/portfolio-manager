@@ -65,7 +65,7 @@ export async function createTransactionAction(
                 assetClass: String(formData.get("newAssetClass") ?? AssetClass.OTHER) as AssetClass,
                 assetType: String(formData.get("newAssetType") ?? AssetType.OTHER) as AssetType,
                 currency: String(formData.get("newAssetCurrency") ?? baseCurrency),
-                quoteProvider: nullableString(formData.get("newAssetQuoteProvider")) as "TWELVE_DATA" | null,
+                quoteProvider: nullableString(formData.get("newAssetQuoteProvider")) as "ALPHA_VANTAGE" | "TWELVE_DATA" | null,
                 quoteSymbol: nullableString(formData.get("newAssetQuoteSymbol")),
                 quoteMicCode: nullableString(formData.get("newAssetQuoteMicCode")),
               }
@@ -140,7 +140,7 @@ export async function createPositionAction(
               assetType: String(formData.get("newAssetType") ?? AssetType.CRYPTO) as AssetType,
               currency: String(formData.get("newAssetCurrency") ?? baseCurrency),
               externalId: nullableString(formData.get("newAssetExternalId")),
-              quoteProvider: nullableString(formData.get("newAssetQuoteProvider")) as "TWELVE_DATA" | null,
+              quoteProvider: nullableString(formData.get("newAssetQuoteProvider")) as "ALPHA_VANTAGE" | "TWELVE_DATA" | null,
               quoteSymbol: nullableString(formData.get("newAssetQuoteSymbol")),
               quoteMicCode: nullableString(formData.get("newAssetQuoteMicCode")),
               metadata: imageUrl ? { imageUrl } : undefined,
@@ -169,7 +169,7 @@ export async function linkAssetQuoteAction(
     return await withPortfolioRevalidation(linkAssetQuoteMutation({
       assetId: String(formData.get("assetId") ?? ""),
       currency: String(formData.get("quoteCurrency") ?? ""),
-      quoteProvider: String(formData.get("quoteProvider") ?? "") as "TWELVE_DATA",
+      quoteProvider: String(formData.get("quoteProvider") ?? "") as "ALPHA_VANTAGE" | "TWELVE_DATA",
       quoteSymbol: String(formData.get("quoteSymbol") ?? ""),
       quoteMicCode: String(formData.get("quoteMicCode") ?? ""),
     }));

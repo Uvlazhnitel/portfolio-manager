@@ -1,4 +1,4 @@
-import { AssetType, MarketPriceUnit } from "@prisma/client";
+import { AssetQuoteProvider, AssetType, MarketPriceUnit } from "@prisma/client";
 import { serializeDecimal } from "@/lib/db/decimal";
 import { BaseCurrencyMarketDataProvider } from "@/features/market-data/providers/base-currency";
 import {
@@ -6,6 +6,7 @@ import {
   PHYSICAL_GOLD_MARKET_SOURCE,
 } from "@/features/market-data/providers/coingecko";
 import { ManualMarketDataProvider } from "@/features/market-data/providers/manual";
+import { AlphaVantageMarketDataProvider } from "@/features/market-data/providers/alpha-vantage";
 import { TwelveDataMarketDataProvider } from "@/features/market-data/providers/twelve-data";
 import { goldPricePerGram } from "@/features/market-data/gold";
 import {
@@ -39,6 +40,7 @@ export class MarketDataService {
     this.providers = providers ?? [
       new BaseCurrencyMarketDataProvider(),
       new CoinGeckoMarketDataProvider(),
+      new AlphaVantageMarketDataProvider(),
       new TwelveDataMarketDataProvider(),
       new ManualMarketDataProvider(async (currency) => {
         const records = await this.store.listManualPrices(currency);
@@ -66,7 +68,12 @@ export class MarketDataService {
     const cacheByAsset = new Map(cache.map((price) => [price.assetId, price]));
     const initiallyNeedsRefresh = input.assets.filter((asset) => {
       const cached = cacheByAsset.get(asset.id);
-      return input.forceRefresh || !cached || now.getTime() - cached.fetchedAt.getTime() >= MARKET_PRICE_CACHE_TTL_MS;
+      if (!cached) return true;
+      if (input.forceRefresh) return true;
+      if (asset.quoteProvider === AssetQuoteProvider.ALPHA_VANTAGE) {
+        return !isSameUtcDay(cached.fetchedAt, now);
+      }
+      return now.getTime() - cached.fetchedAt.getTime() >= MARKET_PRICE_CACHE_TTL_MS;
     });
     const needsRefresh = expandGoldReferenceRefresh(input.assets, initiallyNeedsRefresh);
 
@@ -176,6 +183,12 @@ export class MarketDataService {
 
 function buildRefreshKey(baseCurrency: string, assets: MarketDataAsset[]) {
   return `${baseCurrency.toUpperCase()}:${assets.map((asset) => asset.id).sort().join(",")}`;
+}
+
+function isSameUtcDay(left: Date, right: Date) {
+  return left.getUTCFullYear() === right.getUTCFullYear()
+    && left.getUTCMonth() === right.getUTCMonth()
+    && left.getUTCDate() === right.getUTCDate();
 }
 
 function buildSnapshot(

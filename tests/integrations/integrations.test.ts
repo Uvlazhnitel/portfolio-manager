@@ -8,7 +8,7 @@ import {
 } from "@/features/integrations/crypto";
 import { getIntegrationSettingsReadModel } from "@/features/integrations/read-model";
 import { IntegrationSettingsRepository, type IntegrationSettingsStore } from "@/features/integrations/repository";
-import { IntegrationSettingsService, resolveOpenAIConfiguration, resolveTwelveDataApiKey } from "@/features/integrations/service";
+import { IntegrationSettingsService, resolveAlphaVantageApiKey, resolveOpenAIConfiguration, resolveTwelveDataApiKey } from "@/features/integrations/service";
 import { testIntegrationConnection } from "@/features/integrations/test-connection";
 import { apiKeySchema, saveIntegrationSettingSchema } from "@/features/integrations/validation";
 import { IntegrationProvider } from "@/lib/domain/enums";
@@ -63,6 +63,7 @@ describe("integration runtime configuration", () => {
   it("falls back to environment, public CoinGecko, and the default OpenAI model", async () => {
     const environmentService = new IntegrationSettingsService(new MemoryIntegrationStore(), {
       OPENAI_API_KEY: "sk-environment-secret",
+      ALPHA_VANTAGE_API_KEY: "alpha-environment-secret",
       TWELVE_DATA_API_KEY: "twelve-environment-secret",
     });
     expect(await environmentService.resolve(IntegrationProvider.OPENAI)).toEqual(expect.objectContaining({
@@ -78,7 +79,12 @@ describe("integration runtime configuration", () => {
       apiKey: "twelve-environment-secret",
       source: "ENVIRONMENT",
     }));
+    expect(await environmentService.resolve(IntegrationProvider.ALPHA_VANTAGE)).toEqual(expect.objectContaining({
+      apiKey: "alpha-environment-secret",
+      source: "ENVIRONMENT",
+    }));
     expect(await resolveTwelveDataApiKey(environmentService)).toBe("twelve-environment-secret");
+    expect(await resolveAlphaVantageApiKey(environmentService)).toBe("alpha-environment-secret");
   });
 
   it("applies replacement and deletion immediately without restarting", async () => {
@@ -124,6 +130,7 @@ describe("integration runtime configuration", () => {
     expect(apiKeySchema.safeParse("contains whitespace").success).toBe(false);
     expect(apiKeySchema.safeParse(`valid-${"x".repeat(600)}`).success).toBe(false);
     expect(saveIntegrationSettingSchema.safeParse({ provider: IntegrationProvider.COINGECKO, apiKey: "" }).success).toBe(false);
+    expect(saveIntegrationSettingSchema.safeParse({ provider: IntegrationProvider.ALPHA_VANTAGE, apiKey: "" }).success).toBe(false);
     expect(saveIntegrationSettingSchema.safeParse({ provider: IntegrationProvider.TWELVE_DATA, apiKey: "" }).success).toBe(false);
     await expect(new IntegrationSettingsService(new MemoryIntegrationStore(), {}).save({
       provider: IntegrationProvider.OPENAI,
@@ -151,6 +158,18 @@ describe("integration runtime configuration", () => {
 
     expect(result.message).toContain("VWCE/XETR");
     expect(probe).toHaveBeenCalledWith("twelve-environment-secret");
+    expect(store.writeCount).toBe(0);
+  });
+
+  it("tests Alpha Vantage with the configured key through the ETF and FX probe", async () => {
+    const store = new MemoryIntegrationStore();
+    const service = new IntegrationSettingsService(store, { ALPHA_VANTAGE_API_KEY: "alpha-environment-secret" });
+    const probe = vi.fn(async () => undefined);
+
+    const result = await testIntegrationConnection(IntegrationProvider.ALPHA_VANTAGE, { service, testAlphaVantage: probe });
+
+    expect(result.message).toContain("VWCE.DEX");
+    expect(probe).toHaveBeenCalledWith("alpha-environment-secret");
     expect(store.writeCount).toBe(0);
   });
 });

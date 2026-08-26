@@ -65,10 +65,12 @@ enum AssistantMessageRole {
 enum IntegrationProvider {
   OPENAI
   COINGECKO
+  ALPHA_VANTAGE
   TWELVE_DATA
 }
 
 enum AssetQuoteProvider {
+  ALPHA_VANTAGE
   TWELVE_DATA
 }
 

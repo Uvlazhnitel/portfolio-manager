@@ -27,6 +27,7 @@ type IntegrationEnvironment = {
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
   COINGECKO_API_KEY?: string;
+  ALPHA_VANTAGE_API_KEY?: string;
   TWELVE_DATA_API_KEY?: string;
 };
 
@@ -138,9 +139,14 @@ export async function resolveTwelveDataApiKey(service = new IntegrationSettingsS
   return (await service.resolve(IntegrationProvider.TWELVE_DATA)).apiKey ?? undefined;
 }
 
+export async function resolveAlphaVantageApiKey(service = new IntegrationSettingsService()) {
+  return (await service.resolve(IntegrationProvider.ALPHA_VANTAGE)).apiKey ?? undefined;
+}
+
 function environmentApiKey(provider: IntegrationProviderName, environment: IntegrationEnvironment) {
   if (provider === IntegrationProvider.OPENAI) return environment.OPENAI_API_KEY?.trim();
   if (provider === IntegrationProvider.COINGECKO) return environment.COINGECKO_API_KEY?.trim();
+  if (provider === IntegrationProvider.ALPHA_VANTAGE) return environment.ALPHA_VANTAGE_API_KEY?.trim();
   return environment.TWELVE_DATA_API_KEY?.trim();
 }
 

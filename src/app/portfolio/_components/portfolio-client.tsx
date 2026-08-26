@@ -230,7 +230,7 @@ function AddAssetDialog({ portfolio, onClose }: PortfolioClientProps & { onClose
           </div>
 
           <div className="min-h-52 space-y-2">
-            {isSearchPending ? <p className="px-2 py-4 text-sm text-muted">Searching {catalogKind === "ETF" ? "Twelve Data" : "CoinGecko"}…</p> : null}
+            {isSearchPending ? <p className="px-2 py-4 text-sm text-muted">Searching {catalogKind === "ETF" ? "Alpha Vantage" : "CoinGecko"}…</p> : null}
             {!isSearchPending && results.length === 0 ? (
               <p className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">No matching assets found.</p>
             ) : null}
@@ -246,9 +246,9 @@ function AddAssetDialog({ portfolio, onClose }: PortfolioClientProps & { onClose
               Data provided by <a href="https://www.coingecko.com/en/api" target="_blank" rel="noreferrer" className="text-primary hover:underline">CoinGecko</a>
             </p>
           ) : null}
-          {remoteResults?.some((asset) => asset.source === "TWELVE_DATA") ? (
+          {remoteResults?.some((asset) => asset.source === "TWELVE_DATA" || asset.source === "ALPHA_VANTAGE") ? (
             <p className="text-xs text-muted">
-              Market listings provided by <a href="https://twelvedata.com" target="_blank" rel="noreferrer" className="text-primary hover:underline">Twelve Data</a>
+              ETF listings provided by <a href="https://www.alphavantage.co" target="_blank" rel="noreferrer" className="text-primary hover:underline">Alpha Vantage</a>
             </p>
           ) : null}
 
@@ -338,14 +338,14 @@ function PositionForm({
         </>
       ) : null}
 
-      {asset?.source === "TWELVE_DATA" ? (
+      {asset?.source === "TWELVE_DATA" || asset?.source === "ALPHA_VANTAGE" ? (
         <>
           <input type="hidden" name="newAssetClass" value="ETF" />
           <input type="hidden" name="newAssetType" value="ETF" />
         </>
       ) : null}
 
-      {asset?.source === "TWELVE_DATA" && asset.existingAssetId ? (
+      {(asset?.source === "TWELVE_DATA" || asset?.source === "ALPHA_VANTAGE") && asset.existingAssetId ? (
         <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted">{asset.quoteSymbol} · {asset.quoteMicCode} · {asset.currency}</p>
           <Button type="submit" formAction={linkAction} variant="secondary" disabled={isLinking}>

@@ -1,7 +1,7 @@
 import "server-only";
 
+import { AlphaVantageAssetCatalogProvider } from "@/features/asset-catalog/providers/alpha-vantage";
 import { CoinGeckoAssetCatalogProvider } from "@/features/asset-catalog/providers/coingecko";
-import { TwelveDataAssetCatalogProvider } from "@/features/asset-catalog/providers/twelve-data";
 import type { AssetCatalogKind, AssetCatalogProvider, AssetCatalogResult, AssetCatalogSearchResult } from "@/features/asset-catalog/types";
 import { PortfolioRepository } from "@/features/portfolio/repository";
 
@@ -19,7 +19,7 @@ export class AssetCatalogService {
     private readonly store: CatalogStore = new PortfolioRepository(),
     private readonly providers: Record<AssetCatalogKind, AssetCatalogProvider> = {
       CRYPTO: new CoinGeckoAssetCatalogProvider(),
-      ETF: new TwelveDataAssetCatalogProvider(),
+      ETF: new AlphaVantageAssetCatalogProvider(),
     },
   ) {}
 
@@ -98,7 +98,7 @@ function mergeResults(local: AssetCatalogResult[], remote: AssetCatalogResult[],
     const candidateQuoteIdentity = quoteIdentity(candidate);
     const byQuoteIdentity = candidateQuoteIdentity ? existingByQuoteIdentity.get(candidateQuoteIdentity) : undefined;
     const bySymbol = existingBySymbol.get(candidate.symbol.toUpperCase());
-    const remappableEtf = candidate.source === "TWELVE_DATA" && bySymbol?.assetType === "ETF" ? bySymbol : undefined;
+    const remappableEtf = (candidate.source === "TWELVE_DATA" || candidate.source === "ALPHA_VANTAGE") && bySymbol?.assetType === "ETF" ? bySymbol : undefined;
     const exactExisting = byExternalId ?? byQuoteIdentity;
     if (exactExisting && localIds.has(exactExisting.id)) continue;
     merged.push({

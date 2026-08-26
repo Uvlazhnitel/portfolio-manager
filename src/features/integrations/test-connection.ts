@@ -10,6 +10,7 @@ type ConnectionDependencies = {
   service?: IntegrationSettingsService;
   testOpenAI?: (apiKey: string, model: string) => Promise<void>;
   testCoinGecko?: (apiKey: string | null) => Promise<void>;
+  testAlphaVantage?: (apiKey: string) => Promise<void>;
   testTwelveData?: (apiKey: string) => Promise<void>;
 };
 
@@ -51,6 +52,19 @@ export async function testIntegrationConnection(
     } catch (error) {
       if (error instanceof IntegrationConnectionError) throw error;
       throw new IntegrationConnectionError("Twelve Data connection failed. Verify the API key and Grow access to Xetra.");
+    }
+  }
+
+  if (provider === IntegrationProvider.ALPHA_VANTAGE) {
+    if (!configuration.apiKey) {
+      throw new IntegrationConnectionError(configuration.error ?? "Alpha Vantage API key is not configured.");
+    }
+    try {
+      await (dependencies.testAlphaVantage ?? probeAlphaVantage)(configuration.apiKey);
+      return { message: "Alpha Vantage connection succeeded for VWCE.DEX and EUR/USD." };
+    } catch (error) {
+      if (error instanceof IntegrationConnectionError) throw error;
+      throw new IntegrationConnectionError("Alpha Vantage connection failed. Verify the API key, daily quota, and VWCE.DEX availability.");
     }
   }
 
@@ -107,4 +121,47 @@ async function probeTwelveData(apiKey: string) {
   }
   z.object({ symbol: z.literal("VWCE"), mic_code: z.literal("XETR"), currency: z.literal("EUR"), close: z.string().regex(/^\d+(?:\.\d+)?$/) }).parse(quotePayload);
   z.object({ symbol: z.literal("EUR/USD"), rate: z.number().positive(), timestamp: z.number().int().positive() }).parse(fxPayload);
+}
+
+async function probeAlphaVantage(apiKey: string) {
+  const daily = new URL("https://www.alphavantage.co/query");
+  daily.searchParams.set("function", "TIME_SERIES_DAILY");
+  daily.searchParams.set("symbol", "VWCE.DEX");
+  daily.searchParams.set("outputsize", "compact");
+  daily.searchParams.set("apikey", apiKey);
+  const fx = new URL("https://www.alphavantage.co/query");
+  fx.searchParams.set("function", "CURRENCY_EXCHANGE_RATE");
+  fx.searchParams.set("from_currency", "EUR");
+  fx.searchParams.set("to_currency", "USD");
+  fx.searchParams.set("apikey", apiKey);
+
+  const [dailyResponse, fxResponse] = await Promise.all([
+    fetch(daily, { cache: "no-store", signal: AbortSignal.timeout(8_000) }),
+    fetch(fx, { cache: "no-store", signal: AbortSignal.timeout(8_000) }),
+  ]);
+  if (!dailyResponse.ok || !fxResponse.ok) throw new Error("Alpha Vantage request failed.");
+
+  const problemSchema = z.union([
+    z.object({ "Error Message": z.string().min(1) }),
+    z.object({ Note: z.string().min(1) }),
+    z.object({ Information: z.string().min(1) }),
+  ]);
+  const dailyPayload: unknown = await dailyResponse.json();
+  const fxPayload: unknown = await fxResponse.json();
+  if (problemSchema.safeParse(dailyPayload).success || problemSchema.safeParse(fxPayload).success) {
+    throw new Error("Alpha Vantage rejected or throttled the request.");
+  }
+
+  const series = z.object({
+    "Meta Data": z.object({ "2. Symbol": z.literal("VWCE.DEX") }),
+    "Time Series (Daily)": z.record(z.string(), z.object({ "4. close": z.string().regex(/^\d+(?:\.\d+)?$/) })),
+  }).parse(dailyPayload)["Time Series (Daily)"];
+  if (Object.keys(series).length === 0) throw new Error("Alpha Vantage returned no VWCE.DEX prices.");
+  z.object({
+    "Realtime Currency Exchange Rate": z.object({
+      "1. From_Currency Code": z.literal("EUR"),
+      "3. To_Currency Code": z.literal("USD"),
+      "5. Exchange Rate": z.string().regex(/^\d+(?:\.\d+)?$/),
+    }),
+  }).parse(fxPayload);
 }

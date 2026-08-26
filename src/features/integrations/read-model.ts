@@ -6,15 +6,16 @@ import { IntegrationProvider } from "@/lib/domain/enums";
 export async function getIntegrationSettingsReadModel(
   service = new IntegrationSettingsService(),
 ) {
-  const [openAI, coinGecko, twelveData] = await Promise.all([
+  const [openAI, coinGecko, alphaVantage, twelveData] = await Promise.all([
     service.status(IntegrationProvider.OPENAI),
     service.status(IntegrationProvider.COINGECKO),
+    service.status(IntegrationProvider.ALPHA_VANTAGE),
     service.status(IntegrationProvider.TWELVE_DATA),
   ]);
 
   return {
     encryptionAvailable: service.encryptionAvailable(),
-    integrations: [openAI, coinGecko, twelveData].map((integration) => ({
+    integrations: [openAI, coinGecko, alphaVantage, twelveData].map((integration) => ({
       ...integration,
       updatedAt: integration.updatedAt?.toISOString() ?? null,
     })),

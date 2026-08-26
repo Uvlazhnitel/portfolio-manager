@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { searchAssetsAction } from "@/features/asset-catalog/actions";
+import { AlphaVantageAssetCatalogProvider } from "@/features/asset-catalog/providers/alpha-vantage";
 import { CoinGeckoAssetCatalogProvider } from "@/features/asset-catalog/providers/coingecko";
 import { TwelveDataAssetCatalogProvider } from "@/features/asset-catalog/providers/twelve-data";
 import { AssetCatalogService, resetAssetCatalogRuntimeCacheForTests } from "@/features/asset-catalog/service";
@@ -94,6 +95,39 @@ describe("Twelve Data asset catalog provider", () => {
   });
 });
 
+describe("Alpha Vantage asset catalog provider", () => {
+  it("returns ETF listings with provider-native symbols and inferred MIC metadata", async () => {
+    const fetcher = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe("/query");
+      expect(url.searchParams.get("function")).toBe("SYMBOL_SEARCH");
+      expect(url.searchParams.get("keywords")).toBe("vwce");
+      expect(url.searchParams.get("apikey")).toBe("alpha-secret");
+      return new Response(JSON.stringify({
+        bestMatches: [
+          { "1. symbol": "VWCE.DEX", "2. name": "Vanguard FTSE All-World UCITS ETF", "3. type": "ETF", "4. region": "Germany", "8. currency": "EUR", "9. matchScore": "0.9" },
+          { "1. symbol": "VWCE.AMS", "2. name": "Vanguard FTSE All-World UCITS ETF", "3. type": "ETF", "4. region": "Netherlands", "8. currency": "EUR", "9. matchScore": "0.8" },
+          { "1. symbol": "VWRL.DEX", "2. name": "Vanguard Equity", "3. type": "Equity", "4. region": "Germany", "8. currency": "EUR", "9. matchScore": "0.2" },
+        ],
+      }), { status: 200 });
+    });
+    const provider = new AlphaVantageAssetCatalogProvider("alpha-secret", fetcher as typeof fetch);
+
+    await expect(provider.search("vwce")).resolves.toEqual([
+      expect.objectContaining({ source: "ALPHA_VANTAGE", symbol: "VWCE", quoteSymbol: "VWCE.DEX", quoteMicCode: "XETR", exchange: "XETR", currency: "EUR", accessPlan: "Free EOD" }),
+      expect.objectContaining({ source: "ALPHA_VANTAGE", symbol: "VWCE", quoteSymbol: "VWCE.AMS", quoteMicCode: "XAMS", exchange: "XAMS", currency: "EUR" }),
+    ]);
+  });
+
+  it("rejects Alpha Vantage rate-limit and malformed search responses", async () => {
+    const limited = new AlphaVantageAssetCatalogProvider("alpha-secret", vi.fn(async () => new Response(JSON.stringify({ Note: "rate limit" }), { status: 200 })) as typeof fetch);
+    await expect(limited.search("vwce")).rejects.toThrow("rejected");
+
+    const malformed = new AlphaVantageAssetCatalogProvider("alpha-secret", vi.fn(async () => new Response(JSON.stringify({ bestMatches: [{ "1. symbol": "VWCE.DEX" }] }), { status: 200 })) as typeof fetch);
+    await expect(malformed.search("vwce")).rejects.toThrow();
+  });
+});
+
 describe("asset catalog service", () => {
   it("puts local assets first and removes a duplicate CoinGecko result", async () => {
     const remoteResult = {
@@ -156,7 +190,7 @@ describe("asset catalog service", () => {
     expect(result.results).toEqual([]);
   });
 
-  it("keeps a local ETF and exposes another Twelve Data listing as a remap", async () => {
+  it("keeps a local ETF and exposes another Alpha Vantage listing as a remap", async () => {
     const localVwce = {
       ...localBtc,
       id: "vwce-local",
@@ -166,20 +200,20 @@ describe("asset catalog service", () => {
       assetType: "ETF",
       currency: "EUR",
       externalId: null,
-      quoteProvider: "TWELVE_DATA",
-      quoteSymbol: "VWCE",
+      quoteProvider: "ALPHA_VANTAGE",
+      quoteSymbol: "VWCE.DEX",
       quoteMicCode: "XETR",
     } as const;
-    const xetr = twelveDataResult("XETR", "XETR");
-    const amsterdam = twelveDataResult("XAMS", "Euronext");
-    const provider: AssetCatalogProvider = { name: "TWELVE_DATA", search: vi.fn(async () => [xetr, amsterdam]) };
+    const xetr = alphaVantageResult("VWCE.DEX", "XETR");
+    const amsterdam = alphaVantageResult("VWCE.AMS", "XAMS");
+    const provider: AssetCatalogProvider = { name: "ALPHA_VANTAGE", search: vi.fn(async () => [xetr, amsterdam]) };
     const service = new AssetCatalogService({ listAssets: async () => [localVwce] } as never, providers(provider));
 
     const result = await service.search("vwce", "ETF");
 
     expect(result.results).toHaveLength(2);
     expect(result.results[0]).toMatchObject({ source: "LOCAL", quoteMicCode: "XETR" });
-    expect(result.results[1]).toMatchObject({ source: "TWELVE_DATA", quoteMicCode: "XAMS", existingAssetId: "vwce-local", isSymbolConflict: false });
+    expect(result.results[1]).toMatchObject({ source: "ALPHA_VANTAGE", quoteMicCode: "XAMS", existingAssetId: "vwce-local", isSymbolConflict: false });
   });
 });
 
@@ -187,9 +221,9 @@ function providers(provider: AssetCatalogProvider) {
   return { CRYPTO: provider, ETF: provider };
 }
 
-function twelveDataResult(mic: string, exchange: string) {
+function alphaVantageResult(quoteSymbol: string, mic: string) {
   return {
-    source: "TWELVE_DATA",
+    source: "ALPHA_VANTAGE",
     externalId: null,
     symbol: "VWCE",
     name: "Vanguard FTSE All-World UCITS ETF",
@@ -199,12 +233,12 @@ function twelveDataResult(mic: string, exchange: string) {
     assetClass: "ETF",
     assetType: "ETF",
     currency: "EUR",
-    quoteProvider: "TWELVE_DATA",
-    quoteSymbol: "VWCE",
+    quoteProvider: "ALPHA_VANTAGE",
+    quoteSymbol,
     quoteMicCode: mic,
-    exchange,
+    exchange: mic,
     country: "Germany",
-    accessPlan: "Grow",
+    accessPlan: "Free EOD",
     isSymbolConflict: false,
   } as const;
 }

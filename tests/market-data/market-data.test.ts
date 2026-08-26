@@ -12,6 +12,7 @@ import {
 import { BaseCurrencyMarketDataProvider } from "@/features/market-data/providers/base-currency";
 import { CoinGeckoMarketDataProvider } from "@/features/market-data/providers/coingecko";
 import { ManualMarketDataProvider, normalizeManualPrice } from "@/features/market-data/providers/manual";
+import { AlphaVantageMarketDataProvider } from "@/features/market-data/providers/alpha-vantage";
 import { TwelveDataMarketDataProvider } from "@/features/market-data/providers/twelve-data";
 import type { MarketDataStore } from "@/features/market-data/repository";
 import {
@@ -65,6 +66,11 @@ const vwce: MarketDataAsset = {
   quoteProvider: AssetQuoteProvider.TWELVE_DATA,
   quoteSymbol: "VWCE",
   quoteMicCode: "XETR",
+};
+const alphaVwce: MarketDataAsset = {
+  ...vwce,
+  quoteProvider: AssetQuoteProvider.ALPHA_VANTAGE,
+  quoteSymbol: "VWCE.DEX",
 };
 
 beforeEach(() => resetMarketDataRuntimeCacheForTests());
@@ -173,6 +179,62 @@ describe("market data providers", () => {
     expect(requestedUrls.filter((url) => url.pathname === "/exchange_rate")).toHaveLength(1);
   });
 
+  it("converts Alpha Vantage ETF daily close to USD and deduplicates FX requests", async () => {
+    const iwda = { ...alphaVwce, id: "iwda-id", symbol: "IWDA", name: "iShares Core MSCI World", quoteSymbol: "IWDA.AMS", quoteMicCode: "XAMS" };
+    const requestedUrls: URL[] = [];
+    const fetcher = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      requestedUrls.push(url);
+      expect(url.searchParams.get("apikey")).toBe("alpha-secret");
+      if (url.searchParams.get("function") === "TIME_SERIES_DAILY") {
+        const symbol = url.searchParams.get("symbol") ?? "";
+        return new Response(JSON.stringify({
+          "Meta Data": { "2. Symbol": symbol },
+          "Time Series (Daily)": {
+            "2026-08-24": { "4. close": symbol === "VWCE.DEX" ? "120.5" : "95" },
+            "2026-08-23": { "4. close": "1" },
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        "Realtime Currency Exchange Rate": {
+          "1. From_Currency Code": "EUR",
+          "3. To_Currency Code": "USD",
+          "5. Exchange Rate": "1.17",
+          "6. Last Refreshed": "2026-08-24 20:00:00",
+        },
+      }), { status: 200 });
+    });
+    const provider = new AlphaVantageMarketDataProvider("alpha-secret", fetcher as typeof fetch);
+
+    const prices = await provider.getCurrentPrices({ assets: [alphaVwce, iwda], baseCurrency: "USD" });
+
+    expect(prices).toEqual([
+      expect.objectContaining({ assetId: "vwce-id", price: "140.985", currency: "USD", source: "ALPHA_VANTAGE", timestamp: new Date("2026-08-24T20:00:00.000Z") }),
+      expect.objectContaining({ assetId: "iwda-id", price: "111.15", currency: "USD", source: "ALPHA_VANTAGE", timestamp: new Date("2026-08-24T20:00:00.000Z") }),
+    ]);
+    expect(requestedUrls.filter((url) => url.searchParams.get("function") === "TIME_SERIES_DAILY")).toHaveLength(2);
+    expect(requestedUrls.filter((url) => url.searchParams.get("function") === "CURRENCY_EXCHANGE_RATE")).toHaveLength(1);
+  });
+
+  it("rejects Alpha Vantage rate limits and malformed daily responses", async () => {
+    const limited = new AlphaVantageMarketDataProvider("alpha-secret", vi.fn(async () => new Response(JSON.stringify({ Note: "rate limit" }), { status: 200 })) as typeof fetch);
+    await expect(limited.getCurrentPrices({ assets: [alphaVwce], baseCurrency: "USD" })).rejects.toThrow("rejected");
+
+    const malformed = new AlphaVantageMarketDataProvider("alpha-secret", vi.fn(async () => new Response(JSON.stringify({
+      "Meta Data": { "2. Symbol": "VWCE.DEX" },
+      "Time Series (Daily)": { "2026-08-24": { "4. close": 120.5 } },
+    }), { status: 200 })) as typeof fetch);
+    await expect(malformed.getCurrentPrices({ assets: [alphaVwce], baseCurrency: "USD" })).rejects.toThrow();
+  });
+
+  it("does not call Alpha Vantage until a key is configured", async () => {
+    const fetcher = vi.fn();
+    const provider = new AlphaVantageMarketDataProvider(async () => undefined, fetcher as typeof fetch);
+    await expect(provider.getCurrentPrices({ assets: [alphaVwce], baseCurrency: "USD" })).resolves.toEqual([]);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("rejects Twelve Data plan errors and malformed listing responses", async () => {
     const planRestricted = new TwelveDataMarketDataProvider("twelve-secret", vi.fn(async () => new Response(JSON.stringify({ status: "error", code: 401, message: "Grow plan required" }), { status: 200 })) as typeof fetch);
     await expect(planRestricted.getCurrentPrices({ assets: [vwce], baseCurrency: "USD" })).rejects.toThrow("rejected");
@@ -229,6 +291,29 @@ describe("market data cache service", () => {
     expect(provider.getCurrentPrices).not.toHaveBeenCalled();
     expect(snapshot.prices[0].price).toBe("60000");
     expect(snapshot.hasStalePrices).toBe(false);
+  });
+
+  it("reuses same-day Alpha Vantage ETF cache instead of refreshing every five minutes", async () => {
+    const oldSameDay = new Date("2026-08-24T08:00:00.000Z");
+    const store = new FakeStore([cachedPrice({
+      assetId: alphaVwce.id,
+      fetchedAt: oldSameDay,
+      timestamp: oldSameDay,
+      source: "ALPHA_VANTAGE",
+      price: "140",
+    })]);
+    const provider = providerReturning([{
+      assetId: alphaVwce.id,
+      symbol: alphaVwce.symbol,
+      price: "150",
+      currency: "USD",
+      timestamp: now,
+      source: "ALPHA_VANTAGE",
+    }]);
+    const snapshot = await new MarketDataService(store, [provider]).getCurrentPrices({ assets: [alphaVwce], now });
+
+    expect(provider.getCurrentPrices).not.toHaveBeenCalled();
+    expect(snapshot.prices[0].price).toBe("140");
   });
 
   it("refreshes expired cache and persists normalized provider data", async () => {
@@ -363,10 +448,10 @@ describe("market data cache service", () => {
     expect(snapshot.unavailableAssetIds).toContain(xaut.id);
   });
 
-  it("falls back to a manual ETF price when Twelve Data is unavailable", async () => {
+  it("falls back to a manual ETF price when automatic ETF data is unavailable", async () => {
     const store = new FakeStore([]);
     const failure: MarketDataProvider = {
-      name: "TWELVE_DATA",
+      name: "ALPHA_VANTAGE",
       getCurrentPrices: vi.fn(async () => { throw new Error("Grow access unavailable"); }),
     };
     const manual: MarketDataProvider = {
@@ -381,10 +466,10 @@ describe("market data cache service", () => {
       }))),
     };
 
-    const snapshot = await new MarketDataService(store, [failure, manual]).getCurrentPrices({ assets: [vwce], now });
+    const snapshot = await new MarketDataService(store, [failure, manual]).getCurrentPrices({ assets: [alphaVwce], now });
 
-    expect(snapshot.prices).toEqual([expect.objectContaining({ assetId: vwce.id, price: "140", source: "MANUAL" })]);
-    expect(snapshot.warning).toContain("TWELVE_DATA");
+    expect(snapshot.prices).toEqual([expect.objectContaining({ assetId: alphaVwce.id, price: "140", source: "MANUAL" })]);
+    expect(snapshot.warning).toContain("ALPHA_VANTAGE");
   });
 
   it("does not coalesce concurrent refreshes for different asset sets", async () => {

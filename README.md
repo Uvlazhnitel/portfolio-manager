@@ -8,8 +8,8 @@ Single-user investment portfolio manager and decision-support copilot. The MVP f
 - Holdings derived from transactions and initial balances; no manually editable Holding source of truth.
 - Deterministic Portfolio Engine for holdings, valuation, allocation, strategy compliance, P&L availability, contribution planning, and assistant transaction checks.
 - Editable class and nested asset targets/ranges with exact 100% validation at both levels.
-- CoinGecko pricing for crypto and XAUT-referenced physical gold, plus Twelve Data exchange-listing search and automatic ETF quotes with USD conversion.
-- Encrypted in-app API-key management for OpenAI, CoinGecko, and Twelve Data with environment fallbacks.
+- CoinGecko pricing for crypto and XAUT-referenced physical gold, plus Alpha Vantage ETF search and automatic daily ETF quotes with USD conversion.
+- Encrypted in-app API-key management for OpenAI, CoinGecko, Alpha Vantage, and Twelve Data with environment fallbacks.
 - Portfolio, Dashboard, Strategy, Contribution Planner, Settings, and read-only AI Assistant screens.
 - Historical Performance with daily portfolio value, net contributed capital, investment gain, and simple return.
 - OpenAI Responses API assistant with compact trusted portfolio context and deterministic read-only tools.
@@ -35,7 +35,7 @@ Transactions and initial balances are the portfolio source of truth. Per-holding
 
 USD is the single MVP base currency. Transaction monetary values are stored in the currency recorded at entry and are never silently converted. USD cash is valued one-to-one; USDT is priced through CoinGecko. To hold EUR cash in a USD portfolio, configure a manual USD price per EUR unit in Settings. Physical gold is entered and displayed in troy ounces (`oz`, up to four decimal places), follows the CoinGecko XAUT price per troy ounce, and remains gram-normalized inside the deterministic engine. Manual gold quotes are fallback-only when XAUT and its cached price are unavailable.
 
-ETF assets can be searched as exchange-specific Twelve Data listings. The selected ticker, MIC, and native currency identify the quote; native prices such as VWCE on Xetra in EUR are converted to USD through Twelve Data FX rates before entering the shared cache and daily history. Xetra access requires a Twelve Data Grow plan. Cached or manual ETF prices remain available when the provider is temporarily unavailable.
+ETF assets can be searched through Alpha Vantage global listings. The selected provider symbol, MIC metadata, and native currency identify the quote; native prices such as VWCE on Xetra in EUR are converted to USD through Alpha Vantage FX rates before entering the shared cache and daily history. Alpha Vantage ETF data is treated as daily/end-of-day data and cached conservatively to stay within free-tier limits. Twelve Data remains available as an optional paid exchange quote provider. Cached or manual ETF prices remain available when the provider is temporarily unavailable.
 
 The Portfolio screen supports chronological current balances, trades, transfers, and external cashflows. Enter older transactions first. A sale, withdrawal, or transfer is checked against the selected account balance as of its historical date.
 
@@ -100,6 +100,7 @@ Open [http://localhost:3000](http://localhost:3000). `/` redirects to `/dashboar
 - `TEST_DATABASE_URL` — PostgreSQL maintenance connection used only by integration tests.
 - `APP_ENCRYPTION_KEY` — base64-encoded 32-byte server secret used to encrypt API keys stored through Settings.
 - `COINGECKO_API_KEY` — optional server-side fallback; the public CoinGecko API is used when no DB or environment key exists.
+- `ALPHA_VANTAGE_API_KEY` — optional server-side fallback for free ETF listing search, daily quotes, and FX conversion.
 - `TWELVE_DATA_API_KEY` — optional server-side fallback for ETF listing search, quotes, and FX conversion; Xetra requires Grow access.
 - `OPENAI_API_KEY` — optional server-side fallback. Without a DB or environment key, `/assistant` shows a setup state.
 - `OPENAI_MODEL` — optional model fallback; defaults server-side to `gpt-5-mini`.
@@ -110,7 +111,7 @@ Generate the encryption key once and place it in `.env` without printing it in a
 openssl rand -base64 32
 ```
 
-After `APP_ENCRYPTION_KEY` is configured, OpenAI, CoinGecko, and Twelve Data keys can be saved, replaced, tested, or deleted from `/settings` without restarting the app. Database credentials override environment credentials; deleting a database key restores the environment/public fallback. The browser receives only the credential source and final four characters, never the complete key.
+After `APP_ENCRYPTION_KEY` is configured, OpenAI, CoinGecko, Alpha Vantage, and Twelve Data keys can be saved, replaced, tested, or deleted from `/settings` without restarting the app. Database credentials override environment credentials; deleting a database key restores the environment/public fallback. The browser receives only the credential source and final four characters, never the complete key.
 
 Never prefix API keys with `NEXT_PUBLIC_` and never commit `.env`.
 

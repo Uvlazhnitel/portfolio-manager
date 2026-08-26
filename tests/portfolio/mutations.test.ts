@@ -116,7 +116,7 @@ describe("portfolio mutations", () => {
     expect(await testDb.prisma.transaction.count({ where: { assetId: existing.id, quantity: "5" } })).toBe(1);
   });
 
-  it("persists a selected Twelve Data listing when creating an ETF", async () => {
+  it("persists a selected Alpha Vantage listing when creating an ETF", async () => {
     const account = await testDb.prisma.account.create({ data: { name: "ETF Broker", type: AccountType.BROKER } });
 
     await createTransactionMutation({
@@ -129,8 +129,8 @@ describe("portfolio mutations", () => {
         assetClass: AssetClass.ETF,
         assetType: AssetType.ETF,
         currency: "EUR",
-        quoteProvider: AssetQuoteProvider.TWELVE_DATA,
-        quoteSymbol: "IWDA",
+        quoteProvider: AssetQuoteProvider.ALPHA_VANTAGE,
+        quoteSymbol: "IWDA.AMS",
         quoteMicCode: "XAMS",
       },
       quantity: "2",
@@ -141,8 +141,8 @@ describe("portfolio mutations", () => {
 
     await expect(testDb.prisma.asset.findUniqueOrThrow({ where: { symbol: "IWDA" } })).resolves.toMatchObject({
       currency: "EUR",
-      quoteProvider: AssetQuoteProvider.TWELVE_DATA,
-      quoteSymbol: "IWDA",
+      quoteProvider: AssetQuoteProvider.ALPHA_VANTAGE,
+      quoteSymbol: "IWDA.AMS",
       quoteMicCode: "XAMS",
     });
   });
@@ -158,14 +158,14 @@ describe("portfolio mutations", () => {
     await linkAssetQuoteMutation({
       assetId: etf.id,
       currency: "EUR",
-      quoteProvider: AssetQuoteProvider.TWELVE_DATA,
-      quoteSymbol: "SXR8",
+      quoteProvider: AssetQuoteProvider.ALPHA_VANTAGE,
+      quoteSymbol: "SXR8.DEX",
       quoteMicCode: "XETR",
     }, testDb.prisma);
 
     await expect(testDb.prisma.asset.findUniqueOrThrow({ where: { id: etf.id } })).resolves.toMatchObject({
       currency: "EUR",
-      quoteSymbol: "SXR8",
+      quoteSymbol: "SXR8.DEX",
       quoteMicCode: "XETR",
     });
     expect(await testDb.prisma.cachedMarketPrice.count({ where: { assetId: etf.id } })).toBe(0);

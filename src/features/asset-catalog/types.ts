@@ -1,4 +1,4 @@
-export type AssetCatalogSource = "LOCAL" | "COINGECKO" | "TWELVE_DATA";
+export type AssetCatalogSource = "LOCAL" | "COINGECKO" | "ALPHA_VANTAGE" | "TWELVE_DATA";
 export type AssetCatalogKind = "CRYPTO" | "ETF";
 
 export type AssetCatalogResult = {
@@ -12,7 +12,7 @@ export type AssetCatalogResult = {
   assetClass: "ETF" | "CRYPTO" | "GOLD" | "CASH" | "OTHER";
   assetType: "CRYPTO" | "ETF" | "PHYSICAL_GOLD" | "TOKENIZED_GOLD" | "FIAT" | "STABLECOIN" | "OTHER";
   currency: string;
-  quoteProvider: "TWELVE_DATA" | null;
+  quoteProvider: "ALPHA_VANTAGE" | "TWELVE_DATA" | null;
   quoteSymbol: string | null;
   quoteMicCode: string | null;
   exchange: string | null;

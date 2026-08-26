@@ -36,7 +36,7 @@ export function IntegrationSettings({ model }: { model: IntegrationSettingsReadM
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-4">
         {model.integrations.map((integration) => (
           <IntegrationCard key={integration.provider} integration={integration} />
         ))}
@@ -154,12 +154,14 @@ function ActionMessage({ state, className }: { state: { ok: boolean; message: st
 function providerDescription(provider: IntegrationProviderName) {
   if (provider === IntegrationProvider.OPENAI) return "Portfolio decision-support assistant";
   if (provider === IntegrationProvider.COINGECKO) return "Crypto market prices";
-  return "ETF listings and market prices";
+  if (provider === IntegrationProvider.ALPHA_VANTAGE) return "Free ETF daily prices";
+  return "Paid ETF exchange quotes";
 }
 
 function providerName(provider: IntegrationProviderName) {
   if (provider === IntegrationProvider.OPENAI) return "OpenAI";
   if (provider === IntegrationProvider.COINGECKO) return "CoinGecko";
+  if (provider === IntegrationProvider.ALPHA_VANTAGE) return "Alpha Vantage";
   return "Twelve Data";
 }
 
