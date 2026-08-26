@@ -155,6 +155,20 @@ export type CalculateHistoricalPerformanceInput = {
   snapshots: HistoricalMarketSnapshot[];
 };
 
+export type CalculateTrackedPerformanceInput = {
+  assets: EngineAsset[];
+  transactions: EngineTransaction[];
+  baseCurrency: string;
+  openingSnapshot: HistoricalMarketSnapshot;
+  currentMarketPrices: MarketPrices;
+};
+
+export type TrackedPerformanceSummary = {
+  netContributed: string | null;
+  investmentGain: string | null;
+  simpleReturnPercent: string | null;
+};
+
 export type HoldingCostBasisReason =
   | "NON_POSITIVE_HOLDING"
   | "MISSING_ACQUISITION_PRICE"

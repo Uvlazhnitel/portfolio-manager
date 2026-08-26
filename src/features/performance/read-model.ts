@@ -2,6 +2,8 @@ import {
   calculateHistoricalPerformance,
   calculatePortfolio,
   calculatePortfolioAnalytics,
+  calculateTrackedPerformance,
+  type HistoricalMarketSnapshot,
   type PortfolioPerformancePoint,
 } from "@/features/portfolio-engine";
 import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/service";
@@ -69,12 +71,28 @@ export async function getPerformanceReadModel({
     snapshotsByDate.set(date, snapshot);
   }
 
+  const snapshots: HistoricalMarketSnapshot[] = [...snapshotsByDate.entries()]
+    .map(([date, snapshot]) => ({ date, ...snapshot }))
+    .sort((left, right) => left.date.localeCompare(right.date));
   const history = calculateHistoricalPerformance({
     assets,
     transactions,
     baseCurrency: currency,
-    snapshots: [...snapshotsByDate.entries()].map(([date, snapshot]) => ({ date, ...snapshot })),
+    snapshots,
   });
+  const trackedPerformance = snapshots[0]
+    ? calculateTrackedPerformance({
+        assets,
+        transactions,
+        baseCurrency: currency,
+        openingSnapshot: snapshots[0],
+        currentMarketPrices: toEngineMarketPrices(marketData),
+      })
+    : {
+        netContributed: analytics.netInvested,
+        investmentGain: analytics.investmentGain,
+        simpleReturnPercent: analytics.simpleReturnPercent,
+      };
   const historicalMissingPriceSymbols = [...new Set(
     history.flatMap((point) => point.missingPriceSymbols),
   )].sort();
@@ -83,9 +101,9 @@ export async function getPerformanceReadModel({
     currency,
     summary: {
       portfolioValue: portfolio.totalValue,
-      netContributed: analytics.netInvested,
-      investmentGain: analytics.investmentGain,
-      simpleReturnPercent: analytics.simpleReturnPercent,
+      netContributed: trackedPerformance.netContributed,
+      investmentGain: trackedPerformance.investmentGain,
+      simpleReturnPercent: trackedPerformance.simpleReturnPercent,
       isPartial: portfolio.missingPriceSymbols.length > 0,
       missingPriceSymbols: portfolio.missingPriceSymbols,
       hasStalePrices: marketData.hasStalePrices,

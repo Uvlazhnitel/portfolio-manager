@@ -15,6 +15,7 @@ import type {
   CalculatePortfolioAnalyticsInput,
   CalculateHoldingCostBasisInput,
   CalculateHistoricalPerformanceInput,
+  CalculateTrackedPerformanceInput,
   CalculateStrategyAlignmentInput,
   ContributionAllocation,
   ContributionAssetRecommendation,
@@ -37,6 +38,7 @@ import type {
   SimulateContributionInput,
   StrategyWarning,
   StrategyAlignment,
+  TrackedPerformanceSummary,
   ValuedHolding,
 } from "@/features/portfolio-engine/types";
 
@@ -183,35 +185,48 @@ export function calculateHistoricalPerformance(
   input: CalculateHistoricalPerformanceInput,
 ): PortfolioPerformancePoint[] {
   const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
+  const snapshots = [...input.snapshots].sort((left, right) => left.date.localeCompare(right.date));
+  const openingSnapshot = snapshots[0];
+  if (!openingSnapshot) return [];
+  const trackingStartedAt = startOfUtcDate(openingSnapshot.date);
+  const openingTransactions = transactionsBefore(input.transactions, trackingStartedAt);
+  const openingPortfolio = calculatePortfolio({
+    assets: input.assets,
+    transactions: openingTransactions,
+    marketPrices: openingSnapshot.marketPrices,
+  });
+  const openingValue = openingPortfolio.missingPriceSymbols.length === 0
+    ? decimal(openingPortfolio.totalValue)
+    : null;
 
-  return [...input.snapshots]
-    .sort((left, right) => left.date.localeCompare(right.date))
+  return snapshots
     .map((snapshot) => {
       const dayEnd = Date.parse(`${snapshot.date}T23:59:59.999Z`);
       if (!Number.isFinite(dayEnd)) throw new Error(`Invalid historical snapshot date ${snapshot.date}.`);
-      const transactions = input.transactions.filter((transaction) => {
-        const executedAt = transaction.executedAt ? new Date(transaction.executedAt).getTime() : Number.NEGATIVE_INFINITY;
-        return Number.isFinite(executedAt) && executedAt <= dayEnd;
-      });
+      const transactions = transactionsThrough(input.transactions, dayEnd);
       const portfolio = calculatePortfolio({
         assets: input.assets,
         transactions,
         marketPrices: snapshot.marketPrices,
       });
-      const cashflows = calculateExternalCashflows(transactions, assetById, input.baseCurrency);
+      const trackedTransactions = transactions.filter((transaction) => transactionTimestamp(transaction) >= trackingStartedAt);
+      const cashflows = calculateExternalCashflows(trackedTransactions, assetById, input.baseCurrency);
       const isComplete = portfolio.missingPriceSymbols.length === 0;
       const portfolioValue = isComplete ? decimal(portfolio.totalValue) : null;
-      const investmentGain = portfolioValue && cashflows
-        ? portfolioValue.minus(cashflows.netInvested)
+      const netContributed = openingValue && cashflows
+        ? openingValue.plus(cashflows.netInvested)
         : null;
-      const simpleReturnPercent = investmentGain && cashflows && cashflows.netInvested.greaterThan(ZERO)
-        ? investmentGain.div(cashflows.netInvested).mul(ONE_HUNDRED)
+      const investmentGain = portfolioValue && netContributed
+        ? portfolioValue.minus(netContributed)
+        : null;
+      const simpleReturnPercent = investmentGain && netContributed && netContributed.greaterThan(ZERO)
+        ? investmentGain.div(netContributed).mul(ONE_HUNDRED)
         : null;
 
       return {
         date: snapshot.date,
         portfolioValue: portfolioValue ? toDecimalString(portfolioValue) : null,
-        netContributed: cashflows ? toDecimalString(cashflows.netInvested) : null,
+        netContributed: netContributed ? toDecimalString(netContributed) : null,
         investmentGain: investmentGain ? toDecimalString(investmentGain) : null,
         simpleReturnPercent: simpleReturnPercent ? toDecimalString(simpleReturnPercent) : null,
         isComplete,
@@ -219,6 +234,43 @@ export function calculateHistoricalPerformance(
         hasStalePrices: snapshot.hasStalePrices,
       };
     });
+}
+
+export function calculateTrackedPerformance(
+  input: CalculateTrackedPerformanceInput,
+): TrackedPerformanceSummary {
+  const trackingStartedAt = startOfUtcDate(input.openingSnapshot.date);
+  const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
+  const openingPortfolio = calculatePortfolio({
+    assets: input.assets,
+    transactions: transactionsBefore(input.transactions, trackingStartedAt),
+    marketPrices: input.openingSnapshot.marketPrices,
+  });
+  const currentPortfolio = calculatePortfolio({
+    assets: input.assets,
+    transactions: input.transactions,
+    marketPrices: input.currentMarketPrices,
+  });
+  if (openingPortfolio.missingPriceSymbols.length > 0 || currentPortfolio.missingPriceSymbols.length > 0) {
+    return { netContributed: null, investmentGain: null, simpleReturnPercent: null };
+  }
+  const cashflows = calculateExternalCashflows(
+    input.transactions.filter((transaction) => transactionTimestamp(transaction) >= trackingStartedAt),
+    assetById,
+    input.baseCurrency,
+  );
+  if (!cashflows) return { netContributed: null, investmentGain: null, simpleReturnPercent: null };
+
+  const netContributed = decimal(openingPortfolio.totalValue).plus(cashflows.netInvested);
+  const investmentGain = decimal(currentPortfolio.totalValue).minus(netContributed);
+  const simpleReturnPercent = netContributed.greaterThan(ZERO)
+    ? investmentGain.div(netContributed).mul(ONE_HUNDRED)
+    : null;
+  return {
+    netContributed: toDecimalString(netContributed),
+    investmentGain: toDecimalString(investmentGain),
+    simpleReturnPercent: simpleReturnPercent ? toDecimalString(simpleReturnPercent) : null,
+  };
 }
 
 export function calculateStrategyAlignment(input: CalculateStrategyAlignmentInput): StrategyAlignment {
@@ -1174,6 +1226,26 @@ function calculateExternalCashflows(
 
   const netInvested = externalContributions.minus(externalWithdrawals);
   return { netInvested, externalContributions, externalWithdrawals };
+}
+
+function startOfUtcDate(date: string) {
+  const timestamp = Date.parse(`${date}T00:00:00.000Z`);
+  if (!Number.isFinite(timestamp)) throw new Error(`Invalid historical snapshot date ${date}.`);
+  return timestamp;
+}
+
+function transactionTimestamp(transaction: EngineTransaction) {
+  if (!transaction.executedAt) return Number.NEGATIVE_INFINITY;
+  const timestamp = new Date(transaction.executedAt).getTime();
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+function transactionsBefore(transactions: EngineTransaction[], timestamp: number) {
+  return transactions.filter((transaction) => transactionTimestamp(transaction) < timestamp);
+}
+
+function transactionsThrough(transactions: EngineTransaction[], timestamp: number) {
+  return transactions.filter((transaction) => transactionTimestamp(transaction) <= timestamp);
 }
 
 function transactionTime(transaction: EngineTransaction, fallback: number) {

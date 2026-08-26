@@ -5,7 +5,12 @@ import { captureDailyMarketPrices } from "@/features/performance/capture";
 import { getPerformanceReadModel } from "@/features/performance/read-model";
 import { DailyMarketPriceRepository, type DailyMarketPriceStore } from "@/features/performance/repository";
 import { HISTORY_RETRY_DELAY_MS, millisecondsUntilNextCapture, runHistoryWorker } from "@/features/performance/worker";
-import { calculateHistoricalPerformance, type EngineAsset, type EngineTransaction } from "@/features/portfolio-engine";
+import {
+  calculateHistoricalPerformance,
+  calculateTrackedPerformance,
+  type EngineAsset,
+  type EngineTransaction,
+} from "@/features/portfolio-engine";
 import type { PortfolioRepository } from "@/features/portfolio/repository";
 import type { StrategyRepository } from "@/features/strategy/repository";
 import { createTestDatabase, type TestDatabase } from "../helpers/test-db";
@@ -73,6 +78,41 @@ describe("historical performance engine", () => {
 
     expect(before[0].portfolioValue).toBe("1200.00");
     expect(after[0].portfolioValue).toBe("1320.00");
+  });
+
+  it("uses the first tracked valuation as the opening contribution baseline", () => {
+    const openingTransaction = assetTransaction(
+      "opening-balance",
+      TransactionType.INITIAL_BALANCE,
+      "0.1",
+      "2026-08-25T18:00:00Z",
+    );
+    openingTransaction.pricePerUnit = null;
+    const history = calculateHistoricalPerformance({
+      assets,
+      transactions: [openingTransaction],
+      baseCurrency: "USD",
+      snapshots: [snapshot("2026-08-26", "12000")],
+    });
+    const current = calculateTrackedPerformance({
+      assets,
+      transactions: [openingTransaction],
+      baseCurrency: "USD",
+      openingSnapshot: snapshot("2026-08-26", "12000"),
+      currentMarketPrices: { BTC: "13000", USD: "1" },
+    });
+
+    expect(history[0]).toEqual(expect.objectContaining({
+      portfolioValue: "1200.00",
+      netContributed: "1200.00",
+      investmentGain: "0.00",
+      simpleReturnPercent: "0.00",
+    }));
+    expect(current).toEqual({
+      netContributed: "1200.00",
+      investmentGain: "100.00",
+      simpleReturnPercent: "8.33",
+    });
   });
 });
 
