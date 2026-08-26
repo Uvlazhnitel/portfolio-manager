@@ -28,6 +28,12 @@ export class StrategyService {
           targetPercent: allocation.targetPercent,
           minPercent: allocation.minPercent,
           maxPercent: allocation.maxPercent,
+          assetAllocations: {
+            create: allocation.assetTargets.map((assetTarget) => ({
+              assetId: assetTarget.assetId,
+              targetPercent: assetTarget.targetPercent,
+            })),
+          },
         })),
       },
     });

@@ -10,11 +10,27 @@ import {
 } from "@/features/strategy/validation";
 
 const validAllocations = [
-  { assetClass: AssetClass.ETF, targetPercent: "77", minPercent: "72", maxPercent: "82" },
-  { assetClass: AssetClass.CRYPTO, targetPercent: "12", minPercent: "8", maxPercent: "15" },
-  { assetClass: AssetClass.GOLD, targetPercent: "9", minPercent: "7", maxPercent: "15" },
-  { assetClass: AssetClass.CASH, targetPercent: "2", minPercent: "0", maxPercent: "5" },
+  allocation(AssetClass.ETF, "77", "72", "82", [["etf", "100"]]),
+  allocation(AssetClass.CRYPTO, "12", "8", "15", [["btc", "70"], ["eth", "30"]]),
+  allocation(AssetClass.GOLD, "9", "7", "15", [["gold", "60"], ["xaut", "40"]]),
+  allocation(AssetClass.CASH, "2", "0", "5", [["eur", "50"], ["usdt", "50"]]),
 ];
+
+function allocation(
+  assetClass: AssetClass,
+  targetPercent: string,
+  minPercent: string,
+  maxPercent: string,
+  targets: Array<[string, string]>,
+) {
+  return {
+    assetClass,
+    targetPercent,
+    minPercent,
+    maxPercent,
+    assetTargets: targets.map(([assetId, targetPercent]) => ({ assetId, targetPercent })),
+  };
+}
 
 describe("strategy allocation validation", () => {
   it("accepts allocations that total 100", () => {
@@ -22,18 +38,26 @@ describe("strategy allocation validation", () => {
   });
 
   it("accepts a strategy without CASH", () => {
-    expect(validateStrategyAllocations([
+    const withoutCash = [
       { assetClass: AssetClass.ETF, targetPercent: "78", minPercent: "70", maxPercent: "85" },
       { assetClass: AssetClass.CRYPTO, targetPercent: "12", minPercent: "8", maxPercent: "20" },
       { assetClass: AssetClass.GOLD, targetPercent: "10", minPercent: "5", maxPercent: "15" },
-    ])).toHaveLength(3);
+    ].map((row) => allocation(row.assetClass, row.targetPercent, row.minPercent, row.maxPercent, [[row.assetClass.toLowerCase(), "100"]]));
+
+    expect(validateStrategyAllocations(withoutCash)).toHaveLength(3);
+  });
+
+  it("rejects asset targets that do not total 100 within a class", () => {
+    expect(() => validateStrategyAllocations([
+      { ...validAllocations[0], assetTargets: [{ assetId: "etf", targetPercent: "99" }] },
+    ])).toThrow(StrategyAllocationValidationError);
   });
 
   it("accepts any 3 enabled classes totaling 100", () => {
     expect(validateStrategyAllocations([
-      { assetClass: AssetClass.ETF, targetPercent: "60", minPercent: "50", maxPercent: "70" },
-      { assetClass: AssetClass.GOLD, targetPercent: "25", minPercent: "15", maxPercent: "35" },
-      { assetClass: AssetClass.CASH, targetPercent: "15", minPercent: "0", maxPercent: "25" },
+      allocation(AssetClass.ETF, "60", "50", "70", [["etf", "100"]]),
+      allocation(AssetClass.GOLD, "25", "15", "35", [["gold", "100"]]),
+      allocation(AssetClass.CASH, "15", "0", "25", [["eur", "100"]]),
     ])).toHaveLength(3);
   });
 
@@ -50,17 +74,17 @@ describe("strategy allocation validation", () => {
         { assetClass: AssetClass.CRYPTO, targetPercent: "12", minPercent: "8", maxPercent: "15" },
         { assetClass: AssetClass.GOLD, targetPercent: "9", minPercent: "7", maxPercent: "15" },
         { assetClass: AssetClass.CASH, targetPercent: "2", minPercent: "0", maxPercent: "5" },
-      ]),
+      ].map((row) => allocation(row.assetClass, row.targetPercent, row.minPercent, row.maxPercent, [[row.assetClass.toLowerCase(), "100"]]))),
     ).toThrow(StrategyAllocationValidationError);
   });
 
   it("rejects allocations where target is outside the allowed range", () => {
     expect(() =>
       validateStrategyAllocations([
-        { assetClass: AssetClass.ETF, targetPercent: "77", minPercent: "80", maxPercent: "82" },
-        { assetClass: AssetClass.CRYPTO, targetPercent: "12", minPercent: "8", maxPercent: "15" },
-        { assetClass: AssetClass.GOLD, targetPercent: "9", minPercent: "7", maxPercent: "15" },
-        { assetClass: AssetClass.CASH, targetPercent: "2", minPercent: "0", maxPercent: "5" },
+        allocation(AssetClass.ETF, "77", "80", "82", [["etf", "100"]]),
+        allocation(AssetClass.CRYPTO, "12", "8", "15", [["btc", "100"]]),
+        allocation(AssetClass.GOLD, "9", "7", "15", [["gold", "100"]]),
+        allocation(AssetClass.CASH, "2", "0", "5", [["eur", "100"]]),
       ]),
     ).toThrow(StrategyAllocationValidationError);
   });
@@ -71,7 +95,7 @@ describe("strategy allocation validation", () => {
       { assetClass: AssetClass.CRYPTO, targetPercent: "11.99", minPercent: "8", maxPercent: "15" },
       { assetClass: AssetClass.GOLD, targetPercent: "9", minPercent: "7", maxPercent: "15" },
       { assetClass: AssetClass.CASH, targetPercent: "2", minPercent: "0", maxPercent: "5" },
-    ];
+    ].map((row) => allocation(row.assetClass, row.targetPercent, row.minPercent, row.maxPercent, [[row.assetClass.toLowerCase(), "100"]]));
 
     expect(validateStrategyAllocations(allocations)).toHaveLength(4);
     expect(parsePercentToBasisPoints("77.01")).toBe(7701);
@@ -79,7 +103,7 @@ describe("strategy allocation validation", () => {
 
   it("accepts inclusive 0 and 100 boundaries", () => {
     expect(validateStrategyAllocations([
-      { assetClass: AssetClass.ETF, targetPercent: "100", minPercent: "0", maxPercent: "100" },
+      allocation(AssetClass.ETF, "100", "0", "100", [["etf", "100"]]),
     ])).toHaveLength(1);
   });
 

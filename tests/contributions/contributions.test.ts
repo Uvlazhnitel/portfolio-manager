@@ -12,6 +12,7 @@ import { createTestDatabase, type TestDatabase } from "../helpers/test-db";
 let testDb: TestDatabase;
 let strategyId: string;
 let marketDataService: MarketDataService;
+let targetAssets: Record<AssetClass, string>;
 
 const savedAllocations = [
   { assetClass: AssetClass.ETF, amount: "700.00" },
@@ -23,7 +24,19 @@ const savedAllocations = [
 beforeAll(async () => {
   testDb = await createTestDatabase();
   const account = await testDb.prisma.account.create({ data: { name: "Main", type: AccountType.BROKER } });
-  const asset = await testDb.prisma.asset.create({ data: { symbol: "VWCE", name: "ETF", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "EUR" } });
+  const [asset, btc, xaut, eur] = await Promise.all([
+    testDb.prisma.asset.create({ data: { symbol: "VWCE", name: "ETF", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "EUR" } }),
+    testDb.prisma.asset.create({ data: { symbol: "BTC", name: "Bitcoin", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "BTC" } }),
+    testDb.prisma.asset.create({ data: { symbol: "XAUT", name: "Tether Gold", assetClass: AssetClass.GOLD, assetType: AssetType.TOKENIZED_GOLD, currency: "XAUT" } }),
+    testDb.prisma.asset.create({ data: { symbol: "EUR", name: "Euro", assetClass: AssetClass.CASH, assetType: AssetType.FIAT, currency: "EUR" } }),
+  ]);
+  targetAssets = {
+    [AssetClass.ETF]: asset.id,
+    [AssetClass.CRYPTO]: btc.id,
+    [AssetClass.GOLD]: xaut.id,
+    [AssetClass.CASH]: eur.id,
+    [AssetClass.OTHER]: eur.id,
+  };
   await testDb.prisma.transaction.create({ data: { accountId: account.id, assetId: asset.id, type: TransactionType.INITIAL_BALANCE, quantity: "100", pricePerUnit: "10", currency: "EUR", executedAt: new Date("2026-08-01") } });
   const strategy = await testDb.prisma.strategy.create({
     data: {
@@ -31,10 +44,10 @@ beforeAll(async () => {
       objective: "Growth",
       baseCurrency: "EUR",
       allocations: { create: [
-        { assetClass: AssetClass.ETF, targetPercent: "70", minPercent: "60", maxPercent: "80" },
-        { assetClass: AssetClass.CRYPTO, targetPercent: "15", minPercent: "10", maxPercent: "20" },
-        { assetClass: AssetClass.GOLD, targetPercent: "10", minPercent: "5", maxPercent: "15" },
-        { assetClass: AssetClass.CASH, targetPercent: "5", minPercent: "0", maxPercent: "10" },
+        allocationCreate(AssetClass.ETF, "70", "60", "80"),
+        allocationCreate(AssetClass.CRYPTO, "15", "10", "20"),
+        allocationCreate(AssetClass.GOLD, "10", "5", "15"),
+        allocationCreate(AssetClass.CASH, "5", "0", "10"),
       ] },
     },
   });
@@ -42,6 +55,18 @@ beforeAll(async () => {
   const now = new Date();
   marketDataService = new MarketDataService(new PriceStore([{ id: "price", assetId: asset.id, currency: "EUR", price: new Prisma.Decimal("12"), timestamp: now, fetchedAt: now, source: "MANUAL", createdAt: now, updatedAt: now }]), []);
 });
+
+function allocationCreate(assetClass: AssetClass, targetPercent: string, minPercent: string, maxPercent: string) {
+  return {
+    assetClass,
+    targetPercent,
+    minPercent,
+    maxPercent,
+    assetAllocations: {
+      create: [{ assetId: targetAssets[assetClass], targetPercent: "100" }],
+    },
+  };
+}
 
 afterAll(async () => testDb.cleanup());
 

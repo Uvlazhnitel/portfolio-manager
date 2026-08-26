@@ -23,12 +23,18 @@ beforeAll(async () => {
   testDb = await createTestDatabase();
   const account = await testDb.prisma.account.create({ data: { name: "Main", type: AccountType.OTHER } });
   await testDb.prisma.account.create({ data: { name: "Empty", type: AccountType.BANK } });
-  const [btc, gold] = await Promise.all([
+  const [btc, gold, etf, eur] = await Promise.all([
     testDb.prisma.asset.create({
       data: { symbol: "BTC", name: "Bitcoin", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "BTC" },
     }),
     testDb.prisma.asset.create({
       data: { symbol: "PHYSICAL_GOLD", name: "Physical Gold", assetClass: AssetClass.GOLD, assetType: AssetType.PHYSICAL_GOLD, currency: "XAU" },
+    }),
+    testDb.prisma.asset.create({
+      data: { symbol: "VWCE", name: "ETF", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "EUR" },
+    }),
+    testDb.prisma.asset.create({
+      data: { symbol: "EUR", name: "Euro", assetClass: AssetClass.CASH, assetType: AssetType.FIAT, currency: "EUR" },
     }),
   ]);
   await testDb.prisma.transaction.createMany({ data: [
@@ -42,12 +48,23 @@ beforeAll(async () => {
   const strategy = await testDb.prisma.strategy.create({
     data: { name: "Test", objective: "Test", baseCurrency: "EUR" },
   });
-  await testDb.prisma.strategyAllocation.createMany({ data: [
-    { strategyId: strategy.id, assetClass: AssetClass.ETF, targetPercent: "70", minPercent: "60", maxPercent: "80" },
-    { strategyId: strategy.id, assetClass: AssetClass.CRYPTO, targetPercent: "15", minPercent: "10", maxPercent: "20" },
-    { strategyId: strategy.id, assetClass: AssetClass.GOLD, targetPercent: "10", minPercent: "5", maxPercent: "15" },
-    { strategyId: strategy.id, assetClass: AssetClass.CASH, targetPercent: "5", minPercent: "0", maxPercent: "10" },
-  ] });
+  for (const allocation of [
+    { assetClass: AssetClass.ETF, targetPercent: "70", minPercent: "60", maxPercent: "80", assetId: etf.id },
+    { assetClass: AssetClass.CRYPTO, targetPercent: "15", minPercent: "10", maxPercent: "20", assetId: btc.id },
+    { assetClass: AssetClass.GOLD, targetPercent: "10", minPercent: "5", maxPercent: "15", assetId: gold.id },
+    { assetClass: AssetClass.CASH, targetPercent: "5", minPercent: "0", maxPercent: "10", assetId: eur.id },
+  ]) {
+    await testDb.prisma.strategyAllocation.create({
+      data: {
+        strategyId: strategy.id,
+        assetClass: allocation.assetClass,
+        targetPercent: allocation.targetPercent,
+        minPercent: allocation.minPercent,
+        maxPercent: allocation.maxPercent,
+        assetAllocations: { create: [{ assetId: allocation.assetId, targetPercent: "100" }] },
+      },
+    });
+  }
   await testDb.prisma.contributionPlan.create({ data: {
     strategyId: strategy.id,
     contributionAmount: "1000",

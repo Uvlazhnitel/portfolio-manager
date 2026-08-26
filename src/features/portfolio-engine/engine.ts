@@ -16,6 +16,7 @@ import type {
   CalculateHoldingCostBasisInput,
   CalculateStrategyAlignmentInput,
   ContributionAllocation,
+  ContributionAssetRecommendation,
   ContributionPlan,
   ContributionProjection,
   ContributionReason,
@@ -287,6 +288,7 @@ export function evaluateStrategyCompliance(
 
 export function planContribution(input: PlanContributionInput): ContributionPlan {
   validateStrategy(input.strategy);
+  validateStrategyAssetAllocations(input.strategy, input.assets);
 
   const contributionAmount = requireMoney(input.contributionAmount, "Contribution amount");
 
@@ -298,6 +300,7 @@ export function planContribution(input: PlanContributionInput): ContributionPlan
     return {
       contributionAmount: toDecimalString(ZERO),
       allocations: [],
+      assetRecommendations: [],
       before: input.portfolio,
       projectedAfter: input.portfolio,
       reasons: ["NO_CONTRIBUTION", "NO_SELL_REQUIRED"],
@@ -306,11 +309,19 @@ export function planContribution(input: PlanContributionInput): ContributionPlan
 
   const rawAllocations = calculateContributionAmounts(input.portfolio, input.strategy, contributionAmount);
   const roundedAllocations = roundContributionAllocations(rawAllocations, contributionAmount);
+  const assetRecommendations = calculateAssetRecommendations({
+    portfolio: input.portfolio,
+    assets: input.assets,
+    strategy: input.strategy,
+    classAllocations: roundedAllocations,
+    contributionAmount,
+  });
   const projectedAfter = projectContribution(input.portfolio, roundedAllocations);
 
   return {
     contributionAmount: toDecimalString(contributionAmount),
     allocations: roundedAllocations,
+    assetRecommendations,
     before: input.portfolio,
     projectedAfter,
     reasons: ["CONTRIBUTION_MOVES_TOWARD_TARGET", "NO_SELL_REQUIRED"],
@@ -324,6 +335,7 @@ export function buildContributionProjection(input: PlanContributionInput): Contr
 
 export function projectCustomContribution(input: ProjectContributionInput): ContributionProjection {
   validateStrategy(input.strategy);
+  validateStrategyAssetAllocations(input.strategy, input.assets);
   const contributionAmount = requireMoney(input.contributionAmount, "Contribution amount");
 
   if (contributionAmount.lessThan(ZERO)) {
@@ -372,6 +384,13 @@ export function projectCustomContribution(input: ProjectContributionInput): Cont
   const plan: ContributionPlan = {
     contributionAmount: toDecimalString(contributionAmount),
     allocations: normalizedAllocations,
+    assetRecommendations: calculateAssetRecommendations({
+      portfolio: input.portfolio,
+      assets: input.assets,
+      strategy: input.strategy,
+      classAllocations: normalizedAllocations,
+      contributionAmount,
+    }),
     before: input.portfolio,
     projectedAfter: projectContribution(input.portfolio, normalizedAllocations),
     reasons: contributionAmount.equals(ZERO)
@@ -387,6 +406,7 @@ export function simulateContribution(input: SimulateContributionInput) {
 
   return planContribution({
     portfolio,
+    assets: input.assets,
     strategy: input.strategy,
     contributionAmount: input.contributionAmount,
   });
@@ -440,6 +460,48 @@ export function validateStrategy(strategy: EngineStrategyAllocation[]) {
     }
     if (count > 1) {
       throw new Error(`Strategy must contain only one ${assetClass} allocation.`);
+    }
+  }
+}
+
+export function validateStrategyAssetAllocations(strategy: EngineStrategyAllocation[], assets: EngineAsset[]) {
+  const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
+
+  for (const allocation of strategy) {
+    const assetAllocations = allocation.assetAllocations ?? [];
+    if (assetAllocations.length === 0) {
+      throw new Error(`${allocation.assetClass} must contain at least one asset target.`);
+    }
+
+    const assetIds = new Set<string>();
+    let total = ZERO;
+    for (const assetAllocation of assetAllocations) {
+      if (assetIds.has(assetAllocation.assetId)) {
+        throw new Error(`${allocation.assetClass} asset targets must not contain duplicate assets.`);
+      }
+      assetIds.add(assetAllocation.assetId);
+
+      const target = decimal(assetAllocation.targetPercent);
+      if (!target.isFinite()) {
+        throw new Error(`${allocation.assetClass} asset target percentages must be finite.`);
+      }
+      if (target.lessThan(ZERO) || target.greaterThan(ONE_HUNDRED)) {
+        throw new Error(`${allocation.assetClass} asset target percentages must be between 0 and 100.`);
+      }
+
+      const asset = assetsById.get(assetAllocation.assetId);
+      if (!asset) {
+        throw new Error(`${allocation.assetClass} asset target references an unknown asset.`);
+      }
+      if (asset.assetClass !== allocation.assetClass) {
+        throw new Error(`${asset.symbol} must match parent ${allocation.assetClass} allocation.`);
+      }
+
+      total = total.plus(target);
+    }
+
+    if (!total.equals(ONE_HUNDRED)) {
+      throw new Error(`${allocation.assetClass} asset targets must total exactly 100%.`);
     }
   }
 }
@@ -570,6 +632,142 @@ function roundContributionAllocations(
         percentOfContribution: toDecimalString(percentOfContribution),
       };
     });
+}
+
+function calculateAssetRecommendations({
+  portfolio,
+  assets,
+  strategy,
+  classAllocations,
+  contributionAmount,
+}: {
+  portfolio: PortfolioSnapshot;
+  assets: EngineAsset[];
+  strategy: EngineStrategyAllocation[];
+  classAllocations: ContributionAllocation[];
+  contributionAmount: Prisma.Decimal;
+}): ContributionAssetRecommendation[] {
+  const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
+  const currentValueByAsset = new Map<string, Prisma.Decimal>();
+  for (const holding of portfolio.valuedHoldings) {
+    currentValueByAsset.set(
+      holding.assetId,
+      (currentValueByAsset.get(holding.assetId) ?? ZERO).plus(decimal(holding.value)),
+    );
+  }
+
+  const recommendations: ContributionAssetRecommendation[] = [];
+  for (const classAllocation of classAllocations) {
+    const strategyAllocation = strategy.find((allocation) => allocation.assetClass === classAllocation.assetClass);
+    if (!strategyAllocation) continue;
+
+    const classAmount = decimal(classAllocation.amount);
+    if (classAmount.equals(ZERO)) continue;
+
+    const assetTargets = strategyAllocation.assetAllocations ?? [];
+    const currentClassValue = portfolio.valuedHoldings
+      .filter((holding) => holding.assetClass === classAllocation.assetClass)
+      .reduce((sum, holding) => sum.plus(decimal(holding.value)), ZERO);
+    const projectedClassValue = currentClassValue.plus(classAmount);
+    const rawAmounts = new Map<string, Prisma.Decimal>();
+
+    const deficits = assetTargets.map((target) => {
+      const currentValue = currentValueByAsset.get(target.assetId) ?? ZERO;
+      const targetValueAfter = projectedClassValue.mul(decimal(target.targetPercent)).div(ONE_HUNDRED);
+      return {
+        assetId: target.assetId,
+        amount: maxDecimal(targetValueAfter.minus(currentValue), ZERO),
+      };
+    });
+    const totalDeficit = deficits.reduce((sum, item) => sum.plus(item.amount), ZERO);
+
+    if (totalDeficit.greaterThanOrEqualTo(classAmount)) {
+      for (const deficit of deficits) {
+        rawAmounts.set(deficit.assetId, deficit.amount.div(totalDeficit).mul(classAmount));
+      }
+    } else {
+      for (const deficit of deficits) {
+        rawAmounts.set(deficit.assetId, deficit.amount);
+      }
+
+      const leftover = classAmount.minus(totalDeficit);
+      const totalWeight = assetTargets.reduce((sum, target) => sum.plus(decimal(target.targetPercent)), ZERO);
+      for (const target of assetTargets) {
+        rawAmounts.set(
+          target.assetId,
+          (rawAmounts.get(target.assetId) ?? ZERO).plus(
+            totalWeight.equals(ZERO) ? ZERO : leftover.mul(decimal(target.targetPercent)).div(totalWeight),
+          ),
+        );
+      }
+    }
+
+    const rounded = roundAssetRecommendationAmounts(rawAmounts, classAmount);
+    for (const target of assetTargets) {
+      const amount = rounded.get(target.assetId) ?? ZERO;
+      if (amount.equals(ZERO)) continue;
+
+      const asset = assetsById.get(target.assetId);
+      if (!asset) continue;
+
+      const percentOfContribution = contributionAmount.equals(ZERO)
+        ? ZERO
+        : amount.div(contributionAmount).mul(ONE_HUNDRED);
+      const targetPercentOfClass = decimal(target.targetPercent);
+      const effectiveTargetPercent = decimal(strategyAllocation.targetPercent).mul(targetPercentOfClass).div(ONE_HUNDRED);
+
+      recommendations.push({
+        assetId: target.assetId,
+        symbol: asset.symbol,
+        name: asset.name ?? asset.symbol,
+        assetClass: strategyAllocation.assetClass,
+        amount: toDecimalString(amount),
+        percentOfContribution: toDecimalString(percentOfContribution),
+        targetPercentOfClass: toDecimalString(targetPercentOfClass),
+        effectiveTargetPercent: toDecimalString(effectiveTargetPercent),
+      });
+    }
+  }
+
+  return recommendations.sort((left, right) => {
+    const classCompare =
+      (allocationClassOrder.get(left.assetClass) ?? Number.MAX_SAFE_INTEGER) -
+      (allocationClassOrder.get(right.assetClass) ?? Number.MAX_SAFE_INTEGER);
+    return classCompare === 0 ? left.symbol.localeCompare(right.symbol) : classCompare;
+  });
+}
+
+function roundAssetRecommendationAmounts(rawAmounts: Map<string, Prisma.Decimal>, totalAmount: Prisma.Decimal) {
+  const totalCents = totalAmount.mul(100).toDecimalPlaces(0);
+  const rows = Array.from(rawAmounts.entries()).map(([assetId, amount]) => {
+    const rawCents = amount.mul(100);
+    const floorCents = rawCents.floor();
+    return {
+      assetId,
+      floorCents,
+      fraction: rawCents.minus(floorCents),
+    };
+  });
+
+  let distributedCents = rows.reduce((sum, row) => sum.plus(row.floorCents), ZERO);
+  let remainingCents = totalCents.minus(distributedCents);
+
+  for (const row of rows.sort((left, right) => {
+    const fractionCompare = decimal(right.fraction).cmp(decimal(left.fraction));
+    return fractionCompare === 0 ? left.assetId.localeCompare(right.assetId) : fractionCompare;
+  })) {
+    if (remainingCents.lessThanOrEqualTo(ZERO)) break;
+    row.floorCents = row.floorCents.plus(1);
+    remainingCents = remainingCents.minus(1);
+  }
+
+  distributedCents = rows.reduce((sum, row) => sum.plus(row.floorCents), ZERO);
+  const first = rows[0];
+  if (first && !distributedCents.equals(totalCents)) {
+    first.floorCents = first.floorCents.plus(totalCents.minus(distributedCents));
+  }
+
+  return new Map(rows.map((row) => [row.assetId, decimal(row.floorCents).div(100)]));
 }
 
 function projectContribution(portfolio: PortfolioSnapshot, allocations: ContributionAllocation[]): PortfolioSnapshot {

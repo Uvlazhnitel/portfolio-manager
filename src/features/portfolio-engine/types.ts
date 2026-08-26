@@ -5,6 +5,7 @@ export type DecimalLike = Prisma.Decimal | string | number;
 export type EngineAsset = {
   id: string;
   symbol: string;
+  name?: string;
   assetClass: AssetClass;
   assetType: AssetType;
   currency?: string;
@@ -27,6 +28,12 @@ export type EngineStrategyAllocation = {
   targetPercent: DecimalLike;
   minPercent: DecimalLike;
   maxPercent: DecimalLike;
+  assetAllocations?: EngineStrategyAssetAllocation[];
+};
+
+export type EngineStrategyAssetAllocation = {
+  assetId: string;
+  targetPercent: DecimalLike;
 };
 
 export type MarketPrices = Record<string, DecimalLike>;
@@ -174,9 +181,21 @@ export type ContributionAllocation = {
   percentOfContribution: string;
 };
 
+export type ContributionAssetRecommendation = {
+  assetId: string;
+  symbol: string;
+  name: string;
+  assetClass: AssetClass;
+  amount: string;
+  percentOfContribution: string;
+  targetPercentOfClass: string;
+  effectiveTargetPercent: string;
+};
+
 export type ContributionPlan = {
   contributionAmount: string;
   allocations: ContributionAllocation[];
+  assetRecommendations: ContributionAssetRecommendation[];
   before: PortfolioSnapshot;
   projectedAfter: PortfolioSnapshot;
   reasons: ReasonCode[];
@@ -184,6 +203,7 @@ export type ContributionPlan = {
 
 export type PlanContributionInput = {
   portfolio: PortfolioSnapshot;
+  assets: EngineAsset[];
   strategy: EngineStrategyAllocation[];
   contributionAmount: DecimalLike;
 };

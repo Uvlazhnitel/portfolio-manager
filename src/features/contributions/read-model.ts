@@ -25,6 +25,7 @@ export type ContributionPlannerModel = {
   projection: ContributionProjection | null;
   isCustomized: boolean;
   savedAt: string | null;
+  setupError: string | null;
   valuation: {
     isPartial: boolean;
     missingPriceSymbols: string[];
@@ -61,17 +62,28 @@ export async function getContributionPlannerModel({
   ]);
   const portfolio = calculatePortfolio({ assets, transactions, marketPrices: toEngineMarketPrices(marketData) });
   const contributionAmount = preferredAmount ?? (saved ? serializeDecimal(saved.contributionAmount) : "");
-  const recommendation = contributionAmount && contributionAmount !== "0"
-    ? buildContributionProjection({ portfolio, strategy: strategy.allocations, contributionAmount })
-    : null;
+  let setupError: string | null = null;
+  let recommendation: ContributionProjection | null = null;
+  if (contributionAmount && contributionAmount !== "0") {
+    try {
+      recommendation = buildContributionProjection({ portfolio, assets, strategy: strategy.allocations, contributionAmount });
+    } catch (error) {
+      setupError = error instanceof Error ? error.message : "Strategy asset targets are not configured.";
+    }
+  }
   const activeAssetClasses = strategy.allocations.map((allocation) => allocation.assetClass);
   const recommendedAllocations = normalizeAllocations(recommendation?.plan.allocations ?? [], activeAssetClasses);
   const shouldRestoreSavedAllocation = !preferredAmount && Boolean(saved);
   const savedAllocations = shouldRestoreSavedAllocation && saved ? parseSavedAllocations(saved.allocations) : [];
   const allocations = shouldRestoreSavedAllocation ? normalizeAllocations(savedAllocations, activeAssetClasses) : recommendedAllocations;
-  const projection = contributionAmount && contributionAmount !== "0"
-    ? projectCustomContribution({ portfolio, strategy: strategy.allocations, contributionAmount, allocations })
-    : null;
+  let projection: ContributionProjection | null = null;
+  if (contributionAmount && contributionAmount !== "0" && !setupError) {
+    try {
+      projection = projectCustomContribution({ portfolio, assets, strategy: strategy.allocations, contributionAmount, allocations });
+    } catch (error) {
+      setupError = error instanceof Error ? error.message : "Strategy asset targets are not configured.";
+    }
+  }
 
   return {
     strategy: {
@@ -86,6 +98,7 @@ export async function getContributionPlannerModel({
     projection,
     isCustomized: shouldRestoreSavedAllocation ? saved?.isCustomized ?? false : false,
     savedAt: saved?.updatedAt.toISOString() ?? null,
+    setupError,
     valuation: {
       isPartial: portfolio.missingPriceSymbols.length > 0,
       missingPriceSymbols: portfolio.missingPriceSymbols,
@@ -122,13 +135,13 @@ export async function previewContribution(
   const marketData = await marketDataService.getCurrentPrices({ assets, baseCurrency: strategy.baseCurrency });
   const portfolio = calculatePortfolio({ assets, transactions, marketPrices: toEngineMarketPrices(marketData) });
   const projection = parsed.allocations
-    ? projectCustomContribution({ portfolio, strategy: strategy.allocations, contributionAmount: parsed.contributionAmount, allocations: parsed.allocations })
-    : buildContributionProjection({ portfolio, strategy: strategy.allocations, contributionAmount: parsed.contributionAmount });
+    ? projectCustomContribution({ portfolio, assets, strategy: strategy.allocations, contributionAmount: parsed.contributionAmount, allocations: parsed.allocations })
+    : buildContributionProjection({ portfolio, assets, strategy: strategy.allocations, contributionAmount: parsed.contributionAmount });
 
   return {
     projection,
     recommendedAllocations: normalizeAllocations(
-      buildContributionProjection({ portfolio, strategy: strategy.allocations, contributionAmount: parsed.contributionAmount }).plan.allocations,
+      buildContributionProjection({ portfolio, assets, strategy: strategy.allocations, contributionAmount: parsed.contributionAmount }).plan.allocations,
       activeAssetClasses,
     ),
     valuation: {

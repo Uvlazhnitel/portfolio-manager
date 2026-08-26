@@ -83,6 +83,7 @@ export async function executeAssistantTool(
     if (!runtime.strategy) throw new Error("Active strategy was not found.");
     const projection = buildContributionProjection({
       portfolio: runtime.portfolio,
+      assets: runtime.assets,
       strategy: runtime.strategy.allocations,
       contributionAmount: parsed.amount,
     });
@@ -90,6 +91,7 @@ export async function executeAssistantTool(
       contributionAmount: projection.plan.contributionAmount,
       currency: runtime.strategy.baseCurrency,
       allocations: projection.plan.allocations,
+      assetRecommendations: projection.plan.assetRecommendations,
       before: projection.beforeComparison,
       projectedAfter: projection.afterComparison,
       warnings: projection.warnings,

@@ -119,6 +119,7 @@ export function ContributionPlanner({ model }: { model: ContributionPlannerModel
         {preview.valuation.isPartial ? <Notice tone="warning">Planning uses the valued portion of your portfolio. Price unavailable for: {preview.valuation.missingPriceSymbols.join(", ")}.</Notice> : null}
         {preview.valuation.hasStalePrices ? <Notice tone="warning">Some market prices are stale.</Notice> : null}
         {preview.valuation.warning ? <Notice tone="warning">{preview.valuation.warning}</Notice> : null}
+        {model.setupError ? <Notice tone="destructive">{model.setupError}</Notice> : null}
         {preview.valuation.lastUpdated ? <p className="mt-3 text-xs text-muted">Prices last updated {formatUtcTimestamp(preview.valuation.lastUpdated)}</p> : null}
       </Card>
 
@@ -133,13 +134,15 @@ export function ContributionPlanner({ model }: { model: ContributionPlannerModel
         <>
           <Card>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div><h2 className="text-lg font-semibold">{isCustomized ? "Custom allocation" : "Recommended allocation"}</h2><p className="mt-1 text-sm text-muted">Calculated by the deterministic Portfolio Engine.</p></div>
+              <div><h2 className="text-lg font-semibold">{isCustomized ? "Custom buy list" : "Recommended buy list"}</h2><p className="mt-1 text-sm text-muted">Calculated by the deterministic Portfolio Engine.</p></div>
               {!isCustomized ? (
                 <Button type="button" variant="secondary" onClick={() => setIsCustomized(true)} disabled={!projection}><SlidersHorizontal className="mr-2 h-4 w-4" aria-hidden="true" /> Customize allocation</Button>
               ) : (
                 <Button type="button" variant="secondary" onClick={resetToRecommendation}><RotateCcw className="mr-2 h-4 w-4" aria-hidden="true" /> Reset to recommendation</Button>
               )}
             </div>
+
+            {projection ? <BuyList projection={projection} currency={model.strategy.currency} /> : null}
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {activeAssetClasses.map((assetClass) => {
@@ -150,7 +153,7 @@ export function ContributionPlanner({ model }: { model: ContributionPlannerModel
                     <div className="flex items-center justify-between gap-2"><p className="font-semibold">{classLabels[assetClass]}</p><Badge>{displayed?.percentOfContribution ?? "0.00"}%</Badge></div>
                     {isCustomized ? (
                       <div className="relative mt-4"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">{model.strategy.currency === "USD" ? "$" : model.strategy.currency}</span><input type="number" min="0" step="0.01" inputMode="decimal" value={allocation?.amount ?? "0.00"} onChange={(event) => changeAllocation(assetClass, event.target.value)} className="h-11 w-full rounded-lg border border-border bg-surface-strong pl-8 pr-3 text-right font-medium outline-none focus:border-primary" /></div>
-                    ) : <p className="mt-4 text-2xl font-semibold">{formatMoney(allocation?.amount ?? "0", model.strategy.currency)}</p>}
+                    ) : <p className="mt-4 text-2xl font-semibold">{formatMoney(displayed?.amount ?? allocation?.amount ?? "0", model.strategy.currency)}</p>}
                   </div>
                 );
               })}
@@ -176,6 +179,32 @@ export function ContributionPlanner({ model }: { model: ContributionPlannerModel
 
 function ImpactTable({ projection }: { projection: ContributionProjection }) {
   return <Card><h2 className="text-lg font-semibold">Portfolio impact</h2><div className="mt-4 space-y-3 md:hidden">{projection.afterComparison.map((after) => { const before = projection.beforeComparison.find((item) => item.assetClass === after.assetClass); return <div key={after.assetClass} className="rounded-lg border border-border bg-surface p-4"><div className="flex items-center justify-between gap-3"><p className="font-semibold">{classLabels[after.assetClass]}</p><StatusBadge status={after.status} /></div><dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm"><ImpactValue label="Current" value={formatPercent(before?.currentPercent ?? "0")} /><ImpactValue label="After" value={formatPercent(after.currentPercent)} emphasized /><ImpactValue label="Target" value={formatPercent(after.targetPercent)} /><ImpactValue label="Range" value={`${formatPercent(after.minPercent)}–${formatPercent(after.maxPercent)}`} /></dl></div>; })}</div><div className="mt-5 hidden overflow-x-auto md:block"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-b border-border text-xs uppercase tracking-wide text-muted"><tr>{["Asset class", "Current", "After contribution", "Target", "Range", "Status after"].map((label) => <th key={label} className="px-3 py-3 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-border">{projection.afterComparison.map((after) => { const before = projection.beforeComparison.find((item) => item.assetClass === after.assetClass); return <tr key={after.assetClass}><td className="px-3 py-4 font-medium">{classLabels[after.assetClass]}</td><td className="px-3 py-4">{formatPercent(before?.currentPercent ?? "0")}</td><td className="px-3 py-4 font-semibold">{formatPercent(after.currentPercent)}</td><td className="px-3 py-4">{formatPercent(after.targetPercent)}</td><td className="px-3 py-4 text-muted">{formatPercent(after.minPercent)}–{formatPercent(after.maxPercent)}</td><td className="px-3 py-4"><StatusBadge status={after.status} /></td></tr>; })}</tbody></table></div></Card>;
+}
+
+function BuyList({ projection, currency }: { projection: ContributionProjection; currency: string }) {
+  return (
+    <div className="mt-5 overflow-hidden rounded-lg border border-border bg-surface">
+      <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(7rem,0.8fr)_minmax(6rem,0.6fr)_minmax(6rem,0.6fr)] gap-3 border-b border-border px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted md:grid">
+        <span>Asset</span>
+        <span>Class</span>
+        <span className="text-right">Buy</span>
+        <span className="text-right">Contribution</span>
+      </div>
+      <div className="divide-y divide-border">
+        {projection.plan.assetRecommendations.map((item) => (
+          <div key={item.assetId} className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1.4fr)_minmax(7rem,0.8fr)_minmax(6rem,0.6fr)_minmax(6rem,0.6fr)] md:items-center">
+            <div className="min-w-0">
+              <p className="truncate font-semibold text-foreground">{item.symbol}</p>
+              <p className="mt-1 truncate text-sm text-muted">{item.name}</p>
+            </div>
+            <Badge>{classLabels[item.assetClass]}</Badge>
+            <p className="text-right text-lg font-semibold">{formatMoney(item.amount, currency)}</p>
+            <p className="text-right text-sm text-muted">{formatPercent(item.percentOfContribution)}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function ImpactValue({ label, value, emphasized = false }: { label: string; value: string; emphasized?: boolean }) {

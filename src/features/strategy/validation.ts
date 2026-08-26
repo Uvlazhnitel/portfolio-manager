@@ -11,11 +11,17 @@ export const editableAssetClasses = [
 
 const decimalLikeSchema = z.union([z.string(), z.number()]).transform((value) => String(value).trim());
 
+export const strategyAssetAllocationInputSchema = z.object({
+  assetId: z.string().trim().min(1),
+  targetPercent: decimalLikeSchema,
+});
+
 export const strategyAllocationInputSchema = z.object({
   assetClass: z.enum(AssetClass),
   targetPercent: decimalLikeSchema,
   minPercent: decimalLikeSchema,
   maxPercent: decimalLikeSchema,
+  assetTargets: z.array(strategyAssetAllocationInputSchema).min(1, "Each active class needs at least one asset target."),
 });
 
 export const strategyInputSchema = z.object({
@@ -46,6 +52,7 @@ export const portfolioRuleInputSchema = z.object({
 });
 
 export type StrategyAllocationInput = z.infer<typeof strategyAllocationInputSchema>;
+export type StrategyAssetAllocationInput = z.infer<typeof strategyAssetAllocationInputSchema>;
 export type StrategyInput = z.infer<typeof strategyInputSchema>;
 export type PortfolioRuleInput = z.infer<typeof portfolioRuleInputSchema>;
 export type UpdateStrategyInput = z.input<typeof updateStrategyInputSchema>;
@@ -116,6 +123,33 @@ export function analyzeStrategyDraft(input: {
       totalBasisPoints += target;
     } catch (error) {
       errors.push(error instanceof Error ? `${allocation.assetClass}: ${error.message}` : `${allocation.assetClass} is invalid.`);
+    }
+
+    const assetCounts = new Map<string, number>();
+    let assetTargetTotal = 0;
+    if (allocation.assetTargets.length === 0) {
+      errors.push(`${allocation.assetClass} must contain at least one asset target.`);
+    }
+    for (const assetTarget of allocation.assetTargets) {
+      assetCounts.set(assetTarget.assetId, (assetCounts.get(assetTarget.assetId) ?? 0) + 1);
+      try {
+        const target = parsePercentToBasisPoints(assetTarget.targetPercent);
+        if (target < 0 || target > 10_000) {
+          errors.push(`${allocation.assetClass} asset target percentages must be between 0 and 100.`);
+        }
+        assetTargetTotal += target;
+      } catch (error) {
+        errors.push(error instanceof Error ? `${allocation.assetClass} asset target: ${error.message}` : `${allocation.assetClass} asset target is invalid.`);
+      }
+    }
+    if (assetTargetTotal !== 10_000) {
+      errors.push(`${allocation.assetClass} asset targets must total exactly 100.00%.`);
+    }
+    for (const count of assetCounts.values()) {
+      if (count > 1) {
+        errors.push(`${allocation.assetClass} asset targets must not contain duplicate assets.`);
+        break;
+      }
     }
   }
 
@@ -194,6 +228,12 @@ export function strategyDraftFingerprint(input: {
         targetPercent: fingerprintPercent(allocation.targetPercent),
         minPercent: fingerprintPercent(allocation.minPercent),
         maxPercent: fingerprintPercent(allocation.maxPercent),
+        assetTargets: [...allocation.assetTargets]
+          .sort((left, right) => left.assetId.localeCompare(right.assetId))
+          .map((assetTarget) => ({
+            assetId: assetTarget.assetId,
+            targetPercent: fingerprintPercent(assetTarget.targetPercent),
+          })),
       })),
     rules: {
       ...input.rules,

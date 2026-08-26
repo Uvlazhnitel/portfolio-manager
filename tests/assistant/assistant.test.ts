@@ -19,10 +19,11 @@ let runtime: Awaited<ReturnType<typeof loadAssistantPortfolioRuntime>>;
 beforeAll(async () => {
   testDb = await createTestDatabase();
   const account = await testDb.prisma.account.create({ data: { name: "Main broker", type: AccountType.BROKER } });
-  const [etf, btc, eur] = await Promise.all([
+  const [etf, btc, eur, xaut] = await Promise.all([
     testDb.prisma.asset.create({ data: { symbol: "VWCE", name: "Global ETF", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "EUR" } }),
     testDb.prisma.asset.create({ data: { symbol: "BTC", name: "Bitcoin", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "BTC" } }),
     testDb.prisma.asset.create({ data: { symbol: "EUR", name: "Euro", assetClass: AssetClass.CASH, assetType: AssetType.FIAT, currency: "EUR" } }),
+    testDb.prisma.asset.create({ data: { symbol: "XAUT", name: "Tether Gold", assetClass: AssetClass.GOLD, assetType: AssetType.TOKENIZED_GOLD, currency: "XAUT" } }),
   ]);
   await testDb.prisma.transaction.createMany({ data: [
     { accountId: account.id, assetId: etf.id, type: TransactionType.INITIAL_BALANCE, quantity: "80", pricePerUnit: "8", currency: "EUR", executedAt: new Date("2026-08-01"), note: "DO_NOT_SEND_THIS_NOTE" },
@@ -33,10 +34,10 @@ beforeAll(async () => {
     data: {
       name: "Long-term capital growth", objective: "Grow capital consistently", baseCurrency: "EUR",
       allocations: { create: [
-        { assetClass: AssetClass.ETF, targetPercent: "70", minPercent: "60", maxPercent: "80" },
-        { assetClass: AssetClass.CRYPTO, targetPercent: "15", minPercent: "10", maxPercent: "20" },
-        { assetClass: AssetClass.GOLD, targetPercent: "10", minPercent: "5", maxPercent: "15" },
-        { assetClass: AssetClass.CASH, targetPercent: "5", minPercent: "0", maxPercent: "10" },
+        { assetClass: AssetClass.ETF, targetPercent: "70", minPercent: "60", maxPercent: "80", assetAllocations: { create: [{ assetId: etf.id, targetPercent: "100" }] } },
+        { assetClass: AssetClass.CRYPTO, targetPercent: "15", minPercent: "10", maxPercent: "20", assetAllocations: { create: [{ assetId: btc.id, targetPercent: "100" }] } },
+        { assetClass: AssetClass.GOLD, targetPercent: "10", minPercent: "5", maxPercent: "15", assetAllocations: { create: [{ assetId: xaut.id, targetPercent: "100" }] } },
+        { assetClass: AssetClass.CASH, targetPercent: "5", minPercent: "0", maxPercent: "10", assetAllocations: { create: [{ assetId: eur.id, targetPercent: "100" }] } },
       ] },
     },
   });
@@ -99,12 +100,13 @@ describe("assistant portfolio context and tools", () => {
     const transactionCount = await testDb.prisma.transaction.count();
     const summary = await executeAssistantTool("get_portfolio_summary", "{}", runtime) as { valuation: { totalPortfolioValue: string } };
     const savedStrategy = await executeAssistantTool("get_strategy", "{}", runtime) as { allocations: unknown[] };
-    const plan = await executeAssistantTool("plan_contribution", JSON.stringify({ amount: "1000" }), runtime) as { currency: string; allocations: Array<{ amount: string }> };
+    const plan = await executeAssistantTool("plan_contribution", JSON.stringify({ amount: "1000" }), runtime) as { currency: string; allocations: Array<{ amount: string }>; assetRecommendations: Array<{ symbol: string }> };
     const simulation = await executeAssistantTool("simulate_transaction", JSON.stringify({ symbol: "btc", type: "BUY", amount: "500" }), runtime) as { projectedAssetClassPercent: string; strategyMaximum: string; violations: Array<{ code: string }> };
 
     expect(summary.valuation.totalPortfolioValue).toBe("1000.00");
     expect(savedStrategy.allocations).toHaveLength(4);
     expect(plan.allocations.reduce((sum, allocation) => sum + Number(allocation.amount), 0)).toBe(1000);
+    expect(plan.assetRecommendations.map((item) => item.symbol)).toContain("BTC");
     expect(plan.currency).toBe(runtime.strategy?.baseCurrency);
     expect(JSON.stringify(assistantToolDefinitions.find((tool) => "name" in tool && tool.name === "plan_contribution"))).not.toContain('"currency"');
     expect(simulation).toEqual(expect.objectContaining({ projectedAssetClassPercent: "40.00", strategyMaximum: "20.00" }));

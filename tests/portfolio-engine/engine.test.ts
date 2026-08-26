@@ -14,6 +14,7 @@ import {
   simulateContribution,
   simulateTransaction,
   validateStrategy,
+  validateStrategyAssetAllocations,
   type ContributionAllocation,
   type EngineAsset,
   type EngineStrategyAllocation,
@@ -33,16 +34,61 @@ const assets: EngineAsset[] = [
 ];
 
 const strategy: EngineStrategyAllocation[] = [
-  { assetClass: AssetClass.ETF, targetPercent: "77", minPercent: "72", maxPercent: "82" },
-  { assetClass: AssetClass.CRYPTO, targetPercent: "12", minPercent: "8", maxPercent: "15" },
-  { assetClass: AssetClass.GOLD, targetPercent: "9", minPercent: "7", maxPercent: "15" },
-  { assetClass: AssetClass.CASH, targetPercent: "2", minPercent: "0", maxPercent: "5" },
+  { assetClass: AssetClass.ETF, targetPercent: "77", minPercent: "72", maxPercent: "82", assetAllocations: [{ assetId: "etf", targetPercent: "100" }] },
+  {
+    assetClass: AssetClass.CRYPTO,
+    targetPercent: "12",
+    minPercent: "8",
+    maxPercent: "15",
+    assetAllocations: [
+      { assetId: "btc", targetPercent: "70" },
+      { assetId: "eth", targetPercent: "30" },
+    ],
+  },
+  {
+    assetClass: AssetClass.GOLD,
+    targetPercent: "9",
+    minPercent: "7",
+    maxPercent: "15",
+    assetAllocations: [
+      { assetId: "gold", targetPercent: "60" },
+      { assetId: "xaut", targetPercent: "40" },
+    ],
+  },
+  {
+    assetClass: AssetClass.CASH,
+    targetPercent: "2",
+    minPercent: "0",
+    maxPercent: "5",
+    assetAllocations: [
+      { assetId: "eur", targetPercent: "50" },
+      { assetId: "usdt", targetPercent: "50" },
+    ],
+  },
 ];
 
 const strategyWithoutCash: EngineStrategyAllocation[] = [
-  { assetClass: AssetClass.ETF, targetPercent: "78", minPercent: "70", maxPercent: "85" },
-  { assetClass: AssetClass.CRYPTO, targetPercent: "12", minPercent: "8", maxPercent: "20" },
-  { assetClass: AssetClass.GOLD, targetPercent: "10", minPercent: "5", maxPercent: "15" },
+  { assetClass: AssetClass.ETF, targetPercent: "78", minPercent: "70", maxPercent: "85", assetAllocations: [{ assetId: "etf", targetPercent: "100" }] },
+  {
+    assetClass: AssetClass.CRYPTO,
+    targetPercent: "12",
+    minPercent: "8",
+    maxPercent: "20",
+    assetAllocations: [
+      { assetId: "btc", targetPercent: "70" },
+      { assetId: "eth", targetPercent: "30" },
+    ],
+  },
+  {
+    assetClass: AssetClass.GOLD,
+    targetPercent: "10",
+    minPercent: "5",
+    maxPercent: "15",
+    assetAllocations: [
+      { assetId: "gold", targetPercent: "60" },
+      { assetId: "xaut", targetPercent: "40" },
+    ],
+  },
 ];
 
 const prices = {
@@ -216,6 +262,18 @@ describe("portfolio engine allocation and compliance", () => {
     expect(() => validateStrategy(strategyWithoutCash)).not.toThrow();
   });
 
+  it("validates nested asset targets", () => {
+    expect(() => validateStrategyAssetAllocations(strategyWithoutCash, assets)).not.toThrow();
+    expect(() => validateStrategyAssetAllocations([
+      { ...strategyWithoutCash[0], assetAllocations: [{ assetId: "etf", targetPercent: "90" }] },
+      ...strategyWithoutCash.slice(1),
+    ], assets)).toThrow("asset targets must total exactly 100%");
+    expect(() => validateStrategyAssetAllocations([
+      { ...strategyWithoutCash[0], assetAllocations: [{ assetId: "btc", targetPercent: "100" }] },
+      ...strategyWithoutCash.slice(1),
+    ], assets)).toThrow("must match parent ETF allocation");
+  });
+
   it("rejects duplicate, out-of-bounds, and non-finite strategy allocations", () => {
     expect(() => validateStrategy([
       ...strategy.slice(0, 3),
@@ -242,7 +300,7 @@ describe("portfolio engine contribution planning and simulation", () => {
         transaction({ assetId: "eur", accountId: "bank", type: TransactionType.INITIAL_BALANCE, quantity: "500" }),
       ],
     });
-    const plan = planContribution({ portfolio: before, strategy, contributionAmount: "1000" });
+    const plan = planContribution({ portfolio: before, assets, strategy, contributionAmount: "1000" });
 
     expect(contributionSum(plan.allocations)).toBe(1000);
     expect(plan.allocations.find((allocation) => allocation.assetClass === AssetClass.CRYPTO)).toBeUndefined();
@@ -289,7 +347,7 @@ describe("portfolio engine contribution planning and simulation", () => {
         transaction({ assetId: "eur", accountId: "bank", type: TransactionType.INITIAL_BALANCE, quantity: "500" }),
       ],
     });
-    const projection = buildContributionProjection({ portfolio, strategy: strategyWithoutCash, contributionAmount: "1000" });
+    const projection = buildContributionProjection({ portfolio, assets, strategy: strategyWithoutCash, contributionAmount: "1000" });
 
     expect(projection.plan.allocations.some((allocation) => allocation.assetClass === AssetClass.CASH)).toBe(false);
     expect(projection.afterComparison.map((comparison) => comparison.assetClass).sort()).toEqual([
@@ -300,9 +358,36 @@ describe("portfolio engine contribution planning and simulation", () => {
     expect(contributionSum(projection.plan.allocations)).toBe(1000);
   });
 
+  it("outputs concrete BTC and ETH buy recommendations", () => {
+    const portfolio = calculatePortfolio({ assets, marketPrices: prices, transactions: [] });
+    const projection = buildContributionProjection({ portfolio, assets, strategy: strategyWithoutCash, contributionAmount: "1000" });
+    const symbols = projection.plan.assetRecommendations.map((recommendation) => recommendation.symbol);
+
+    expect(symbols).toEqual(expect.arrayContaining(["BTC", "ETH"]));
+    expect(projection.plan.assetRecommendations.find((recommendation) => recommendation.symbol === "BTC")?.assetClass).toBe(AssetClass.CRYPTO);
+    expect(projection.plan.assetRecommendations.reduce((sum, recommendation) => sum + Number(recommendation.amount), 0)).toBe(1000);
+  });
+
+  it("sends more class money to the underweight asset within a class", () => {
+    const portfolio = calculatePortfolio({
+      assets,
+      marketPrices: prices,
+      transactions: [
+        transaction({ assetId: "etf", accountId: "broker", type: TransactionType.INITIAL_BALANCE, quantity: "9000" }),
+        transaction({ assetId: "gold", accountId: "storage", type: TransactionType.INITIAL_BALANCE, quantity: "900" }),
+        transaction({ assetId: "eth", accountId: "bybit", type: TransactionType.INITIAL_BALANCE, quantity: "0.1" }),
+      ],
+    });
+    const plan = planContribution({ portfolio, assets, strategy: strategyWithoutCash, contributionAmount: "1000" });
+    const btcAmount = Number(plan.assetRecommendations.find((recommendation) => recommendation.symbol === "BTC")?.amount ?? 0);
+    const ethAmount = Number(plan.assetRecommendations.find((recommendation) => recommendation.symbol === "ETH")?.amount ?? 0);
+
+    expect(btcAmount).toBeGreaterThan(ethAmount);
+  });
+
   it("returns an empty allocation plan for contribution 0", () => {
     const portfolio = calculatePortfolio({ assets, marketPrices: prices, transactions: [] });
-    const plan = planContribution({ portfolio, strategy, contributionAmount: "0" });
+    const plan = planContribution({ portfolio, assets, strategy, contributionAmount: "0" });
 
     expect(plan.allocations).toEqual([]);
     expect(plan.contributionAmount).toBe("0.00");
@@ -311,13 +396,13 @@ describe("portfolio engine contribution planning and simulation", () => {
 
   it("rounds contribution allocations to cents while preserving the exact contribution amount", () => {
     const evenStrategy: EngineStrategyAllocation[] = [
-      { assetClass: AssetClass.ETF, targetPercent: "25", minPercent: "0", maxPercent: "100" },
-      { assetClass: AssetClass.CRYPTO, targetPercent: "25", minPercent: "0", maxPercent: "100" },
-      { assetClass: AssetClass.GOLD, targetPercent: "25", minPercent: "0", maxPercent: "100" },
-      { assetClass: AssetClass.CASH, targetPercent: "25", minPercent: "0", maxPercent: "100" },
+      { assetClass: AssetClass.ETF, targetPercent: "25", minPercent: "0", maxPercent: "100", assetAllocations: [{ assetId: "etf", targetPercent: "100" }] },
+      { assetClass: AssetClass.CRYPTO, targetPercent: "25", minPercent: "0", maxPercent: "100", assetAllocations: [{ assetId: "btc", targetPercent: "100" }] },
+      { assetClass: AssetClass.GOLD, targetPercent: "25", minPercent: "0", maxPercent: "100", assetAllocations: [{ assetId: "gold", targetPercent: "100" }] },
+      { assetClass: AssetClass.CASH, targetPercent: "25", minPercent: "0", maxPercent: "100", assetAllocations: [{ assetId: "eur", targetPercent: "100" }] },
     ];
     const portfolio = calculatePortfolio({ assets, marketPrices: prices, transactions: [] });
-    const plan = planContribution({ portfolio, strategy: evenStrategy, contributionAmount: "0.05" });
+    const plan = planContribution({ portfolio, assets, strategy: evenStrategy, contributionAmount: "0.05" });
 
     expect(plan.allocations.reduce((sum, allocation) => sum + Math.round(Number(allocation.amount) * 100), 0)).toBe(5);
     expect(plan.allocations.every((allocation) => /^\d+\.\d{2}$/.test(allocation.amount))).toBe(true);
@@ -326,7 +411,7 @@ describe("portfolio engine contribution planning and simulation", () => {
   it("keeps cent totals exact above JavaScript's safe integer range", () => {
     const portfolio = calculatePortfolio({ assets, marketPrices: prices, transactions: [] });
     const contributionAmount = "9007199254740993.01";
-    const plan = planContribution({ portfolio, strategy, contributionAmount });
+    const plan = planContribution({ portfolio, assets, strategy, contributionAmount });
     const total = plan.allocations.reduce((sum, allocation) => sum.plus(decimal(allocation.amount)), ZERO);
 
     expect(total.toFixed(2)).toBe(contributionAmount);
@@ -339,7 +424,7 @@ describe("portfolio engine contribution planning and simulation", () => {
       marketPrices: { ...prices, OTHER_ASSET: "100" },
       transactions: [transaction({ assetId: "other", accountId: "wallet", type: TransactionType.INITIAL_BALANCE, quantity: "10" })],
     });
-    const plan = planContribution({ portfolio, strategy, contributionAmount: "100" });
+    const plan = planContribution({ portfolio, assets, strategy, contributionAmount: "100" });
 
     expect(portfolio.totalValue).toBe("1000.00");
     expect(plan.projectedAfter.totalValue).toBe("1100.00");
@@ -354,6 +439,7 @@ describe("portfolio engine contribution planning and simulation", () => {
     });
     const projection = projectCustomContribution({
       portfolio,
+      assets,
       strategy,
       contributionAmount: "100.00",
       allocations: [
@@ -374,6 +460,7 @@ describe("portfolio engine contribution planning and simulation", () => {
     const portfolio = calculatePortfolio({ assets, marketPrices: prices, transactions: [] });
     const projection = projectCustomContribution({
       portfolio,
+      assets,
       strategy: strategyWithoutCash,
       contributionAmount: "100.00",
       allocations: [
@@ -390,6 +477,7 @@ describe("portfolio engine contribution planning and simulation", () => {
     ]);
     expect(() => projectCustomContribution({
       portfolio,
+      assets,
       strategy: strategyWithoutCash,
       contributionAmount: "100.00",
       allocations: [
@@ -410,11 +498,11 @@ describe("portfolio engine contribution planning and simulation", () => {
       { assetClass: AssetClass.CASH, amount: "0.00" },
     ];
 
-    expect(() => projectCustomContribution({ portfolio, strategy, contributionAmount: "101.00", allocations: valid })).toThrow("equal the contribution amount");
-    expect(() => projectCustomContribution({ portfolio, strategy, contributionAmount: "100.00", allocations: [...valid.slice(0, 3), { assetClass: AssetClass.GOLD, amount: "0.00" }] })).toThrow("only one GOLD");
-    expect(() => projectCustomContribution({ portfolio, strategy, contributionAmount: "100.001", allocations: valid })).toThrow("at most two decimal places");
-    expect(() => planContribution({ portfolio, strategy, contributionAmount: Number.NaN })).toThrow("finite amount");
-    expect(() => planContribution({ portfolio, strategy, contributionAmount: "-1" })).toThrow("cannot be negative");
+    expect(() => projectCustomContribution({ portfolio, assets, strategy, contributionAmount: "101.00", allocations: valid })).toThrow("equal the contribution amount");
+    expect(() => projectCustomContribution({ portfolio, assets, strategy, contributionAmount: "100.00", allocations: [...valid.slice(0, 3), { assetClass: AssetClass.GOLD, amount: "0.00" }] })).toThrow("only one GOLD");
+    expect(() => projectCustomContribution({ portfolio, assets, strategy, contributionAmount: "100.001", allocations: valid })).toThrow("at most two decimal places");
+    expect(() => planContribution({ portfolio, assets, strategy, contributionAmount: Number.NaN })).toThrow("finite amount");
+    expect(() => planContribution({ portfolio, assets, strategy, contributionAmount: "-1" })).toThrow("cannot be negative");
   });
 
   it("returns advisory warnings when custom crypto remains above maximum", () => {
@@ -428,6 +516,7 @@ describe("portfolio engine contribution planning and simulation", () => {
     });
     const projection = projectCustomContribution({
       portfolio,
+      assets,
       strategy,
       contributionAmount: "1000.00",
       allocations: [
@@ -451,7 +540,7 @@ describe("portfolio engine contribution planning and simulation", () => {
         transaction({ assetId: "etf", accountId: "broker", type: TransactionType.INITIAL_BALANCE, quantity: "1000" }),
       ],
     });
-    const projection = buildContributionProjection({ portfolio, strategy, contributionAmount: "1000" });
+    const projection = buildContributionProjection({ portfolio, assets, strategy, contributionAmount: "1000" });
 
     expect(projection.plan.before.missingPriceSymbols).toContain("BTC");
     expect(projection.reasons).toContainEqual({ code: "ASSET_CLASS_UNDERWEIGHT", assetClass: AssetClass.GOLD });

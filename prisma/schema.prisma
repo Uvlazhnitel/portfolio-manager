@@ -81,6 +81,7 @@ model Asset {
   transactions Transaction[]
   cachedPrices CachedMarketPrice[]
   manualPrices ManualMarketPrice[]
+  strategyAssetAllocations StrategyAssetAllocation[]
 }
 
 model CachedMarketPrice {
@@ -184,9 +185,26 @@ model StrategyAllocation {
   maxPercent    Decimal    @db.Decimal(5, 2)
 
   strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+  assetAllocations StrategyAssetAllocation[]
 
   @@unique([strategyId, assetClass])
   @@index([strategyId])
+}
+
+model StrategyAssetAllocation {
+  id                   String   @id @default(cuid())
+  strategyAllocationId String
+  assetId              String
+  targetPercent        Decimal  @db.Decimal(5, 2)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  strategyAllocation StrategyAllocation @relation(fields: [strategyAllocationId], references: [id], onDelete: Cascade)
+  asset              Asset              @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@unique([strategyAllocationId, assetId])
+  @@index([strategyAllocationId])
+  @@index([assetId])
 }
 
 model PortfolioRule {

@@ -41,7 +41,13 @@ export type PortfolioAssistantContext = {
   strategy: {
     name: string;
     objective: string;
-    allocations: Array<{ assetClass: string; targetPercent: string; minPercent: string; maxPercent: string }>;
+    allocations: Array<{
+      assetClass: string;
+      targetPercent: string;
+      minPercent: string;
+      maxPercent: string;
+      assetTargets: Array<{ symbol: string; targetPercent: string }>;
+    }>;
     rules: Array<{ type: string; enabled: boolean; config: unknown }>;
   } | null;
   violations: Array<{
@@ -61,6 +67,15 @@ export type PortfolioAssistantContext = {
   latestContributionRecommendation: {
     contributionAmount: string;
     allocations: Array<{ assetClass: string; amount: string; percentOfContribution: string }>;
+    assetRecommendations: Array<{
+      symbol: string;
+      name: string;
+      assetClass: string;
+      amount: string;
+      percentOfContribution: string;
+      targetPercentOfClass: string;
+      effectiveTargetPercent: string;
+    }>;
     warnings: Array<{ code: string; assetClass: string; currentPercent: string; limitPercent: string }>;
   } | null;
   marketData: { timestamp: string | null; hasStalePrices: boolean };
@@ -123,13 +138,19 @@ export async function loadAssistantPortfolioRuntime({
     valueByAsset.set(holding.assetId, (valueByAsset.get(holding.assetId) ?? ZERO).plus(decimal(holding.value)));
   }
 
-  const recommendation = strategy && savedPlan && decimal(savedPlan.contributionAmount).greaterThan(ZERO)
-    ? buildContributionProjection({
+  let recommendation: ReturnType<typeof buildContributionProjection> | null = null;
+  if (strategy && savedPlan && decimal(savedPlan.contributionAmount).greaterThan(ZERO)) {
+    try {
+      recommendation = buildContributionProjection({
         portfolio,
+        assets,
         strategy: strategy.allocations,
         contributionAmount: serializeDecimal(savedPlan.contributionAmount),
-      })
-    : null;
+      });
+    } catch {
+      recommendation = null;
+    }
+  }
 
   const context: PortfolioAssistantContext = {
     baseCurrency,
@@ -157,6 +178,10 @@ export async function loadAssistantPortfolioRuntime({
             targetPercent: serializeDecimal(allocation.targetPercent),
             minPercent: serializeDecimal(allocation.minPercent),
             maxPercent: serializeDecimal(allocation.maxPercent),
+            assetTargets: allocation.assetAllocations.map((assetAllocation) => ({
+              symbol: assetAllocation.asset.symbol,
+              targetPercent: serializeDecimal(assetAllocation.targetPercent),
+            })),
           })),
           rules: strategy.portfolioRules
             .filter((rule) => rule.type !== PortfolioRuleType.CRYPTO_MAX_ALLOCATION)
@@ -195,6 +220,7 @@ export async function loadAssistantPortfolioRuntime({
       ? {
           contributionAmount: recommendation.plan.contributionAmount,
           allocations: recommendation.plan.allocations,
+          assetRecommendations: recommendation.plan.assetRecommendations,
           warnings: recommendation.warnings.map((warning) => ({
             code: warning.code,
             assetClass: warning.assetClass,

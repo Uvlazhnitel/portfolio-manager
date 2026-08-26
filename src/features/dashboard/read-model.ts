@@ -109,9 +109,14 @@ export async function getDashboardReadModel({
   const allocationByClass = new Map(portfolio.allocation.map((item) => [item.assetClass, item]));
   const accountAnalytics = new Map(analytics.accounts.map((account) => [account.accountId, account]));
   const contributionAmount = savedPlan ? serializeDecimal(savedPlan.contributionAmount) : "";
-  const contributionProjection = strategy && contributionAmount && contributionAmount !== "0"
-    ? buildContributionProjection({ portfolio, strategy: strategy.allocations, contributionAmount })
-    : null;
+  let contributionProjection: ReturnType<typeof buildContributionProjection> | null = null;
+  if (strategy && contributionAmount && contributionAmount !== "0") {
+    try {
+      contributionProjection = buildContributionProjection({ portfolio, assets, strategy: strategy.allocations, contributionAmount });
+    } catch {
+      contributionProjection = null;
+    }
+  }
   const hasHoldings = analytics.priceCoverage.totalHoldings > 0;
 
   return {

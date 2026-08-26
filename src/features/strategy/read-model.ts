@@ -1,6 +1,7 @@
 import { AssetClass, PortfolioRuleType } from "@prisma/client";
 import { serializeDecimal } from "@/lib/db/decimal";
 import { StrategyRepository } from "@/features/strategy/repository";
+import { PortfolioRepository } from "@/features/portfolio/repository";
 import { assetClassOrder, editableAssetClasses } from "@/features/strategy/validation";
 
 type StrategyWithRelations = NonNullable<Awaited<ReturnType<StrategyRepository["findActiveStrategy"]>>>;
@@ -16,6 +17,18 @@ export type StrategyEditorModel = {
     targetPercent: string;
     minPercent: string;
     maxPercent: string;
+    assetTargets: Array<{
+      assetId: string;
+      symbol: string;
+      name: string;
+      targetPercent: string;
+    }>;
+  }>;
+  availableAssets: Array<{
+    id: string;
+    symbol: string;
+    name: string;
+    assetClass: AssetClass;
   }>;
   rules: {
     preferContributionsOverSelling: boolean;
@@ -25,17 +38,26 @@ export type StrategyEditorModel = {
   };
 };
 
-export async function getStrategyEditorModel(repository = new StrategyRepository()) {
-  const strategy = await repository.findActiveStrategy();
+export async function getStrategyEditorModel(
+  repository = new StrategyRepository(),
+  portfolioRepository = new PortfolioRepository(),
+) {
+  const [strategy, assets] = await Promise.all([
+    repository.findActiveStrategy(),
+    portfolioRepository.listAssets(),
+  ]);
 
   if (!strategy) {
     throw new Error("Active strategy is not configured. Run the database seed first.");
   }
 
-  return toStrategyEditorModel(strategy);
+  return toStrategyEditorModel(strategy, assets);
 }
 
-export function toStrategyEditorModel(strategy: StrategyWithRelations): StrategyEditorModel {
+export function toStrategyEditorModel(
+  strategy: StrategyWithRelations,
+  availableAssets: Array<{ id: string; symbol: string; name: string; assetClass: AssetClass }> = [],
+): StrategyEditorModel {
   const rulesByType = new Map(strategy.portfolioRules.map((rule) => [rule.type, rule]));
   const driftRule = rulesByType.get(PortfolioRuleType.MIN_REBALANCE_DRIFT);
 
@@ -52,6 +74,22 @@ export function toStrategyEditorModel(strategy: StrategyWithRelations): Strategy
         targetPercent: serializeDecimal(allocation.targetPercent),
         minPercent: serializeDecimal(allocation.minPercent),
         maxPercent: serializeDecimal(allocation.maxPercent),
+        assetTargets: [...allocation.assetAllocations]
+          .sort((left, right) => left.asset.symbol.localeCompare(right.asset.symbol))
+          .map((assetAllocation) => ({
+            assetId: assetAllocation.assetId,
+            symbol: assetAllocation.asset.symbol,
+            name: assetAllocation.asset.name,
+            targetPercent: serializeDecimal(assetAllocation.targetPercent),
+          })),
+      })),
+    availableAssets: [...availableAssets]
+      .sort((left, right) => left.symbol.localeCompare(right.symbol))
+      .map((asset) => ({
+        id: asset.id,
+        symbol: asset.symbol,
+        name: asset.name,
+        assetClass: asset.assetClass,
       })),
     rules: {
       preferContributionsOverSelling:

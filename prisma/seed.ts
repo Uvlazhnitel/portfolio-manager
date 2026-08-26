@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { validateStrategyAllocations } from "../src/features/strategy/validation";
+import { backfillStrategyAssetAllocations } from "../src/features/strategy/asset-target-backfill";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -27,8 +28,6 @@ const strategyAllocations = [
 ];
 
 async function main() {
-  validateStrategyAllocations(strategyAllocations);
-
   await Promise.all([
     prisma.account.upsert({
       where: { name: "Bybit" },
@@ -48,6 +47,11 @@ async function main() {
   ]);
 
   await Promise.all([
+    prisma.asset.upsert({
+      where: { symbol: "VWCE" },
+      update: {},
+      create: { symbol: "VWCE", name: "Vanguard FTSE All-World UCITS ETF", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "USD" },
+    }),
     prisma.asset.upsert({
       where: { symbol: "BTC" },
       update: { externalId: "bitcoin" },
@@ -85,6 +89,45 @@ async function main() {
     }),
   ]);
 
+  const seededAssets = await prisma.asset.findMany({
+    where: { symbol: { in: ["VWCE", "BTC", "ETH", "PHYSICAL_GOLD", "XAUT", "USD", "EUR", "USDT"] } },
+  });
+  const assetIdBySymbol = new Map(seededAssets.map((asset) => [asset.symbol, asset.id]));
+  const requireAssetId = (symbol: string) => {
+    const assetId = assetIdBySymbol.get(symbol);
+    if (!assetId) throw new Error(`Seed asset ${symbol} was not created.`);
+    return assetId;
+  };
+  const strategyAllocationsWithAssetTargets = [
+    {
+      ...strategyAllocations[0],
+      assetTargets: [{ assetId: requireAssetId("VWCE"), targetPercent: "100" }],
+    },
+    {
+      ...strategyAllocations[1],
+      assetTargets: [
+        { assetId: requireAssetId("BTC"), targetPercent: "70" },
+        { assetId: requireAssetId("ETH"), targetPercent: "30" },
+      ],
+    },
+    {
+      ...strategyAllocations[2],
+      assetTargets: [
+        { assetId: requireAssetId("PHYSICAL_GOLD"), targetPercent: "60" },
+        { assetId: requireAssetId("XAUT"), targetPercent: "40" },
+      ],
+    },
+    {
+      ...strategyAllocations[3],
+      assetTargets: [
+        { assetId: requireAssetId("USD"), targetPercent: "50" },
+        { assetId: requireAssetId("EUR"), targetPercent: "25" },
+        { assetId: requireAssetId("USDT"), targetPercent: "25" },
+      ],
+    },
+  ];
+  validateStrategyAllocations(strategyAllocationsWithAssetTargets);
+
   const strategy = await prisma.strategy.upsert({
     where: { id: "default-strategy" },
     update: {},
@@ -96,8 +139,8 @@ async function main() {
     },
   });
 
-  for (const allocation of strategyAllocations) {
-    await prisma.strategyAllocation.upsert({
+  for (const allocation of strategyAllocationsWithAssetTargets) {
+    const strategyAllocation = await prisma.strategyAllocation.upsert({
       where: {
         strategyId_assetClass: {
           strategyId: strategy.id,
@@ -107,9 +150,29 @@ async function main() {
       update: {},
       create: {
         strategyId: strategy.id,
-        ...allocation,
+        assetClass: allocation.assetClass,
+        targetPercent: allocation.targetPercent,
+        minPercent: allocation.minPercent,
+        maxPercent: allocation.maxPercent,
       },
     });
+
+    for (const assetTarget of allocation.assetTargets) {
+      await prisma.strategyAssetAllocation.upsert({
+        where: {
+          strategyAllocationId_assetId: {
+            strategyAllocationId: strategyAllocation.id,
+            assetId: assetTarget.assetId,
+          },
+        },
+        update: { targetPercent: assetTarget.targetPercent },
+        create: {
+          strategyAllocationId: strategyAllocation.id,
+          assetId: assetTarget.assetId,
+          targetPercent: assetTarget.targetPercent,
+        },
+      });
+    }
   }
 
   const rules = [
@@ -135,6 +198,8 @@ async function main() {
       },
     });
   }
+
+  await backfillStrategyAssetAllocations(prisma);
 }
 
 main()

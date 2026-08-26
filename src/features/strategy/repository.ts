@@ -2,7 +2,14 @@ import { PortfolioRuleType, type AssetClass, type PrismaClient } from "@prisma/c
 import { prisma } from "@/lib/db/client";
 
 const strategyInclude = {
-  allocations: true,
+  allocations: {
+    include: {
+      assetAllocations: {
+        include: { asset: true },
+        orderBy: { assetId: "asc" },
+      },
+    },
+  },
   portfolioRules: true,
 } as const;
 
@@ -31,6 +38,10 @@ export class StrategyRepository {
       targetPercent: string;
       minPercent: string;
       maxPercent: string;
+      assetTargets: Array<{
+        assetId: string;
+        targetPercent: string;
+      }>;
     }>;
     rules: {
       preferContributionsOverSelling: boolean;
@@ -45,8 +56,22 @@ export class StrategyRepository {
         data: { name: input.name },
       });
 
+      const requestedAssetIds = [...new Set(input.allocations.flatMap((allocation) => allocation.assetTargets.map((target) => target.assetId)))];
+      const assets = await transaction.asset.findMany({ where: { id: { in: requestedAssetIds } } });
+      const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+
       for (const allocation of input.allocations) {
-        await transaction.strategyAllocation.upsert({
+        for (const assetTarget of allocation.assetTargets) {
+          const asset = assetById.get(assetTarget.assetId);
+          if (!asset) {
+            throw new Error(`${allocation.assetClass} asset target references an unknown asset.`);
+          }
+          if (asset.assetClass !== allocation.assetClass) {
+            throw new Error(`${asset.symbol} must match parent ${allocation.assetClass} allocation.`);
+          }
+        }
+
+        const savedAllocation = await transaction.strategyAllocation.upsert({
           where: {
             strategyId_assetClass: {
               strategyId: strategy.id,
@@ -60,9 +85,36 @@ export class StrategyRepository {
           },
           create: {
             strategyId: strategy.id,
-            ...allocation,
+            assetClass: allocation.assetClass,
+            targetPercent: allocation.targetPercent,
+            minPercent: allocation.minPercent,
+            maxPercent: allocation.maxPercent,
           },
         });
+
+        await transaction.strategyAssetAllocation.deleteMany({
+          where: {
+            strategyAllocationId: savedAllocation.id,
+            assetId: { notIn: allocation.assetTargets.map((target) => target.assetId) },
+          },
+        });
+
+        for (const assetTarget of allocation.assetTargets) {
+          await transaction.strategyAssetAllocation.upsert({
+            where: {
+              strategyAllocationId_assetId: {
+                strategyAllocationId: savedAllocation.id,
+                assetId: assetTarget.assetId,
+              },
+            },
+            update: { targetPercent: assetTarget.targetPercent },
+            create: {
+              strategyAllocationId: savedAllocation.id,
+              assetId: assetTarget.assetId,
+              targetPercent: assetTarget.targetPercent,
+            },
+          });
+        }
       }
 
       await transaction.strategyAllocation.deleteMany({

@@ -18,7 +18,9 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatUtcTimestamp } from "@/lib/format/date";
 
-type Draft = Pick<StrategyEditorModel, "id" | "name" | "allocations" | "rules">;
+type Draft = Pick<StrategyEditorModel, "id" | "name" | "rules"> & {
+  allocations: StrategyAllocationInput[];
+};
 type AllocationField = "targetPercent" | "minPercent" | "maxPercent";
 
 const allocationLabels: Record<AllocationField, string> = {
@@ -65,11 +67,18 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
   }
 
   function addAllocation(assetClass: AssetClassValue) {
+    const firstAsset = strategy.availableAssets.find((asset) => asset.assetClass === assetClass);
     setDraft((current) => ({
       ...current,
       allocations: [
         ...current.allocations,
-        { assetClass, targetPercent: "0", minPercent: "0", maxPercent: "100" },
+        {
+          assetClass,
+          targetPercent: "0",
+          minPercent: "0",
+          maxPercent: "100",
+          assetTargets: firstAsset ? [{ assetId: firstAsset.id, targetPercent: "100" }] : [],
+        },
       ].sort((left, right) => assetClassOrder(left.assetClass) - assetClassOrder(right.assetClass)),
     }));
   }
@@ -83,6 +92,52 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
 
   function updateRule<Key extends keyof Draft["rules"]>(key: Key, value: Draft["rules"][Key]) {
     setDraft((current) => ({ ...current, rules: { ...current.rules, [key]: value } }));
+  }
+
+  function addAssetTarget(assetClass: AssetClassValue, assetId: string) {
+    if (!assetId) return;
+    setDraft((current) => ({
+      ...current,
+      allocations: current.allocations.map((allocation) => {
+        if (allocation.assetClass !== assetClass || allocation.assetTargets.some((target) => target.assetId === assetId)) {
+          return allocation;
+        }
+        return {
+          ...allocation,
+          assetTargets: [
+            ...allocation.assetTargets,
+            { assetId, targetPercent: allocation.assetTargets.length === 0 ? "100" : "0" },
+          ],
+        };
+      }),
+    }));
+  }
+
+  function updateAssetTarget(assetClass: AssetClassValue, assetId: string, value: string) {
+    setDraft((current) => ({
+      ...current,
+      allocations: current.allocations.map((allocation) =>
+        allocation.assetClass === assetClass
+          ? {
+              ...allocation,
+              assetTargets: allocation.assetTargets.map((target) =>
+                target.assetId === assetId ? { ...target, targetPercent: value } : target,
+              ),
+            }
+          : allocation,
+      ),
+    }));
+  }
+
+  function removeAssetTarget(assetClass: AssetClassValue, assetId: string) {
+    setDraft((current) => ({
+      ...current,
+      allocations: current.allocations.map((allocation) =>
+        allocation.assetClass === assetClass
+          ? { ...allocation, assetTargets: allocation.assetTargets.filter((target) => target.assetId !== assetId) }
+          : allocation,
+      ),
+    }));
   }
 
   return (
@@ -127,8 +182,12 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
             <AllocationRow
               key={allocation.assetClass}
               allocation={allocation}
+              availableAssets={strategy.availableAssets.filter((asset) => asset.assetClass === allocation.assetClass)}
               onChange={(field, value) => updateAllocation(allocation.assetClass, field, value)}
               onRemove={() => removeAllocation(allocation.assetClass)}
+              onAddAsset={(assetId) => addAssetTarget(allocation.assetClass, assetId)}
+              onChangeAsset={(assetId, value) => updateAssetTarget(allocation.assetClass, assetId, value)}
+              onRemoveAsset={(assetId) => removeAssetTarget(allocation.assetClass, assetId)}
             />
           ))}
         </div>
@@ -233,13 +292,28 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
 
 function AllocationRow({
   allocation,
+  availableAssets,
   onChange,
   onRemove,
+  onAddAsset,
+  onChangeAsset,
+  onRemoveAsset,
 }: {
   allocation: StrategyAllocationInput;
+  availableAssets: StrategyEditorModel["availableAssets"];
   onChange: (field: AllocationField, value: string) => void;
   onRemove: () => void;
+  onAddAsset: (assetId: string) => void;
+  onChangeAsset: (assetId: string, value: string) => void;
+  onRemoveAsset: (assetId: string) => void;
 }) {
+  const [selectedAssetId, setSelectedAssetId] = useState("");
+  const targetAssetIds = new Set(allocation.assetTargets.map((target) => target.assetId));
+  const addableAssets = availableAssets.filter((asset) => !targetAssetIds.has(asset.id));
+  const assetById = new Map(availableAssets.map((asset) => [asset.id, asset]));
+  const assetTotal = allocation.assetTargets.reduce((sum, target) => sum + safeBasisPoints(target.targetPercent), 0);
+  const effectiveSelectedAssetId = selectedAssetId || addableAssets[0]?.id || "";
+
   return (
     <div className="rounded-lg border border-border bg-surface p-4">
       <div className="flex items-center justify-between gap-3">
@@ -281,6 +355,74 @@ function AllocationRow({
             </div>
           </label>
         ))}
+      </div>
+      <div className="mt-5 border-t border-border pt-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h4 className="text-sm font-semibold text-foreground">Asset targets</h4>
+            <p className="mt-1 text-sm text-muted">Targets inside {formatAssetClass(allocation.assetClass)} must total 100%.</p>
+          </div>
+          <Badge tone={assetTotal === 10_000 ? "success" : "warning"}>Asset total: {(assetTotal / 100).toFixed(2)}%</Badge>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          {allocation.assetTargets.map((target) => {
+            const asset = assetById.get(target.assetId);
+            return (
+              <div key={target.assetId} className="grid gap-3 rounded-lg border border-border bg-card p-3 md:grid-cols-[minmax(0,1fr)_minmax(10rem,16rem)_2.75rem] md:items-end">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-foreground">{asset?.symbol ?? "Unknown asset"}</p>
+                  <p className="mt-1 truncate text-xs text-muted">{asset?.name ?? target.assetId}</p>
+                </div>
+                <label className="block">
+                  <span className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted">Target inside class</span>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      inputMode="decimal"
+                      value={target.targetPercent}
+                      onChange={(event) => onChangeAsset(target.assetId, event.target.value)}
+                      className={`${inputClassName} pr-8`}
+                    />
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted">%</span>
+                  </div>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => onRemoveAsset(target.assetId)}
+                  aria-label={`Remove ${asset?.symbol ?? "asset"} target`}
+                  className="flex h-11 w-11 items-center justify-center rounded-lg border border-border text-muted transition hover:border-destructive/50 hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {addableAssets.length > 0 ? (
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+            <select
+              value={effectiveSelectedAssetId}
+              onChange={(event) => setSelectedAssetId(event.target.value)}
+              className={`${inputClassName} sm:flex-1`}
+            >
+              {addableAssets.map((asset) => (
+                <option key={asset.id} value={asset.id}>{asset.symbol} · {asset.name}</option>
+              ))}
+            </select>
+            <Button type="button" variant="secondary" onClick={() => {
+              onAddAsset(effectiveSelectedAssetId);
+              setSelectedAssetId("");
+            }}>
+              <Plus className="mr-2 h-4 w-4" aria-hidden="true" />
+              Add asset
+            </Button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -328,7 +470,16 @@ function createDraft(strategy: StrategyEditorModel): Draft {
   return {
     id: strategy.id,
     name: strategy.name,
-    allocations: strategy.allocations.map((allocation) => ({ ...allocation })),
+    allocations: strategy.allocations.map((allocation) => ({
+      assetClass: allocation.assetClass,
+      targetPercent: allocation.targetPercent,
+      minPercent: allocation.minPercent,
+      maxPercent: allocation.maxPercent,
+      assetTargets: allocation.assetTargets.map((assetTarget) => ({
+        assetId: assetTarget.assetId,
+        targetPercent: assetTarget.targetPercent,
+      })),
+    })),
     rules: { ...strategy.rules },
   };
 }
@@ -336,6 +487,11 @@ function createDraft(strategy: StrategyEditorModel): Draft {
 function sliderValue(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.min(100, Math.max(0, parsed)) : 0;
+}
+
+function safeBasisPoints(value: string | number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
 }
 
 function formatAssetClass(assetClass: AssetClass) {

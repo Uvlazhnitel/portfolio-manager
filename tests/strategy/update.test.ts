@@ -1,4 +1,4 @@
-import { AssetClass, PortfolioRuleType } from "@prisma/client";
+import { AssetClass, AssetType, PortfolioRuleType } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { StrategyService } from "@/features/strategy/service";
@@ -6,6 +6,7 @@ import { createTestDatabase, type TestDatabase } from "../helpers/test-db";
 
 let testDb: TestDatabase;
 let strategyId: string;
+let assetIds: Record<AssetClass, string>;
 
 const allocations = [
   { assetClass: AssetClass.ETF, targetPercent: "77", minPercent: "72", maxPercent: "82" },
@@ -14,14 +15,42 @@ const allocations = [
   { assetClass: AssetClass.CASH, targetPercent: "2", minPercent: "0", maxPercent: "5" },
 ];
 
+function allocationsWithTargets(input = allocations) {
+  return input.map((allocation) => ({
+    ...allocation,
+    assetTargets: [{ assetId: assetIds[allocation.assetClass], targetPercent: "100" }],
+  }));
+}
+
 beforeAll(async () => {
   testDb = await createTestDatabase();
+  const [etf, crypto, gold, cash] = await Promise.all([
+    testDb.prisma.asset.create({ data: { symbol: "VWCE", name: "ETF", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "EUR" } }),
+    testDb.prisma.asset.create({ data: { symbol: "BTC", name: "Bitcoin", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "BTC" } }),
+    testDb.prisma.asset.create({ data: { symbol: "XAUT", name: "Tether Gold", assetClass: AssetClass.GOLD, assetType: AssetType.TOKENIZED_GOLD, currency: "XAUT" } }),
+    testDb.prisma.asset.create({ data: { symbol: "EUR", name: "Euro", assetClass: AssetClass.CASH, assetType: AssetType.FIAT, currency: "EUR" } }),
+  ]);
+  assetIds = {
+    [AssetClass.ETF]: etf.id,
+    [AssetClass.CRYPTO]: crypto.id,
+    [AssetClass.GOLD]: gold.id,
+    [AssetClass.CASH]: cash.id,
+    [AssetClass.OTHER]: cash.id,
+  };
   const strategy = await testDb.prisma.strategy.create({
     data: {
       name: "Original",
       objective: "Long-term growth",
       baseCurrency: "EUR",
-      allocations: { create: allocations },
+      allocations: {
+        create: allocationsWithTargets().map((allocation) => ({
+          assetClass: allocation.assetClass,
+          targetPercent: allocation.targetPercent,
+          minPercent: allocation.minPercent,
+          maxPercent: allocation.maxPercent,
+          assetAllocations: { create: allocation.assetTargets },
+        })),
+      },
       portfolioRules: {
         create: [
           { type: PortfolioRuleType.CRYPTO_MAX_ALLOCATION, enabled: true, config: { maxPercent: "15" } },
@@ -43,7 +72,7 @@ describe("strategy update", () => {
     const updated = await service.updateStrategy({
       id: strategyId,
       name: "Long-term capital growth",
-      allocations: allocations.map((allocation) =>
+      allocations: allocationsWithTargets().map((allocation) =>
         allocation.assetClass === AssetClass.CRYPTO
           ? { ...allocation, maxPercent: "14" }
           : allocation,
@@ -74,7 +103,7 @@ describe("strategy update", () => {
     await expect(service.updateStrategy({
       id: strategyId,
       name: "Must not persist",
-      allocations: allocations.map((allocation) =>
+      allocations: allocationsWithTargets().map((allocation) =>
         allocation.assetClass === AssetClass.ETF
           ? { ...allocation, targetPercent: "78" }
           : allocation,
@@ -102,11 +131,11 @@ describe("strategy update", () => {
     const withoutCash = await service.updateStrategy({
       id: strategyId,
       name: "No cash sleeve",
-      allocations: [
+      allocations: allocationsWithTargets([
         { assetClass: AssetClass.ETF, targetPercent: "78", minPercent: "70", maxPercent: "85" },
         { assetClass: AssetClass.CRYPTO, targetPercent: "12", minPercent: "8", maxPercent: "20" },
         { assetClass: AssetClass.GOLD, targetPercent: "10", minPercent: "5", maxPercent: "15" },
-      ],
+      ]),
       rules: {
         preferContributionsOverSelling: true,
         challengeStrategyViolations: true,
@@ -124,7 +153,7 @@ describe("strategy update", () => {
     const withCashAgain = await service.updateStrategy({
       id: strategyId,
       name: "Cash sleeve restored",
-      allocations,
+      allocations: allocationsWithTargets(),
       rules: {
         preferContributionsOverSelling: true,
         challengeStrategyViolations: true,
@@ -135,5 +164,42 @@ describe("strategy update", () => {
 
     expect(withCashAgain.allocations).toHaveLength(4);
     expect(withCashAgain.allocations.some((allocation) => allocation.assetClass === AssetClass.CASH)).toBe(true);
+  });
+
+  it("persists adding and removing asset targets", async () => {
+    const service = new StrategyService(new StrategyRepository(testDb.prisma));
+    const eth = await testDb.prisma.asset.create({ data: { symbol: "ETH", name: "Ethereum", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "ETH" } });
+
+    const updated = await service.updateStrategy({
+      id: strategyId,
+      name: "Split crypto",
+      allocations: allocationsWithTargets().map((allocation) =>
+        allocation.assetClass === AssetClass.CRYPTO
+          ? { ...allocation, assetTargets: [{ assetId: assetIds.CRYPTO, targetPercent: "70" }, { assetId: eth.id, targetPercent: "30" }] }
+          : allocation,
+      ),
+      rules: {
+        preferContributionsOverSelling: true,
+        challengeStrategyViolations: true,
+        preferNoActionWhenEvidenceWeak: true,
+        minimumRebalanceDrift: "2",
+      },
+    });
+
+    expect(updated.allocations.find((allocation) => allocation.assetClass === AssetClass.CRYPTO)?.assetAllocations).toHaveLength(2);
+
+    const removed = await service.updateStrategy({
+      id: strategyId,
+      name: "Single crypto",
+      allocations: allocationsWithTargets(),
+      rules: {
+        preferContributionsOverSelling: true,
+        challengeStrategyViolations: true,
+        preferNoActionWhenEvidenceWeak: true,
+        minimumRebalanceDrift: "2",
+      },
+    });
+
+    expect(removed.allocations.find((allocation) => allocation.assetClass === AssetClass.CRYPTO)?.assetAllocations).toHaveLength(1);
   });
 });
