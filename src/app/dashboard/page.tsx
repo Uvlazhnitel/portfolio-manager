@@ -11,8 +11,8 @@ export default async function DashboardPage() {
   return (
     <>
       <PageHeader
-        title="Portfolio Dashboard"
-        description="Long-term allocation, strategy alignment, and your next contribution."
+        title="Dashboard"
+        description="Portfolio position, performance, allocation, and the next decision."
         action={(
           <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
             <span className="text-xs text-muted">Last price update {formatTimestamp(dashboard.valuation.lastUpdated)}</span>

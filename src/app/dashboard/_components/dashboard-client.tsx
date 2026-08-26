@@ -1,192 +1,326 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useTransition, type ReactNode } from "react";
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import { AlertCircle, ArrowRight, Building2, CheckCircle2, CircleDollarSign, Info, Sparkles, Target, X } from "lucide-react";
-import { previewContributionAction } from "@/features/contributions/actions";
-import { contributionClassLabels, contributionReasonText } from "@/features/contributions/presentation";
+import type { ReactNode } from "react";
+import { AlertTriangle, ArrowRight, CheckCircle2, CircleDollarSign, Clock3, Target, TrendingUp } from "lucide-react";
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { contributionClassLabels } from "@/features/contributions/presentation";
 import type { DashboardReadModel } from "@/features/dashboard/read-model";
-import { formatDashboardCurrency as formatCurrency, formatDashboardPercent as formatPercent, formatDashboardSignedCurrency as formatSignedCurrency, strategyWarningText } from "@/features/dashboard/presentation";
-import type { ContributionProjection } from "@/features/portfolio-engine";
+import {
+  formatDashboardCurrency as formatCurrency,
+  formatDashboardPercent as formatPercent,
+  formatDashboardSignedCurrency as formatSignedCurrency,
+} from "@/features/dashboard/presentation";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
 import { decimalSign } from "@/lib/format/decimal";
-import { formatUtcDate } from "@/lib/format/date";
+import { cn } from "@/lib/utils";
 
-const chartColors = ["#8b5cf6", "#a78bfa", "#c4b5fd", "#64748b"];
+type TrendRow = {
+  date: string;
+  portfolioValue: number | null;
+  netInvested: number;
+  investmentGain: number | null;
+  isComplete: boolean;
+  hasStalePrices: boolean;
+  missingPriceSymbols: string[];
+};
 
 export function DashboardClient({ dashboard }: { dashboard: DashboardReadModel }) {
-  const [amount, setAmount] = useState(dashboard.contribution.amount);
-  const [projection, setProjection] = useState(dashboard.contribution.projection);
-  const [previewError, setPreviewError] = useState("");
-  const [isAlignmentOpen, setIsAlignmentOpen] = useState(false);
-  const [isReasonsOpen, setIsReasonsOpen] = useState(false);
-  const [isPreviewPending, startPreviewTransition] = useTransition();
-
-  useEffect(() => {
-    if (!isValidPositiveAmount(amount)) return;
-    let isCurrent = true;
-    const timer = window.setTimeout(() => {
-      startPreviewTransition(async () => {
-        const result = await previewContributionAction({ contributionAmount: amount });
-        if (!isCurrent) return;
-        if (!result.ok) {
-          setPreviewError(result.message);
-          return;
-        }
-        setPreviewError("");
-        setProjection(result.data.projection);
-      });
-    }, 350);
-    return () => {
-      isCurrent = false;
-      window.clearTimeout(timer);
-    };
-  }, [amount]);
-
-  function changeAmount(value: string) {
-    setAmount(value);
-    setProjection(null);
-    setPreviewError(value && !isValidPositiveAmount(value) ? `Enter a positive ${dashboard.valuation.currency} amount with at most two decimal places.` : "");
-  }
-
   return (
-    <div className="space-y-4">
-      {dashboard.valuation.warning ? <Notice tone="warning">{dashboard.valuation.warning}</Notice> : null}
-      {dashboard.valuation.isPartial ? (
-        <Notice tone="warning">Valuation and allocation use available prices only. Missing: {dashboard.valuation.missingPriceSymbols.join(", ")}.</Notice>
-      ) : null}
-
-      <div className="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <TotalValueCard dashboard={dashboard} />
-        <div className="order-4 md:order-2"><AlignmentCard dashboard={dashboard} onDetails={() => setIsAlignmentOpen(true)} /></div>
-        <div className="order-2 md:order-3"><AllocationCard dashboard={dashboard} /></div>
-        <div className="order-3 md:order-4"><ContributionCard currency={dashboard.valuation.currency} amount={amount} projection={projection} error={previewError} isPending={isPreviewPending} onAmount={changeAmount} onReasons={() => setIsReasonsOpen(true)} /></div>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[1.4fr_0.8fr]">
-        <RecentActivity dashboard={dashboard} />
-        <Accounts dashboard={dashboard} />
-      </div>
-
-      <StrategyStatus dashboard={dashboard} />
-
-      {isAlignmentOpen ? <AlignmentDetails dashboard={dashboard} onClose={() => setIsAlignmentOpen(false)} /> : null}
-      {isReasonsOpen && projection ? <ReasonDetails projection={projection} onClose={() => setIsReasonsOpen(false)} /> : null}
+    <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(300px,0.8fr)]">
+      <OverviewPanel dashboard={dashboard} />
+      <ContributionPanel dashboard={dashboard} />
+      <AllocationPanel dashboard={dashboard} />
+      <TrendPanel dashboard={dashboard} />
     </div>
   );
 }
 
-function TotalValueCard({ dashboard }: { dashboard: DashboardReadModel }) {
-  const gain = dashboard.valuation.investmentGain;
+function OverviewPanel({ dashboard }: { dashboard: DashboardReadModel }) {
+  const { valuation } = dashboard;
+  const gainSign = valuation.investmentGain === null ? null : decimalSign(valuation.investmentGain);
+  const health = dataHealth(dashboard);
+
   return (
-    <Card className="order-1 min-w-0 md:order-1">
-      <CardHeading title="Total portfolio value" icon={<CircleDollarSign className="h-5 w-5" />} />
-      <p className="mt-6 break-words text-3xl font-semibold tracking-tight xl:text-[1.75rem]">{formatCurrency(dashboard.valuation.totalValue, dashboard.valuation.currency)}</p>
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        {dashboard.alignment.totalHoldings === 0 ? <Badge>No holdings</Badge> : dashboard.valuation.isPartial ? <Badge tone="warning">Partial value</Badge> : <Badge tone="success">All prices available</Badge>}
-        {dashboard.valuation.hasStalePrices ? <Badge tone="warning">Stale prices</Badge> : null}
-        {dashboard.valuation.isCostBasisPartial ? <Badge tone="warning">Partial cost basis</Badge> : null}
+    <Card className="order-1 min-w-0 xl:col-start-1 xl:row-start-1">
+      <SectionHeading eyebrow="Portfolio" title="Current position" icon={<CircleDollarSign className="h-5 w-5" />}>
+        <Link href="/performance" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:text-primary/80">
+          Performance <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </SectionHeading>
+
+      <p className="mt-7 text-sm text-muted">Portfolio value</p>
+      <p className="mt-2 break-words text-4xl font-semibold text-foreground sm:text-5xl">
+        {formatCurrency(valuation.totalValue, valuation.currency)}
+      </p>
+
+      <dl className="mt-7 grid grid-cols-1 border-y border-border sm:grid-cols-3 sm:divide-x sm:divide-border">
+        <OverviewMetric label="Net invested" value={formatCurrency(valuation.netInvested, valuation.currency)} />
+        <OverviewMetric
+          label="Investment gain"
+          value={valuation.investmentGain === null ? "Unavailable" : formatSignedCurrency(valuation.investmentGain, valuation.currency)}
+          tone={gainSign === null || gainSign === 0 ? "default" : gainSign > 0 ? "positive" : "negative"}
+        />
+        <OverviewMetric
+          label="Simple return"
+          value={valuation.simpleReturnPercent === null ? "Unavailable" : signedPercent(valuation.simpleReturnPercent)}
+          tone={gainSign === null || gainSign === 0 ? "default" : gainSign > 0 ? "positive" : "negative"}
+        />
+      </dl>
+
+      <div className={cn("mt-5 flex items-start gap-2 text-sm", health.tone === "good" ? "text-success" : "text-warning")}>
+        {health.tone === "good" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />}
+        <p className="leading-5">{health.text}</p>
       </div>
-      {gain !== null ? (
-        <div className="mt-5 grid gap-3 border-t border-border pt-4">
-          <div>
-            <p className="text-xs uppercase tracking-wide text-muted">Investment gain</p>
-            <p className={cn("mt-1 font-semibold", (decimalSign(gain) ?? 0) >= 0 ? "text-success" : "text-destructive")}>{formatSignedCurrency(gain, dashboard.valuation.currency)}</p>
-          </div>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <Metric label="Net invested" value={dashboard.valuation.netInvested ? formatCurrency(dashboard.valuation.netInvested, dashboard.valuation.currency) : "Unavailable"} />
-            <Metric label="Simple return" value={dashboard.valuation.simpleReturnPercent ? formatPercent(dashboard.valuation.simpleReturnPercent) : "Unavailable"} />
-          </div>
-          <Link href="/performance" className="text-sm font-medium text-primary hover:underline">View performance</Link>
+    </Card>
+  );
+}
+
+function OverviewMetric({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "positive" | "negative" }) {
+  return (
+    <div className="min-w-0 py-4 sm:px-5 sm:first:pl-0 sm:last:pr-0">
+      <dt className="text-xs text-muted">{label}</dt>
+      <dd className={cn("mt-2 break-words text-lg font-semibold", tone === "positive" && "text-success", tone === "negative" && "text-destructive")}>{value}</dd>
+    </div>
+  );
+}
+
+function TrendPanel({ dashboard }: { dashboard: DashboardReadModel }) {
+  const rows = dashboard.history.points.map<TrendRow>((point) => ({
+    date: point.date,
+    portfolioValue: point.portfolioValue === null ? null : Number(point.portfolioValue),
+    netInvested: Number(point.netInvested),
+    investmentGain: point.investmentGain === null ? null : Number(point.investmentGain),
+    isComplete: point.isComplete,
+    hasStalePrices: point.hasStalePrices,
+    missingPriceSymbols: point.missingPriceSymbols,
+  }));
+  const completeRows = rows.filter((row) => row.portfolioValue !== null);
+
+  return (
+    <Card className="order-4 min-w-0 xl:col-start-2 xl:row-start-1">
+      <SectionHeading eyebrow="History" title="Portfolio trend" icon={<TrendingUp className="h-5 w-5" />}>
+        {dashboard.history.trackingStartedAt ? <span className="text-xs text-muted">Since {shortDate(dashboard.history.trackingStartedAt)}</span> : null}
+      </SectionHeading>
+
+      {completeRows.length > 1 ? (
+        <div className="mt-6 h-[220px] min-w-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={rows} margin={{ top: 8, right: 4, bottom: 0, left: -18 }}>
+              <CartesianGrid stroke="#282d3d" strokeDasharray="3 4" vertical={false} />
+              <XAxis dataKey="date" tickFormatter={shortDate} stroke="#8e96ad" tickLine={false} axisLine={false} minTickGap={30} fontSize={11} />
+              <YAxis tickFormatter={(value) => compactMoney(Number(value), dashboard.valuation.currency)} stroke="#8e96ad" tickLine={false} axisLine={false} width={62} fontSize={11} />
+              <Tooltip content={({ active, payload }) => <TrendTooltip active={active} row={payload?.[0]?.payload as TrendRow | undefined} currency={dashboard.valuation.currency} />} />
+              <Line type="monotone" dataKey="portfolioValue" stroke="#8b5cf6" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} connectNulls={false} />
+              <Line type="monotone" dataKey="netInvested" stroke="#22c55e" strokeWidth={2} strokeDasharray="5 4" dot={false} activeDot={{ r: 4 }} connectNulls={false} />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
-      ) : <p className="mt-5 border-t border-border pt-4 text-sm text-muted">Performance is unavailable until current price coverage is complete.</p>}
-      {dashboard.valuation.isCostBasisPartial ? <p className="mt-3 text-xs text-warning">Excludes {dashboard.valuation.missingCostBasisSymbols.join(", ")} from gain and return.</p> : null}
-    </Card>
-  );
-}
+      ) : completeRows.length === 1 ? (
+        <div className="mt-6 flex h-[220px] flex-col justify-center border-y border-border">
+          <div className="flex items-center gap-3">
+            <span className="h-2.5 w-2.5 rounded-full bg-primary" />
+            <div>
+              <p className="text-xs text-muted">First daily observation · {shortDate(completeRows[0].date)}</p>
+              <p className="mt-2 text-2xl font-semibold">{formatCurrency(String(completeRows[0].portfolioValue), dashboard.valuation.currency)}</p>
+            </div>
+          </div>
+          <div className="mt-6 h-px w-full bg-border" />
+          <p className="mt-4 text-xs text-muted">The trend line will appear after the next daily observation.</p>
+        </div>
+      ) : (
+        <div className="mt-6 flex h-[220px] flex-col items-center justify-center border-y border-border text-center">
+          <Clock3 className="h-6 w-6 text-muted" />
+          <p className="mt-3 font-medium">Waiting for complete daily data</p>
+          <p className="mt-2 max-w-xs text-sm leading-5 text-muted">Tracking begins when every held asset has a daily price.</p>
+        </div>
+      )}
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return <div><p className="text-xs uppercase tracking-wide text-muted">{label}</p><p className="mt-1 font-semibold text-foreground">{value}</p></div>;
-}
-
-function AlignmentCard({ dashboard, onDetails }: { dashboard: DashboardReadModel; onDetails: () => void }) {
-  const { alignment } = dashboard;
-  return (
-    <Card className="h-full min-w-0">
-      <CardHeading title="Strategy alignment" icon={<Target className="h-5 w-5" />} />
-      <p className="mt-6 text-3xl font-semibold">{alignment.score === null ? "—" : `${alignment.score}/100`}</p>
-      <p className="mt-2 text-sm text-muted">{alignment.score === null ? "Add holdings to calculate alignment." : `${alignment.inRangeClasses}/${alignment.totalClasses} asset classes in range`}</p>
-      <div className="mt-5 h-2 overflow-hidden rounded-full bg-surface-strong"><div className="h-full rounded-full bg-primary" style={{ width: `${alignment.score ?? 0}%` }} /></div>
-      <Button type="button" variant="ghost" className="mt-4 px-0" onClick={onDetails}><Info className="mr-2 h-4 w-4" />View details</Button>
-    </Card>
-  );
-}
-
-function AllocationCard({ dashboard }: { dashboard: DashboardReadModel }) {
-  const hasValue = dashboard.allocation.some((item) => decimalSign(item.value) === 1);
-  return (
-    <Card className="h-full min-w-0">
-      <CardHeading title="Allocation" icon={<Target className="h-5 w-5" />} />
-      {hasValue ? (
-        <div className="mt-3 h-36"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={dashboard.allocation} dataKey={(entry) => Number(entry.value)} nameKey="assetClass" innerRadius={38} outerRadius={58} paddingAngle={2} stroke="none">{dashboard.allocation.map((item, index) => <Cell key={item.assetClass} fill={chartColors[index]} />)}</Pie><Tooltip formatter={(value) => formatCurrency(String(value ?? 0), dashboard.valuation.currency)} contentStyle={{ background: "#171a26", border: "1px solid #282d3d", borderRadius: 8 }} /></PieChart></ResponsiveContainer></div>
-      ) : <div className="mx-auto mt-5 flex h-28 w-28 items-center justify-center rounded-full border-[14px] border-surface-strong text-center text-xs text-muted">No valued<br />holdings</div>}
-      <div className="mt-3 space-y-2">
-        {dashboard.allocation.map((item, index) => <div key={item.assetClass} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 text-xs"><span className="flex items-center gap-2 font-medium"><span className="h-2 w-2 rounded-full" style={{ background: chartColors[index] }} />{contributionClassLabels[item.assetClass]}</span><span className="text-muted">{formatPercent(item.currentPercent)} / {formatPercent(item.targetPercent)}</span><StatusDot status={item.status} /></div>)}
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted">
+        <LegendDot color="bg-primary" label="Portfolio value" />
+        <LegendDot color="bg-success" label="Net invested" />
+        {dashboard.history.incompleteDates > 0 ? <span className="text-warning">{dashboard.history.incompleteDates} incomplete {dashboard.history.incompleteDates === 1 ? "day" : "days"}</span> : null}
+        {dashboard.history.staleDates > 0 ? <span className="text-warning">Stale observations</span> : null}
       </div>
     </Card>
   );
 }
 
-function ContributionCard({ currency, amount, projection, error, isPending, onAmount, onReasons }: { currency: string; amount: string; projection: ContributionProjection | null; error: string; isPending: boolean; onAmount: (value: string) => void; onReasons: () => void }) {
-  const href = isValidPositiveAmount(amount) ? `/plan/contributions?amount=${encodeURIComponent(amount)}` : "/plan/contributions";
+function AllocationPanel({ dashboard }: { dashboard: DashboardReadModel }) {
+  const status = dashboard.strategyStatus;
+  const summary = status.state === "EMPTY"
+    ? "No holdings yet"
+    : status.attentionCount > 0
+      ? `${status.attentionCount} ${status.attentionCount === 1 ? "class needs" : "classes need"} attention`
+      : "All classes within range";
+
   return (
-    <Card className="h-full min-w-0">
-      <CardHeading title="Suggested next move" icon={<Sparkles className="h-5 w-5" />} />
-      <label className="mt-5 block"><span className="mb-2 block text-xs uppercase tracking-wide text-muted">Next contribution</span><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">{currency === "USD" ? "$" : currency}</span><input type="number" min="0" step="0.01" inputMode="decimal" value={amount} onChange={(event) => onAmount(event.target.value)} placeholder="1,000" className="h-11 w-full rounded-lg border border-border bg-surface pl-8 pr-12 outline-none focus:border-primary" /><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">{currency}</span></div></label>
-      {isPending ? <p className="mt-3 text-xs text-muted">Updating recommendation…</p> : null}
-      {error ? <p className="mt-3 text-xs text-destructive">{error}</p> : null}
-      {projection ? <div className="mt-4 grid grid-cols-2 gap-2">{projection.plan.assetRecommendations.map((item) => <div key={item.assetId} className="rounded-lg bg-surface p-2"><p className="truncate text-xs text-muted">{item.symbol}</p><p className="mt-1 text-sm font-semibold">{formatCurrency(item.amount, currency)}</p><p className="mt-1 text-[11px] text-muted">{item.percentOfContribution}%</p></div>)}</div> : <p className="mt-4 text-sm text-muted">Enter an amount to calculate the next contribution.</p>}
-      <div className="mt-4 flex flex-col gap-2"><Link href={href} className="inline-flex min-h-11 items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-primary/90">Plan contribution <ArrowRight className="ml-2 h-4 w-4" /></Link><Button type="button" variant="ghost" onClick={onReasons} disabled={!projection}>Why this recommendation?</Button></div>
+    <Card className="order-3 min-w-0 xl:col-start-1 xl:row-start-2">
+      <SectionHeading eyebrow={status.strategyName ?? "Strategy"} title="Allocation versus target" icon={<Target className="h-5 w-5" />}>
+        <Link href="/plan/strategy" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:text-primary/80">
+          Edit strategy <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </SectionHeading>
+      <p className={cn("mt-3 text-sm", status.attentionCount > 0 ? "text-warning" : "text-muted")}>{summary}</p>
+
+      {dashboard.allocation.length > 0 ? (
+        <div className="mt-6 divide-y divide-border">
+          {dashboard.allocation.map((item) => <AllocationRow key={item.assetClass} item={item} currency={dashboard.valuation.currency} />)}
+        </div>
+      ) : (
+        <div className="mt-6 border-t border-border py-12 text-center text-sm text-muted">Configure an active strategy to compare allocation targets.</div>
+      )}
     </Card>
   );
 }
 
-function RecentActivity({ dashboard }: { dashboard: DashboardReadModel }) {
-  return <Card><div className="flex items-center justify-between"><div><h2 className="text-lg font-semibold">Recent activity</h2><p className="mt-1 text-sm text-muted">Latest five portfolio transactions.</p></div><Link href="/portfolio" className="text-sm text-primary hover:underline">View all</Link></div>{dashboard.recentActivity.length ? <div className="mt-5 divide-y divide-border">{dashboard.recentActivity.map((item) => <div key={item.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><div className="flex items-center gap-2"><Badge tone={item.type === "SELL" ? "destructive" : "neutral"}>{formatType(item.type)}</Badge><p className="truncate font-medium">{item.assetName} · {item.symbol}</p></div><p className="mt-1 text-xs text-muted">{item.accountName} · {formatUtcDate(item.executedAt)}</p></div><div className="text-left sm:text-right"><p className="font-medium">{item.quantityLabel}{item.displayPriceUnit === "unit" ? ` ${item.symbol}` : ""}</p><p className="mt-1 text-xs text-muted">{item.pricePerUnit ? `${formatCurrency(item.pricePerUnit, item.currency)} / ${item.displayPriceUnit}` : "No acquisition price"}</p></div></div>)}</div> : <InlineEmpty title="No activity yet" description="Transactions will appear here after you add an initial balance or trade." />}</Card>;
+function AllocationRow({ item, currency }: { item: DashboardReadModel["allocation"][number]; currency: string }) {
+  const current = clampPercent(item.currentPercent);
+  const target = clampPercent(item.targetPercent);
+  const driftSign = decimalSign(item.driftPercent) ?? 0;
+  const drift = `${driftSign > 0 ? "+" : driftSign < 0 ? "−" : ""}${formatPercent(item.driftPercent.replace(/^-/, ""))}`;
+
+  return (
+    <div className="grid gap-3 py-4 md:grid-cols-[minmax(110px,0.6fr)_minmax(220px,1.5fr)_auto] md:items-center md:gap-5">
+      <div className="min-w-0">
+        <p className="font-medium">{contributionClassLabels[item.assetClass]}</p>
+        <p className="mt-1 text-xs text-muted">{formatCurrency(item.value, currency)}</p>
+      </div>
+      <div className="min-w-0">
+        <div className="flex items-center justify-between gap-3 text-xs">
+          <span className="font-medium text-foreground">{formatPercent(item.currentPercent)}</span>
+          <span className="text-muted">Target {formatPercent(item.targetPercent)}</span>
+        </div>
+        <div className="relative mt-2 h-2 rounded-full bg-surface-strong">
+          <div className={cn("h-2 rounded-full", item.status === "IN_RANGE" ? "bg-success" : item.status === "OVERWEIGHT" ? "bg-destructive" : "bg-warning")} style={{ width: `${current}%` }} />
+          <span className="absolute top-1/2 h-4 w-0.5 -translate-y-1/2 bg-foreground" style={{ left: `calc(${target}% - 1px)` }} title={`Target ${formatPercent(item.targetPercent)}`} />
+        </div>
+        <p className="mt-2 text-[11px] text-muted">Range {formatPercent(item.minPercent)}–{formatPercent(item.maxPercent)}</p>
+      </div>
+      <div className="flex items-center justify-between gap-3 md:block md:min-w-28 md:text-right">
+        <StatusLabel status={item.status} />
+        <p className="text-sm font-semibold text-foreground md:mt-2">{drift} drift</p>
+      </div>
+    </div>
+  );
 }
 
-function Accounts({ dashboard }: { dashboard: DashboardReadModel }) {
-  return <Card><div className="flex items-center justify-between"><div><h2 className="text-lg font-semibold">Accounts</h2><p className="mt-1 text-sm text-muted">Value by account.</p></div><Building2 className="h-5 w-5 text-primary" /></div>{dashboard.accounts.length ? <div className="mt-5 space-y-3">{dashboard.accounts.map((account) => <div key={account.id} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface p-3"><div className="min-w-0"><p className="truncate font-medium">{account.name}</p><p className="mt-1 text-xs text-muted">{formatType(account.type)}</p></div><div className="text-right"><p className="font-semibold">{formatCurrency(account.value, dashboard.valuation.currency)}</p>{account.isPartial ? <Badge tone="warning" className="mt-1">Partial</Badge> : null}</div></div>)}</div> : <InlineEmpty title="No accounts" description="Add an account from the Portfolio page." />}</Card>;
+function ContributionPanel({ dashboard }: { dashboard: DashboardReadModel }) {
+  const { amount, projection } = dashboard.contribution;
+  const recommendations = projection?.plan.assetRecommendations ?? [];
+  const visibleRecommendations = recommendations.slice(0, 3);
+  const remaining = recommendations.length - visibleRecommendations.length;
+  const href = amount ? `/plan/contributions?amount=${encodeURIComponent(amount)}` : "/plan/contributions";
+
+  return (
+    <Card className="order-2 min-w-0 xl:col-start-2 xl:row-start-2">
+      <SectionHeading eyebrow="Saved plan" title="Next contribution" icon={<TrendingUp className="h-5 w-5" />} />
+
+      {amount && projection ? (
+        <>
+          <p className="mt-6 text-3xl font-semibold">{formatCurrency(projection.plan.contributionAmount, dashboard.valuation.currency)}</p>
+          <div className="mt-5 divide-y divide-border border-y border-border">
+            {visibleRecommendations.map((item) => (
+              <div key={item.assetId} className="flex items-center justify-between gap-4 py-3">
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{item.symbol}</p>
+                  <p className="mt-1 truncate text-xs text-muted">{item.name} · {item.percentOfContribution}%</p>
+                </div>
+                <p className="shrink-0 font-semibold">{formatCurrency(item.amount, dashboard.valuation.currency)}</p>
+              </div>
+            ))}
+          </div>
+          {remaining > 0 ? <p className="mt-3 text-xs text-muted">+{remaining} more {remaining === 1 ? "asset" : "assets"} in the saved plan</p> : null}
+        </>
+      ) : (
+        <div className="mt-6 border-y border-border py-10">
+          <p className="font-medium">{amount ? "Recommendation unavailable" : "No saved contribution plan"}</p>
+          <p className="mt-2 text-sm leading-5 text-muted">{amount ? "Review current prices and strategy targets in the planner." : "Create a concrete buy list for your next investment."}</p>
+        </div>
+      )}
+
+      <Link href={href} className="mt-5 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-primary/90">
+        Open contribution planner <ArrowRight className="h-4 w-4" aria-hidden="true" />
+      </Link>
+    </Card>
+  );
 }
 
-function StrategyStatus({ dashboard }: { dashboard: DashboardReadModel }) {
-  const status = dashboard.strategyStatus;
-  const first = status.warnings[0];
-  const isAttention = status.state === "NEEDS_ATTENTION";
-  const title = status.state === "EMPTY" ? "Start building your portfolio" : isAttention ? "Portfolio needs attention" : "Stay consistent";
-  const description = status.state === "EMPTY" ? "Add an initial balance to compare your portfolio with the active strategy." : first ? strategyWarningText(first) : "Your priced portfolio is currently inside all configured allocation ranges.";
-  return <Card className={cn("border-primary/25 bg-gradient-to-br from-card to-primary/5", isAttention && "border-warning/30 from-card to-warning/5")}><div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between"><div className="flex min-w-0 items-start gap-3">{status.state === "EMPTY" ? <Sparkles className="mt-1 h-5 w-5 shrink-0 text-primary" /> : isAttention ? <AlertCircle className="mt-1 h-5 w-5 shrink-0 text-warning" /> : <CheckCircle2 className="mt-1 h-5 w-5 shrink-0 text-success" />}<div className="min-w-0"><p className="break-words text-xs uppercase tracking-wide text-muted">Strategy status{status.strategyName ? ` · ${status.strategyName}` : ""}</p><h2 className="mt-2 text-xl font-semibold">{title}</h2><p className="mt-2 max-w-3xl text-sm text-muted">{description}</p>{dashboard.valuation.isPartial ? <p className="mt-2 text-sm text-warning">Status is based on priced holdings only.</p> : null}</div></div><Link href="/assistant" className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-strong px-4 text-sm font-medium hover:border-primary/50">Ask Assistant</Link></div></Card>;
+function SectionHeading({ eyebrow, title, icon, children }: { eyebrow: string; title: string; icon: ReactNode; children?: ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="min-w-0">
+        <p className="truncate text-xs text-muted">{eyebrow}</p>
+        <h2 className="mt-1 text-lg font-semibold text-foreground">{title}</h2>
+      </div>
+      <div className="flex shrink-0 items-center gap-3 text-primary">
+        {children}
+        {icon}
+      </div>
+    </div>
+  );
 }
 
-function AlignmentDetails({ dashboard, onClose }: { dashboard: DashboardReadModel; onClose: () => void }) {
-  const alignment = dashboard.alignment;
-  return <Modal title="How Strategy Alignment is calculated" onClose={onClose}><p className="text-sm leading-6 text-muted">This is a deterministic transparency score, not an AI opinion.</p><div className="mt-5 space-y-3"><ScoreRow label="Allocation compliance" value={`${alignment.allocationPoints}/80`} detail={`${alignment.inRangeClasses}/${alignment.totalClasses} classes inside configured ranges · 20 points each`} /><ScoreRow label="Price data availability" value={`${alignment.priceDataPoints}/20`} detail={`${alignment.pricedHoldings}/${alignment.totalHoldings} holdings have current prices`} /><ScoreRow label="Total" value={alignment.score === null ? "Unavailable" : `${alignment.score}/100`} detail={alignment.score === null ? "A non-empty portfolio is required." : "No hidden weighting or AI-generated adjustment."} /></div>{dashboard.valuation.isPartial ? <Notice tone="warning">Allocation compliance is based on the priced portion of the portfolio.</Notice> : null}</Modal>;
+function TrendTooltip({ active, row, currency }: { active?: boolean; row?: TrendRow; currency: string }) {
+  if (!active || !row) return null;
+  return (
+    <div className="max-w-64 rounded-lg border border-border bg-card p-3 shadow-xl">
+      <p className="font-medium">{longDate(row.date)}</p>
+      {row.isComplete ? (
+        <div className="mt-3 space-y-2 text-sm">
+          <TooltipValue label="Portfolio value" value={formatCurrency(String(row.portfolioValue), currency)} />
+          <TooltipValue label="Net invested" value={formatCurrency(String(row.netInvested), currency)} />
+          <TooltipValue label="Investment gain" value={row.investmentGain === null ? "Unavailable" : formatSignedCurrency(String(row.investmentGain), currency)} />
+        </div>
+      ) : <p className="mt-2 text-sm text-warning">Missing: {row.missingPriceSymbols.join(", ")}</p>}
+      {row.hasStalePrices ? <p className="mt-2 text-xs text-warning">Includes stale prices</p> : null}
+    </div>
+  );
 }
 
-function ReasonDetails({ projection, onClose }: { projection: ContributionProjection; onClose: () => void }) {
-  const messages = [...new Set(projection.reasons.map(contributionReasonText))];
-  return <Modal title="Why this recommendation?" onClose={onClose}><div className="space-y-3">{messages.map((message) => <div key={message} className="flex items-start gap-3 rounded-lg border border-border bg-surface p-3"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><p className="text-sm text-muted">{message}</p></div>)}</div></Modal>;
+function TooltipValue({ label, value }: { label: string; value: string }) {
+  return <div className="flex items-center justify-between gap-5"><span className="text-muted">{label}</span><span className="font-medium">{value}</span></div>;
 }
 
-function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) { return <div className="fixed inset-0 z-50 flex items-end bg-background/80 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur-sm md:items-center md:justify-center md:p-4" role="dialog" aria-modal="true" aria-label={title}><Card className="max-h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-1.5rem)] w-full overflow-y-auto overscroll-contain rounded-xl md:max-h-[90vh] md:max-w-lg"><div className="flex items-start justify-between gap-4"><h2 className="text-lg font-semibold">{title}</h2><button type="button" onClick={onClose} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border text-muted hover:text-foreground" aria-label="Close"><X className="h-4 w-4" /></button></div><div className="mt-5">{children}</div></Card></div>; }
-function ScoreRow({ label, value, detail }: { label: string; value: string; detail: string }) { return <div className="flex items-start justify-between gap-4 rounded-lg border border-border bg-surface p-3"><div><p className="font-medium">{label}</p><p className="mt-1 text-xs leading-5 text-muted">{detail}</p></div><p className="shrink-0 font-semibold text-primary">{value}</p></div>; }
-function CardHeading({ title, icon }: { title: string; icon: ReactNode }) { return <div className="flex items-center justify-between gap-3"><p className="text-sm font-medium text-muted">{title}</p><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/12 text-primary">{icon}</span></div>; }
-function StatusDot({ status }: { status: "UNDERWEIGHT" | "IN_RANGE" | "OVERWEIGHT" }) { return <span className={cn("h-2 w-2 rounded-full", status === "IN_RANGE" ? "bg-success" : status === "OVERWEIGHT" ? "bg-destructive" : "bg-warning")} title={formatType(status)} />; }
-function Notice({ children }: { children: ReactNode; tone?: "warning" }) { return <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{children}</div>; }
-function InlineEmpty({ title, description }: { title: string; description: string }) { return <div className="mt-5 rounded-lg border border-dashed border-border bg-surface/50 px-4 py-10 text-center"><p className="font-medium">{title}</p><p className="mt-2 text-sm text-muted">{description}</p></div>; }
-function isValidPositiveAmount(value: string) { return /^\d+(?:\.\d{1,2})?$/.test(value) && Number(value) > 0; }
-function formatType(value: string) { return value.toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
+function LegendDot({ color, label }: { color: string; label: string }) {
+  return <span className="flex items-center gap-1.5"><span className={cn("h-2 w-2 rounded-full", color)} />{label}</span>;
+}
+
+function StatusLabel({ status }: { status: DashboardReadModel["allocation"][number]["status"] }) {
+  const label = status === "IN_RANGE" ? "In range" : status === "OVERWEIGHT" ? "Overweight" : "Underweight";
+  const tone = status === "IN_RANGE" ? "success" : status === "OVERWEIGHT" ? "destructive" : "warning";
+  return <Badge tone={tone}>{label}</Badge>;
+}
+
+function dataHealth(dashboard: DashboardReadModel): { tone: "good" | "warning"; text: string } {
+  const issues: string[] = [];
+  if (dashboard.valuation.isPartial) issues.push(`missing prices: ${dashboard.valuation.missingPriceSymbols.join(", ")}`);
+  if (dashboard.valuation.isCostBasisPartial) issues.push(`partial cost basis: ${dashboard.valuation.missingCostBasisSymbols.join(", ")}`);
+  if (dashboard.valuation.hasStalePrices) issues.push("stale prices included");
+  if (dashboard.valuation.warning) issues.push(dashboard.valuation.warning);
+  return issues.length > 0
+    ? { tone: "warning", text: issues.join(" · ") }
+    : { tone: "good", text: "Prices and cost basis are complete." };
+}
+
+function signedPercent(value: string) {
+  const sign = decimalSign(value) ?? 0;
+  return `${sign >= 0 ? "+" : "−"}${formatPercent(value.replace(/^-/, ""))}`;
+}
+
+function clampPercent(value: string) {
+  return Math.min(100, Math.max(0, Number(value) || 0));
+}
+
+function compactMoney(value: number, currency: string) {
+  return new Intl.NumberFormat("en", { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
+function shortDate(value: string) {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
+}
+
+function longDate(value: string) {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
+}

@@ -11,6 +11,7 @@ import { getDashboardReadModel } from "@/features/dashboard/read-model";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
 import type { MarketDataStore } from "@/features/market-data/repository";
 import { MarketDataService, resetMarketDataRuntimeCacheForTests } from "@/features/market-data/service";
+import { DailyMarketPriceRepository } from "@/features/performance/repository";
 import { getPortfolioReadModel } from "@/features/portfolio/read-model";
 import { PortfolioRepository } from "@/features/portfolio/repository";
 import { StrategyRepository } from "@/features/strategy/repository";
@@ -123,22 +124,20 @@ describe("priced portfolio read models", () => {
       strategyRepository: new StrategyRepository(testDb.prisma),
       contributionPlanRepository: new ContributionPlanRepository(testDb.prisma),
       marketDataService,
+      dailyPriceStore: new DailyMarketPriceRepository(testDb.prisma),
     });
 
     expect(dashboard.valuation.totalValue).toBe("51000.00");
-    expect(dashboard.valuation.totalUnrealizedPnl).toBe("10200.00");
+    expect(dashboard.valuation.investmentGain).toBe("10202.00");
     expect(dashboard.allocation).toHaveLength(4);
     expect(dashboard.valuation.isPartial).toBe(false);
     expect(dashboard.contribution.amount).toBe("1000");
     expect(dashboard.contribution.projection?.plan.contributionAmount).toBe("1000.00");
-    expect(dashboard.recentActivity).toHaveLength(5);
-    expect(dashboard.recentActivity[0].executedAt).toContain("2026-08-05");
-    expect(dashboard.accounts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: "Main", value: "51000.00", isPartial: false }),
-      expect.objectContaining({ name: "Empty", value: "0.00", isPartial: false }),
-    ]));
-    expect(dashboard.alignment.score).toBe(40);
+    expect(dashboard.contribution.projection?.plan.assetRecommendations.length).toBeGreaterThan(0);
+    expect(dashboard.history.points).toEqual([]);
+    expect(dashboard.allocation[0]).toEqual(expect.objectContaining({ assetClass: AssetClass.CRYPTO, driftPercent: "83.04" }));
     expect(dashboard.strategyStatus.state).toBe("NEEDS_ATTENTION");
+    expect(dashboard.strategyStatus.attentionCount).toBe(3);
   });
 });
 

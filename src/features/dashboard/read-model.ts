@@ -1,31 +1,30 @@
-import { AssetType, type AssetClass } from "@prisma/client";
+import type { AssetClass, DailyMarketPrice } from "@prisma/client";
 import {
   buildContributionProjection,
+  calculateHistoricalPerformance,
   calculatePortfolio,
   calculatePortfolioAnalytics,
-  calculateStrategyAlignment,
   compareAllocationToStrategy,
   evaluateStrategyCompliance,
   type AllocationStatus,
   type ContributionProjection,
-  type StrategyAlignment,
+  type HistoricalMarketSnapshot,
+  type PortfolioPerformancePoint,
 } from "@/features/portfolio-engine";
+import { decimal, toDecimalString } from "@/features/portfolio-engine/decimal";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
 import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/service";
+import { DailyMarketPriceRepository, type DailyMarketPriceStore } from "@/features/performance/repository";
 import { PortfolioRepository } from "@/features/portfolio/repository";
 import { StrategyRepository } from "@/features/strategy/repository";
-import { serializeDecimal, serializeNullableDecimal } from "@/lib/db/decimal";
+import { serializeDecimal } from "@/lib/db/decimal";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
-import { formatPhysicalGoldQuantity, pricePerTroyOunce } from "@/features/market-data/gold";
 
 export type DashboardReadModel = {
   valuation: {
     totalValue: string;
-    totalUnrealizedPnl: string | null;
     investmentGain: string | null;
     netInvested: string;
-    externalContributions: string | null;
-    externalWithdrawals: string | null;
     simpleReturnPercent: string | null;
     isCostBasisPartial: boolean;
     missingCostBasisSymbols: string[];
@@ -36,7 +35,12 @@ export type DashboardReadModel = {
     hasStalePrices: boolean;
     warning: string | null;
   };
-  alignment: StrategyAlignment;
+  history: {
+    points: PortfolioPerformancePoint[];
+    trackingStartedAt: string | null;
+    incompleteDates: number;
+    staleDates: number;
+  };
   allocation: Array<{
     assetClass: AssetClass;
     value: string;
@@ -44,41 +48,18 @@ export type DashboardReadModel = {
     targetPercent: string;
     minPercent: string;
     maxPercent: string;
+    driftPercent: string;
     status: AllocationStatus;
   }>;
   contribution: {
     amount: string;
     projection: ContributionProjection | null;
   };
-  recentActivity: Array<{
-    id: string;
-    type: string;
-    symbol: string;
-    assetName: string;
-    accountName: string;
-    quantity: string;
-    quantityLabel: string;
-    pricePerUnit: string | null;
-    displayPriceUnit: "unit" | "troy oz";
-    currency: string;
-    executedAt: string;
-  }>;
-  accounts: Array<{
-    id: string;
-    name: string;
-    type: string;
-    value: string;
-    isPartial: boolean;
-  }>;
   strategyStatus: {
     state: "EMPTY" | "STAY_CONSISTENT" | "NEEDS_ATTENTION";
     strategyName: string | null;
-    warnings: Array<{
-      code: string;
-      assetClass: AssetClass;
-      currentPercent: string;
-      limitPercent: string;
-    }>;
+    attentionCount: number;
+    totalClasses: number;
   };
 };
 
@@ -87,34 +68,30 @@ export async function getDashboardReadModel({
   strategyRepository = new StrategyRepository(),
   contributionPlanRepository = new ContributionPlanRepository(),
   marketDataService = new MarketDataService(),
+  dailyPriceStore = new DailyMarketPriceRepository(),
 }: {
   portfolioRepository?: PortfolioRepository;
   strategyRepository?: StrategyRepository;
   contributionPlanRepository?: ContributionPlanRepository;
   marketDataService?: MarketDataService;
+  dailyPriceStore?: DailyMarketPriceStore;
 } = {}): Promise<DashboardReadModel> {
-  const [assets, accounts, transactions, strategy] = await Promise.all([
+  const [assets, transactions, strategy] = await Promise.all([
     portfolioRepository.listAssets(),
-    portfolioRepository.listAccounts(),
     portfolioRepository.listTransactions(),
     strategyRepository.findActiveStrategy(),
   ]);
   const baseCurrency = strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
-  const [marketData, savedPlan] = await Promise.all([
+  const [marketData, savedPlan, dailyPrices] = await Promise.all([
     marketDataService.getCurrentPrices({ assets, baseCurrency }),
     strategy ? contributionPlanRepository.findByStrategyId(strategy.id) : null,
+    dailyPriceStore.listDailyPrices(baseCurrency),
   ]);
   const portfolio = calculatePortfolio({ assets, transactions, marketPrices: toEngineMarketPrices(marketData) });
   const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency });
   const comparisons = strategy ? compareAllocationToStrategy(portfolio, strategy.allocations) : [];
   const warnings = strategy ? evaluateStrategyCompliance(portfolio, strategy.allocations) : [];
-  const alignment = calculateStrategyAlignment({
-    comparisons,
-    pricedHoldings: analytics.priceCoverage.pricedHoldings,
-    totalHoldings: analytics.priceCoverage.totalHoldings,
-  });
   const allocationByClass = new Map(portfolio.allocation.map((item) => [item.assetClass, item]));
-  const accountAnalytics = new Map(analytics.accounts.map((account) => [account.accountId, account]));
   const contributionAmount = savedPlan ? serializeDecimal(savedPlan.contributionAmount) : "";
   let contributionProjection: ReturnType<typeof buildContributionProjection> | null = null;
   if (strategy && contributionAmount && contributionAmount !== "0") {
@@ -124,16 +101,38 @@ export async function getDashboardReadModel({
       contributionProjection = null;
     }
   }
+  const history = calculateHistoricalPerformance({
+    assets,
+    transactions,
+    baseCurrency,
+    snapshots: buildHistoricalSnapshots(assets, dailyPrices),
+  });
   const hasHoldings = analytics.priceCoverage.totalHoldings > 0;
+
+  const allocation = comparisons
+    .map((comparison) => ({
+      assetClass: comparison.assetClass,
+      value: allocationByClass.get(comparison.assetClass)?.value ?? "0.00",
+      currentPercent: comparison.currentPercent,
+      targetPercent: comparison.targetPercent,
+      minPercent: comparison.minPercent,
+      maxPercent: comparison.maxPercent,
+      driftPercent: toDecimalString(decimal(comparison.currentPercent).minus(comparison.targetPercent)),
+      status: comparison.status,
+    }))
+    .sort((left, right) => {
+      const leftAttention = left.status === "IN_RANGE" ? 1 : 0;
+      const rightAttention = right.status === "IN_RANGE" ? 1 : 0;
+      if (leftAttention !== rightAttention) return leftAttention - rightAttention;
+      const driftDifference = Math.abs(Number(right.driftPercent)) - Math.abs(Number(left.driftPercent));
+      return driftDifference || left.assetClass.localeCompare(right.assetClass);
+    });
 
   return {
     valuation: {
       totalValue: portfolio.totalValue,
-      totalUnrealizedPnl: analytics.totalUnrealizedPnl,
       investmentGain: analytics.investmentGain,
       netInvested: analytics.netInvested,
-      externalContributions: analytics.externalContributions,
-      externalWithdrawals: analytics.externalWithdrawals,
       simpleReturnPercent: analytics.simpleReturnPercent,
       isCostBasisPartial: analytics.isCostBasisPartial,
       missingCostBasisSymbols: analytics.missingCostBasisSymbols,
@@ -144,58 +143,41 @@ export async function getDashboardReadModel({
       hasStalePrices: marketData.hasStalePrices,
       warning: marketData.warning,
     },
-    alignment,
-    allocation: comparisons.map((comparison) => ({
-      assetClass: comparison.assetClass,
-      value: allocationByClass.get(comparison.assetClass)?.value ?? "0.00",
-      currentPercent: comparison.currentPercent,
-      targetPercent: comparison.targetPercent,
-      minPercent: comparison.minPercent,
-      maxPercent: comparison.maxPercent,
-      status: comparison.status,
-    })),
+    history: {
+      points: history,
+      trackingStartedAt: history[0]?.date ?? null,
+      incompleteDates: history.filter((point) => !point.isComplete).length,
+      staleDates: history.filter((point) => point.hasStalePrices).length,
+    },
+    allocation,
     contribution: { amount: contributionAmount, projection: contributionProjection },
-    recentActivity: transactions.slice(0, 5).map((transaction) => {
-      const isPhysicalGold = transaction.asset.assetType === AssetType.PHYSICAL_GOLD;
-      return {
-        id: transaction.id,
-        type: transaction.type,
-        symbol: transaction.asset.symbol,
-        assetName: transaction.asset.name,
-        accountName: transaction.account.name,
-        quantity: serializeDecimal(transaction.quantity),
-        quantityLabel: isPhysicalGold
-          ? formatPhysicalGoldQuantity(transaction.quantity)
-          : serializeDecimal(transaction.quantity),
-        pricePerUnit: transaction.pricePerUnit
-          ? (isPhysicalGold
-              ? pricePerTroyOunce(transaction.pricePerUnit).toString()
-              : serializeNullableDecimal(transaction.pricePerUnit))
-          : null,
-        displayPriceUnit: isPhysicalGold ? "troy oz" : "unit",
-        currency: transaction.currency,
-        executedAt: transaction.executedAt.toISOString(),
-      };
-    }),
-    accounts: accounts.map((account) => {
-      const valued = accountAnalytics.get(account.id);
-      return {
-        id: account.id,
-        name: account.name,
-        type: account.type,
-        value: valued?.value ?? "0.00",
-        isPartial: valued?.isPartial ?? false,
-      };
-    }),
     strategyStatus: {
       state: !hasHoldings ? "EMPTY" : warnings.length > 0 ? "NEEDS_ATTENTION" : "STAY_CONSISTENT",
       strategyName: strategy?.name ?? null,
-      warnings: warnings.map((warning) => ({
-        code: warning.code,
-        assetClass: warning.assetClass,
-        currentPercent: warning.currentPercent,
-        limitPercent: warning.limitPercent,
-      })),
+      attentionCount: warnings.length,
+      totalClasses: comparisons.length,
     },
   };
+}
+
+function buildHistoricalSnapshots(
+  assets: Array<{ id: string; symbol: string }>,
+  dailyPrices: DailyMarketPrice[],
+): HistoricalMarketSnapshot[] {
+  const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+  const byDate = new Map<string, { marketPrices: Record<string, string>; hasStalePrices: boolean }>();
+
+  for (const dailyPrice of dailyPrices) {
+    const asset = assetById.get(dailyPrice.assetId);
+    if (!asset) continue;
+    const date = dailyPrice.date.toISOString().slice(0, 10);
+    const snapshot = byDate.get(date) ?? { marketPrices: {}, hasStalePrices: false };
+    snapshot.marketPrices[asset.symbol] = serializeDecimal(dailyPrice.price);
+    snapshot.hasStalePrices ||= dailyPrice.isStaleAtCapture;
+    byDate.set(date, snapshot);
+  }
+
+  return [...byDate.entries()]
+    .map(([date, snapshot]) => ({ date, ...snapshot }))
+    .sort((left, right) => left.date.localeCompare(right.date));
 }

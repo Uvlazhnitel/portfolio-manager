@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
 import { getDashboardReadModel } from "@/features/dashboard/read-model";
 import { MarketDataService } from "@/features/market-data/service";
+import type { DailyMarketPriceStore } from "@/features/performance/repository";
 import { PortfolioRepository } from "@/features/portfolio/repository";
 import { StrategyRepository } from "@/features/strategy/repository";
 
@@ -20,13 +21,13 @@ describe("dashboard read model edge states", () => {
       strategyRepository: fakeStrategy(),
       contributionPlanRepository: fakePlan(),
       marketDataService: fakeMarketData([]),
+      dailyPriceStore: fakeDailyPrices([]),
     });
 
     expect(dashboard.valuation.totalValue).toBe("0.00");
-    expect(dashboard.valuation.totalUnrealizedPnl).toBeNull();
-    expect(dashboard.alignment.score).toBeNull();
+    expect(dashboard.valuation.investmentGain).toBe("0.00");
     expect(dashboard.strategyStatus.state).toBe("EMPTY");
-    expect(dashboard.recentActivity).toEqual([]);
+    expect(dashboard.history.points).toEqual([]);
   });
 
   it("supports a portfolio without ETF and preserves partial account value", async () => {
@@ -55,12 +56,67 @@ describe("dashboard read model edge states", () => {
       strategyRepository: fakeStrategy(),
       contributionPlanRepository: fakePlan(),
       marketDataService: fakeMarketData([{ assetId: btc.id, symbol: btc.symbol, price: "10.00", currency: "EUR", timestamp: now, fetchedAt: now, source: "TEST", isStale: false }]),
+      dailyPriceStore: fakeDailyPrices([
+        dailyPrice(btc.id, "2026-08-25", "9"),
+        dailyPrice(gold.id, "2026-08-25", "2"),
+        dailyPrice(btc.id, "2026-08-26", "10"),
+        dailyPrice(gold.id, "2026-08-26", "3", true),
+      ]),
     });
 
-    expect(dashboard.valuation).toEqual(expect.objectContaining({ totalValue: "10.00", isPartial: true, totalUnrealizedPnl: null }));
+    expect(dashboard.valuation).toEqual(expect.objectContaining({ totalValue: "10.00", isPartial: true, investmentGain: null }));
     expect(dashboard.allocation.find((item) => item.assetClass === AssetClass.ETF)?.currentPercent).toBe("0.00");
-    expect(dashboard.accounts).toContainEqual(expect.objectContaining({ name: "Mixed", value: "10.00", isPartial: true }));
-    expect(dashboard.recentActivity).toHaveLength(2);
+    expect(dashboard.allocation.map((item) => item.assetClass)).toEqual([
+      AssetClass.CRYPTO,
+      AssetClass.ETF,
+      AssetClass.GOLD,
+      AssetClass.CASH,
+    ]);
+    expect(dashboard.allocation[0].driftPercent).toBe("85.00");
+    expect(dashboard.history.points).toHaveLength(2);
+    expect(dashboard.history.points.map((point) => point.portfolioValue)).toEqual(["29.00", "40.00"]);
+    expect(dashboard.history.trackingStartedAt).toBe("2026-08-25");
+    expect(dashboard.history.incompleteDates).toBe(0);
+    expect(dashboard.history.staleDates).toBe(1);
+  });
+
+  it("exposes stale prices and partial cost basis without hiding the portfolio value", async () => {
+    const now = new Date("2026-08-26T08:00:00Z");
+    const account = { id: "account", name: "Wallet", type: AccountType.OTHER, description: null, createdAt: now, updatedAt: now };
+    const btc = { id: "btc", symbol: "BTC", name: "Bitcoin", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "BTC", externalId: null, metadata: null, createdAt: now, updatedAt: now };
+    const transaction = {
+      id: "transaction",
+      assetId: btc.id,
+      accountId: account.id,
+      type: TransactionType.INITIAL_BALANCE,
+      quantity: new Prisma.Decimal(1),
+      pricePerUnit: null,
+      fee: null,
+      currency: "EUR",
+      executedAt: now,
+      note: null,
+      createdAt: now,
+      updatedAt: now,
+      asset: btc,
+      account,
+    };
+    const dashboard = await getDashboardReadModel({
+      portfolioRepository: fakePortfolio([btc], [account], [transaction]),
+      strategyRepository: fakeStrategy(),
+      contributionPlanRepository: fakePlan(),
+      marketDataService: fakeMarketData(
+        [{ assetId: btc.id, symbol: btc.symbol, price: "100.00", currency: "EUR", timestamp: now, fetchedAt: now, source: "TEST", isStale: true }],
+        { hasStalePrices: true, warning: "Cached price in use." },
+      ),
+      dailyPriceStore: fakeDailyPrices([]),
+    });
+
+    expect(dashboard.valuation.totalValue).toBe("100.00");
+    expect(dashboard.valuation.isPartial).toBe(false);
+    expect(dashboard.valuation.isCostBasisPartial).toBe(true);
+    expect(dashboard.valuation.missingCostBasisSymbols).toEqual(["BTC"]);
+    expect(dashboard.valuation.hasStalePrices).toBe(true);
+    expect(dashboard.valuation.warning).toBe("Cached price in use.");
   });
 });
 
@@ -91,16 +147,40 @@ function fakePlan() {
   return { findByStrategyId: async () => null } as unknown as ContributionPlanRepository;
 }
 
-function fakeMarketData(prices: unknown[]) {
+function fakeMarketData(prices: unknown[], options: { hasStalePrices?: boolean; warning?: string | null } = {}) {
   return {
     getCurrentPrices: async () => ({
       prices,
       unavailableAssetIds: [],
       lastUpdated: null,
-      hasStalePrices: false,
+      hasStalePrices: options.hasStalePrices ?? false,
       wasRefreshed: false,
       refreshBlockedUntil: null,
-      warning: null,
+      warning: options.warning ?? null,
     }),
   } as unknown as MarketDataService;
+}
+
+function fakeDailyPrices(rows: unknown[]) {
+  return {
+    listDailyPrices: async () => rows,
+    saveDailyPrices: async () => undefined,
+  } as unknown as DailyMarketPriceStore;
+}
+
+function dailyPrice(assetId: string, date: string, price: string, isStaleAtCapture = false) {
+  const timestamp = new Date(`${date}T20:00:00Z`);
+  return {
+    id: `${assetId}-${date}`,
+    assetId,
+    currency: "EUR",
+    date: new Date(`${date}T00:00:00Z`),
+    price: new Prisma.Decimal(price),
+    source: "TEST",
+    quoteTimestamp: timestamp,
+    capturedAt: timestamp,
+    isStaleAtCapture,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
 }
