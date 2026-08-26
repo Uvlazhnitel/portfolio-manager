@@ -65,6 +65,18 @@ export const transactionMutationSchema = z.object({
 
 export type TransactionMutationInput = z.input<typeof transactionMutationSchema>;
 
+export const updateTransactionSchema = transactionMutationSchema.pick({
+  quantity: true,
+  physicalGoldWeightTroyOunces: true,
+  pricePerUnit: true,
+  totalAmount: true,
+  fee: true,
+  executedAt: true,
+  note: true,
+}).extend({ id: z.string().min(1) });
+
+export type UpdateTransactionInput = z.input<typeof updateTransactionSchema>;
+
 export const transferMutationSchema = z.object({
   assetId: z.string().min(1),
   fromAccountId: z.string().min(1),
@@ -244,6 +256,51 @@ export async function deleteTransactionMutation(
     await transaction.transaction.delete({ where: { id } });
   });
   return { ok: true, message: "Transaction deleted." };
+}
+
+export async function updateTransactionMutation(
+  input: UpdateTransactionInput,
+  db: PrismaClient = prisma,
+): Promise<PortfolioMutationResult> {
+  const parsed = updateTransactionSchema.parse(input);
+
+  await withSerializableRetry(db, async (transaction) => {
+    const target = await transaction.transaction.findUnique({
+      where: { id: parsed.id },
+      include: { asset: true },
+    });
+    if (!target) throw new PortfolioMutationError("Transaction was not found.");
+    if (target.type === TransactionType.TRANSFER_IN || target.type === TransactionType.TRANSFER_OUT) {
+      throw new PortfolioMutationError("Transfer rows cannot be edited individually.");
+    }
+
+    const normalized = normalizeTransaction({
+      ...parsed,
+      type: target.type,
+      accountId: target.accountId,
+      assetMode: "existing",
+      assetId: target.assetId,
+      currency: target.currency,
+    }, target.asset);
+
+    await transaction.transaction.update({
+      where: { id: target.id },
+      data: {
+        quantity: normalized.quantity,
+        pricePerUnit: normalized.pricePerUnit,
+        fee: normalized.fee,
+        executedAt: parsed.executedAt,
+        note: parsed.note || null,
+      },
+    });
+    const chronology = await transaction.transaction.findMany({
+      where: { accountId: target.accountId, assetId: target.assetId },
+      orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }],
+    });
+    assertNonNegativeChronology(chronology);
+  });
+
+  return { ok: true, message: "Transaction updated." };
 }
 
 async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, db: Prisma.TransactionClient) {

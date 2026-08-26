@@ -2,7 +2,6 @@ import {
   calculateHistoricalPerformance,
   calculatePortfolio,
   calculatePortfolioAnalytics,
-  calculateTrackedPerformance,
   type HistoricalMarketSnapshot,
   type PortfolioPerformancePoint,
 } from "@/features/portfolio-engine";
@@ -17,9 +16,16 @@ export type PerformanceReadModel = {
   currency: string;
   summary: {
     portfolioValue: string;
-    netContributed: string | null;
+    netInvested: string;
     investmentGain: string | null;
     simpleReturnPercent: string | null;
+    netContributed: string;
+    externalContributions: string | null;
+    externalWithdrawals: string | null;
+    isCostBasisPartial: boolean;
+    missingCostBasisSymbols: string[];
+    isExternalCashflowPartial: boolean;
+    missingExternalCashflowSymbols: string[];
     isPartial: boolean;
     missingPriceSymbols: string[];
     hasStalePrices: boolean;
@@ -29,6 +35,7 @@ export type PerformanceReadModel = {
   incompleteDates: number;
   staleDates: number;
   historicalMissingPriceSymbols: string[];
+  historicalMissingCostBasisSymbols: string[];
 };
 
 export async function getPerformanceReadModel({
@@ -80,30 +87,27 @@ export async function getPerformanceReadModel({
     baseCurrency: currency,
     snapshots,
   });
-  const trackedPerformance = snapshots[0]
-    ? calculateTrackedPerformance({
-        assets,
-        transactions,
-        baseCurrency: currency,
-        openingSnapshot: snapshots[0],
-        currentMarketPrices: toEngineMarketPrices(marketData),
-      })
-    : {
-        netContributed: analytics.netInvested,
-        investmentGain: analytics.investmentGain,
-        simpleReturnPercent: analytics.simpleReturnPercent,
-      };
   const historicalMissingPriceSymbols = [...new Set(
     history.flatMap((point) => point.missingPriceSymbols),
+  )].sort();
+  const historicalMissingCostBasisSymbols = [...new Set(
+    history.flatMap((point) => point.missingCostBasisSymbols),
   )].sort();
 
   return {
     currency,
     summary: {
       portfolioValue: portfolio.totalValue,
-      netContributed: trackedPerformance.netContributed,
-      investmentGain: trackedPerformance.investmentGain,
-      simpleReturnPercent: trackedPerformance.simpleReturnPercent,
+      netInvested: analytics.netInvested ?? "0.00",
+      investmentGain: analytics.investmentGain,
+      simpleReturnPercent: analytics.simpleReturnPercent,
+      netContributed: analytics.netContributed,
+      externalContributions: analytics.externalContributions,
+      externalWithdrawals: analytics.externalWithdrawals,
+      isCostBasisPartial: analytics.isCostBasisPartial,
+      missingCostBasisSymbols: analytics.missingCostBasisSymbols,
+      isExternalCashflowPartial: analytics.isExternalCashflowPartial,
+      missingExternalCashflowSymbols: analytics.missingExternalCashflowSymbols,
       isPartial: portfolio.missingPriceSymbols.length > 0,
       missingPriceSymbols: portfolio.missingPriceSymbols,
       hasStalePrices: marketData.hasStalePrices,
@@ -113,5 +117,6 @@ export async function getPerformanceReadModel({
     incompleteDates: history.filter((point) => !point.isComplete).length,
     staleDates: history.filter((point) => point.hasStalePrices).length,
     historicalMissingPriceSymbols,
+    historicalMissingCostBasisSymbols,
   };
 }

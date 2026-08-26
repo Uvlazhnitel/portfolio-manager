@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 type ChartRow = {
   date: string;
   portfolioValue: number | null;
-  netContributed: number | null;
+  netInvested: number;
   investmentGain: number | null;
   isComplete: boolean;
   hasStalePrices: boolean;
@@ -23,7 +23,7 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
   const chartRows = performance.history.map<ChartRow>((point) => ({
     date: point.date,
     portfolioValue: point.portfolioValue === null ? null : Number(point.portfolioValue),
-    netContributed: point.netContributed === null ? null : Number(point.netContributed),
+    netInvested: Number(point.netInvested),
     investmentGain: point.investmentGain === null ? null : Number(point.investmentGain),
     isComplete: point.isComplete,
     hasStalePrices: point.hasStalePrices,
@@ -38,18 +38,21 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
       {performance.incompleteDates > 0 ? (
         <Notice>{performance.incompleteDates} historical {performance.incompleteDates === 1 ? "day has" : "days have"} incomplete price coverage. The chart leaves those values blank.</Notice>
       ) : null}
+      {summary.isCostBasisPartial ? (
+        <Notice>Partial cost basis. Net invested, gain, and return exclude: {summary.missingCostBasisSymbols.join(", ")}.</Notice>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryMetric icon={Landmark} label="Portfolio value" value={formatDecimalCurrency(summary.portfolioValue, currency)} />
-        <SummaryMetric icon={CircleDollarSign} label="Net contributed" value={moneyOrUnavailable(summary.netContributed, currency)} />
-        <SummaryMetric icon={TrendingUp} label="Investment gain" value={signedMoneyOrUnavailable(summary.investmentGain, currency)} tone={gainTone(summary.investmentGain)} />
-        <SummaryMetric icon={ChartNoAxesCombined} label="Simple return" value={summary.simpleReturnPercent === null ? "Unavailable" : signedPercent(summary.simpleReturnPercent)} tone={gainTone(summary.simpleReturnPercent)} />
+        <SummaryMetric icon={CircleDollarSign} label="Net invested" value={formatDecimalCurrency(summary.netInvested, currency)} isPartial={summary.isCostBasisPartial} />
+        <SummaryMetric icon={TrendingUp} label="Investment gain" value={signedMoneyOrUnavailable(summary.investmentGain, currency)} tone={gainTone(summary.investmentGain)} isPartial={summary.isCostBasisPartial} />
+        <SummaryMetric icon={ChartNoAxesCombined} label="Simple return" value={summary.simpleReturnPercent === null ? "Unavailable" : signedPercent(summary.simpleReturnPercent)} tone={gainTone(summary.simpleReturnPercent)} isPartial={summary.isCostBasisPartial} />
       </div>
 
       <Card className="min-w-0">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-foreground">Value and contributions</h2>
+            <h2 className="text-lg font-semibold text-foreground">Value and net invested</h2>
             <p className="mt-1 text-sm text-muted">Daily observations at UTC day-end from the moment tracking was enabled.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -68,7 +71,7 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
                 <Tooltip content={({ active, payload }) => <PerformanceTooltip active={active} row={payload?.[0]?.payload as ChartRow | undefined} currency={currency} />} />
                 <Legend wrapperStyle={{ paddingTop: 16 }} />
                 <Line type="monotone" dataKey="portfolioValue" name="Portfolio value" stroke="#8b5cf6" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} connectNulls={false} />
-                <Line type="monotone" dataKey="netContributed" name="Net contributed" stroke="#22c55e" strokeWidth={2} strokeDasharray="6 4" dot={false} activeDot={{ r: 4 }} connectNulls={false} />
+                <Line type="monotone" dataKey="netInvested" name="Net invested" stroke="#22c55e" strokeWidth={2} strokeDasharray="6 4" dot={false} activeDot={{ r: 4 }} connectNulls={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -81,19 +84,28 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
         )}
       </Card>
 
-      <p className="text-sm leading-6 text-muted">Performance assumes every external deposit and withdrawal is recorded. BUY, SELL, and Transfer transactions move or trade portfolio assets and do not count as contributions.</p>
+      <div className="grid gap-4 border-t border-border pt-4 sm:grid-cols-3">
+        <DetailMetric label="External contributions" value={moneyOrUnavailable(summary.externalContributions, currency)} />
+        <DetailMetric label="External withdrawals" value={moneyOrUnavailable(summary.externalWithdrawals, currency)} />
+        <DetailMetric label="Net contributed" value={formatDecimalCurrency(summary.netContributed, currency)} />
+      </div>
+      {summary.isExternalCashflowPartial ? <p className="text-xs text-warning">External cashflow totals are partial: {summary.missingExternalCashflowSymbols.join(", ")} has missing acquisition data.</p> : null}
+
+      <p className="text-sm leading-6 text-muted">Net invested follows transaction cashflow: purchases add their cost, sales subtract net proceeds, and transfers have no effect. External contributions and withdrawals remain separate for cashflow-based performance metrics.</p>
     </div>
   );
 }
 
-function SummaryMetric({ icon: Icon, label, value, tone = "default" }: { icon: typeof Landmark; label: string; value: string; tone?: "default" | "positive" | "negative" }) {
-  return <Card className="min-w-0"><div className="flex items-center justify-between gap-3"><p className="text-xs uppercase text-muted">{label}</p><Icon className="h-5 w-5 text-primary" /></div><p className={cn("mt-5 break-words text-2xl font-semibold", tone === "positive" && "text-success", tone === "negative" && "text-destructive")}>{value}</p></Card>;
+function SummaryMetric({ icon: Icon, label, value, tone = "default", isPartial = false }: { icon: typeof Landmark; label: string; value: string; tone?: "default" | "positive" | "negative"; isPartial?: boolean }) {
+  return <Card className="min-w-0"><div className="flex items-center justify-between gap-3"><div className="flex min-w-0 items-center gap-2"><p className="text-xs uppercase text-muted">{label}</p>{isPartial ? <Badge tone="warning">Partial</Badge> : null}</div><Icon className="h-5 w-5 shrink-0 text-primary" /></div><p className={cn("mt-5 break-words text-2xl font-semibold", tone === "positive" && "text-success", tone === "negative" && "text-destructive")}>{value}</p></Card>;
 }
 
 function PerformanceTooltip({ active, row, currency }: { active?: boolean; row?: ChartRow; currency: string }) {
   if (!active || !row) return null;
-  return <div className="max-w-64 rounded-lg border border-border bg-card p-3 shadow-xl"><p className="font-medium text-foreground">{formatDate(row.date)}</p>{row.isComplete ? <div className="mt-3 space-y-2 text-sm"><TooltipValue label="Portfolio value" value={moneyOrUnavailable(decimalFromNumber(row.portfolioValue), currency)} /><TooltipValue label="Net contributed" value={moneyOrUnavailable(decimalFromNumber(row.netContributed), currency)} /><TooltipValue label="Investment gain" value={signedMoneyOrUnavailable(decimalFromNumber(row.investmentGain), currency)} /></div> : <p className="mt-2 text-sm text-warning">Missing: {row.missingPriceSymbols.join(", ")}</p>}{row.hasStalePrices ? <p className="mt-2 text-xs text-warning">Includes stale observations</p> : null}</div>;
+  return <div className="max-w-64 rounded-lg border border-border bg-card p-3 shadow-xl"><p className="font-medium text-foreground">{formatDate(row.date)}</p>{row.isComplete ? <div className="mt-3 space-y-2 text-sm"><TooltipValue label="Portfolio value" value={moneyOrUnavailable(decimalFromNumber(row.portfolioValue), currency)} /><TooltipValue label="Net invested" value={moneyOrUnavailable(decimalFromNumber(row.netInvested), currency)} /><TooltipValue label="Investment gain" value={signedMoneyOrUnavailable(decimalFromNumber(row.investmentGain), currency)} /></div> : <p className="mt-2 text-sm text-warning">Missing: {row.missingPriceSymbols.join(", ")}</p>}{row.hasStalePrices ? <p className="mt-2 text-xs text-warning">Includes stale observations</p> : null}</div>;
 }
+
+function DetailMetric({ label, value }: { label: string; value: string }) { return <div><p className="text-xs uppercase text-muted">{label}</p><p className="mt-1 font-medium text-foreground">{value}</p></div>; }
 
 function TooltipValue({ label, value }: { label: string; value: string }) { return <div className="flex items-center justify-between gap-5"><span className="text-muted">{label}</span><span className="font-medium text-foreground">{value}</span></div>; }
 function Notice({ children }: { children: React.ReactNode }) { return <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{children}</div>; }

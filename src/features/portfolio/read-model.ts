@@ -8,6 +8,7 @@ import { serializeDecimal, serializeNullableDecimal } from "@/lib/db/decimal";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 import {
   formatPhysicalGoldQuantity,
+  gramsToTroyOunces,
   pricePerTroyOunce,
 } from "@/features/market-data/gold";
 
@@ -39,11 +40,14 @@ export type PortfolioHoldingRow = {
 
 export type PortfolioTransactionRow = {
   id: string;
+  assetId: string;
+  accountId: string;
   type: string;
   assetName: string;
   symbol: string;
   accountName: string;
   quantity: string;
+  inputQuantity: string;
   quantityLabel: string;
   pricePerUnit: string | null;
   displayPricePerUnit: string | null;
@@ -81,10 +85,12 @@ export type PortfolioReadModel = {
     warning: string | null;
     totalUnrealizedPnl: string | null;
     investmentGain: string | null;
-    netInvested: string | null;
+    netInvested: string;
     externalContributions: string | null;
     externalWithdrawals: string | null;
     simpleReturnPercent: string | null;
+    isCostBasisPartial: boolean;
+    missingCostBasisSymbols: string[];
   };
   strategyStatus: {
     name: string;
@@ -162,6 +168,8 @@ export async function getPortfolioReadModel({
       externalContributions: analytics.externalContributions,
       externalWithdrawals: analytics.externalWithdrawals,
       simpleReturnPercent: analytics.simpleReturnPercent,
+      isCostBasisPartial: analytics.isCostBasisPartial,
+      missingCostBasisSymbols: analytics.missingCostBasisSymbols,
     },
     strategyStatus: strategy
       ? {
@@ -262,11 +270,16 @@ export function serializeTransactionRow(transaction: TransactionWithRelations): 
 
   return {
     id: transaction.id,
+    assetId: transaction.assetId,
+    accountId: transaction.accountId,
     type: transaction.type,
     assetName: transaction.asset.name,
     symbol: transaction.asset.symbol,
     accountName: transaction.account.name,
     quantity: serializeDecimal(transaction.quantity),
+    inputQuantity: isPhysicalGold
+      ? gramsToTroyOunces(transaction.quantity).toString()
+      : serializeDecimal(transaction.quantity),
     quantityLabel: isPhysicalGold
       ? formatPhysicalGoldQuantity(transaction.quantity)
       : serializeDecimal(transaction.quantity),

@@ -27,10 +27,14 @@ export type PortfolioAssistantContext = {
     totalPortfolioValue: string;
     totalUnrealizedPnl: string | null;
     investmentGain: string | null;
-    netInvested: string | null;
+    netInvested: string;
+    netContributed: string;
     externalContributions: string | null;
     externalWithdrawals: string | null;
     simpleReturnPercent: string | null;
+    isCostBasisPartial: boolean;
+    missingCostBasisSymbols: string[];
+    isExternalCashflowPartial: boolean;
     isPartial: boolean;
     missingPriceSymbols: string[];
     priceCoveragePercent: string;
@@ -165,9 +169,13 @@ export async function loadAssistantPortfolioRuntime({
       totalUnrealizedPnl: analytics.totalUnrealizedPnl,
       investmentGain: analytics.investmentGain,
       netInvested: analytics.netInvested,
+      netContributed: analytics.netContributed,
       externalContributions: analytics.externalContributions,
       externalWithdrawals: analytics.externalWithdrawals,
       simpleReturnPercent: analytics.simpleReturnPercent,
+      isCostBasisPartial: analytics.isCostBasisPartial,
+      missingCostBasisSymbols: analytics.missingCostBasisSymbols,
+      isExternalCashflowPartial: analytics.isExternalCashflowPartial,
       isPartial: portfolio.missingPriceSymbols.length > 0,
       missingPriceSymbols: portfolio.missingPriceSymbols,
       priceCoveragePercent: analytics.priceCoverage.percent,

@@ -89,6 +89,7 @@ function TotalValueCard({ dashboard }: { dashboard: DashboardReadModel }) {
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {dashboard.alignment.totalHoldings === 0 ? <Badge>No holdings</Badge> : dashboard.valuation.isPartial ? <Badge tone="warning">Partial value</Badge> : <Badge tone="success">All prices available</Badge>}
         {dashboard.valuation.hasStalePrices ? <Badge tone="warning">Stale prices</Badge> : null}
+        {dashboard.valuation.isCostBasisPartial ? <Badge tone="warning">Partial cost basis</Badge> : null}
       </div>
       {gain !== null ? (
         <div className="mt-5 grid gap-3 border-t border-border pt-4">
@@ -102,7 +103,8 @@ function TotalValueCard({ dashboard }: { dashboard: DashboardReadModel }) {
           </div>
           <Link href="/performance" className="text-sm font-medium text-primary hover:underline">View performance</Link>
         </div>
-      ) : <p className="mt-5 border-t border-border pt-4 text-sm text-muted">Performance is unavailable until price and contribution coverage is complete.</p>}
+      ) : <p className="mt-5 border-t border-border pt-4 text-sm text-muted">Performance is unavailable until current price coverage is complete.</p>}
+      {dashboard.valuation.isCostBasisPartial ? <p className="mt-3 text-xs text-warning">Excludes {dashboard.valuation.missingCostBasisSymbols.join(", ")} from gain and return.</p> : null}
     </Card>
   );
 }

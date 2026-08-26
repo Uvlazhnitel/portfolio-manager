@@ -7,6 +7,7 @@ import {
   createTransferMutation,
   createTransactionMutation,
   deleteTransactionMutation,
+  updateTransactionMutation,
   type PortfolioMutationResult,
 } from "@/features/portfolio/mutations";
 import { publicErrorMessage } from "@/lib/public-error";
@@ -172,6 +173,27 @@ export async function deleteTransactionAction(formData: FormData): Promise<void>
   await withPortfolioRevalidation(deleteTransactionMutation(String(formData.get("id") ?? "")));
 }
 
+export async function updateTransactionAction(
+  previousState: PortfolioActionState = initialState,
+  formData: FormData,
+): Promise<PortfolioActionState> {
+  void previousState;
+  try {
+    return await withPortfolioRevalidation(updateTransactionMutation({
+      id: String(formData.get("id") ?? ""),
+      quantity: nullableString(formData.get("quantity")) ?? undefined,
+      physicalGoldWeightTroyOunces: nullableString(formData.get("physicalGoldWeightTroyOunces")) ?? undefined,
+      pricePerUnit: nullableString(formData.get("pricePerUnit")) ?? undefined,
+      totalAmount: nullableString(formData.get("totalAmount")) ?? undefined,
+      fee: nullableString(formData.get("fee")) ?? undefined,
+      executedAt: String(formData.get("executedAt") ?? ""),
+      note: nullableString(formData.get("note")) ?? undefined,
+    }));
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
 function nullableString(value: FormDataEntryValue | null) {
   if (value === null) {
     return null;
@@ -204,5 +226,6 @@ async function withPortfolioRevalidation<T extends PortfolioMutationResult>(muta
   const result = await mutation;
   revalidatePath("/portfolio");
   revalidatePath("/dashboard");
+  revalidatePath("/performance");
   return result;
 }

@@ -10,7 +10,7 @@ import {
   useTransition,
   type ReactNode,
 } from "react";
-import { ArrowLeft, ChevronRight, Plus, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { searchAssetsAction } from "@/features/asset-catalog/actions";
 import type { AssetCatalogResult } from "@/features/asset-catalog/types";
 import {
@@ -19,6 +19,7 @@ import {
   createTransferAction,
   createTransactionAction,
   deleteTransactionAction,
+  updateTransactionAction,
 } from "@/features/portfolio/actions";
 import type { PortfolioReadModel } from "@/features/portfolio/read-model";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +35,7 @@ type DialogState =
   | { kind: "asset" }
   | { kind: "account" }
   | { kind: "transaction"; assetId?: string; accountId?: string }
+  | { kind: "edit-transaction"; transactionId: string }
   | null;
 type AssetSelection = AssetCatalogResult | { source: "CUSTOM" };
 type TransactionOperation = "INITIAL_BALANCE" | "BUY" | "SELL" | "TRANSFER" | "DEPOSIT" | "WITHDRAWAL";
@@ -73,10 +75,13 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           {portfolio.valuation.isPartial ? <Badge tone="warning">Partial valuation</Badge> : <Badge tone="success">All prices available</Badge>}
+          {portfolio.valuation.isCostBasisPartial ? <Badge tone="warning">Partial cost basis</Badge> : null}
           {portfolio.valuation.hasStalePrices ? <Badge tone="warning">Stale prices</Badge> : null}
           <span className="text-xs text-muted">Last updated {formatTimestamp(portfolio.valuation.lastUpdated)}</span>
         </div>
       </Card>
+
+      {portfolio.valuation.isCostBasisPartial ? <p className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">Net invested, gain, and return exclude: {portfolio.valuation.missingCostBasisSymbols.join(", ")}.</p> : null}
 
       {portfolio.valuation.warning ? (
         <p className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">{portfolio.valuation.warning}</p>
@@ -124,13 +129,16 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
       ) : null}
       {activeTab === "accounts" ? <AccountsSection portfolio={portfolio} onAddAccount={() => setDialog({ kind: "account" })} /> : null}
       {activeTab === "transactions" ? (
-        <TransactionsSection portfolio={portfolio} onAddTransaction={() => setDialog({ kind: "asset" })} />
+        <TransactionsSection portfolio={portfolio} onAddTransaction={() => setDialog({ kind: "asset" })} onEditTransaction={(transactionId) => setDialog({ kind: "edit-transaction", transactionId })} />
       ) : null}
 
       {dialog?.kind === "asset" ? <AddAssetDialog portfolio={portfolio} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === "account" ? <AddAccountDialog onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === "transaction" ? (
         <AddTransactionDialog portfolio={portfolio} initialAssetId={dialog.assetId} initialAccountId={dialog.accountId} onClose={() => setDialog(null)} />
+      ) : null}
+      {dialog?.kind === "edit-transaction" ? (
+        <EditTransactionDialog portfolio={portfolio} transactionId={dialog.transactionId} onClose={() => setDialog(null)} />
       ) : null}
     </div>
   );
@@ -448,6 +456,36 @@ function AddTransactionDialog({ portfolio, initialAssetId, initialAccountId, onC
   );
 }
 
+function EditTransactionDialog({ portfolio, transactionId, onClose }: PortfolioClientProps & { transactionId: string; onClose: () => void }) {
+  const transaction = portfolio.transactions.find((item) => item.id === transactionId);
+  const [state, action, isPending] = useActionState(updateTransactionAction, { ok: false, message: "" });
+  if (!transaction) return null;
+  const isPhysicalGold = transaction.displayPriceUnit === "troy oz";
+
+  return (
+    <DialogShell title="Edit transaction" description={`${formatType(transaction.type)} · ${transaction.assetName} · ${transaction.accountName}`} onClose={onClose}>
+      {state.ok ? (
+        <div className="space-y-4"><ActionMessage state={state} /><Button type="button" onClick={onClose} className="w-full">Done</Button></div>
+      ) : (
+        <form action={action} className="space-y-5">
+          <input type="hidden" name="id" value={transaction.id} />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label={isPhysicalGold ? "Weight (troy oz)" : "Quantity"}><input name={isPhysicalGold ? "physicalGoldWeightTroyOunces" : "quantity"} required className={inputClassName} inputMode="decimal" defaultValue={transaction.inputQuantity} /></Field>
+            <Field label={isPhysicalGold ? "Price per troy ounce" : "Price per unit"}><input name="pricePerUnit" className={inputClassName} inputMode="decimal" defaultValue={transaction.displayPricePerUnit ?? ""} placeholder="0.00" /></Field>
+            <Field label="Total amount (alternative)"><input name="totalAmount" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
+            <Field label="Fee"><input name="fee" className={inputClassName} inputMode="decimal" defaultValue={transaction.fee ?? ""} placeholder="0.00" /></Field>
+            <Field label="Date"><input name="executedAt" required type="date" className={inputClassName} defaultValue={transaction.executedAt.slice(0, 10)} /></Field>
+          </div>
+          <p className="text-xs text-muted">Asset, account, currency, and operation type stay unchanged. Clear the unit price before entering a total amount instead.</p>
+          <Field label="Note (optional)"><textarea name="note" className={textareaClassName} rows={3} defaultValue={transaction.note ?? ""} /></Field>
+          <ActionMessage state={state} />
+          <Button type="submit" disabled={isPending}>{isPending ? "Saving…" : "Save changes"}</Button>
+        </form>
+      )}
+    </DialogShell>
+  );
+}
+
 function DialogShell({ title, description, onClose, children }: { title: string; description: string; onClose: () => void; children: ReactNode }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -504,8 +542,8 @@ function AccountsSection({ portfolio, onAddAccount }: PortfolioClientProps & { o
   return <Card><div className="mb-4 flex items-center justify-between gap-4"><h2 className="text-lg font-semibold text-foreground">Accounts</h2><Button type="button" variant="secondary" onClick={onAddAccount}><Plus className="mr-2 h-4 w-4" />Add account</Button></div><div className="grid gap-3 md:grid-cols-3">{portfolio.accounts.map((account) => <div key={account.id} className="rounded-lg border border-border bg-surface p-4"><p className="font-medium text-foreground">{account.name}</p><p className="mt-1 text-sm text-muted">{formatType(account.type)}</p>{account.description ? <p className="mt-3 text-sm text-muted">{account.description}</p> : null}</div>)}</div></Card>;
 }
 
-function TransactionsSection({ portfolio, onAddTransaction }: PortfolioClientProps & { onAddTransaction: () => void }) {
-  return <Card><div className="mb-4 flex items-center justify-between gap-4"><div><h2 className="text-lg font-semibold text-foreground">Transactions</h2><p className="mt-1 text-sm text-muted">Enter older trades first so historical balance checks remain clear.</p></div><Button type="button" variant="secondary" onClick={onAddTransaction}><Plus className="mr-2 h-4 w-4" />Add transaction</Button></div>{portfolio.transactions.length === 0 ? <EmptyState title="No transactions yet" description="Record a current balance or your first historical buy." /> : <div className="space-y-3">{portfolio.transactions.map((transaction) => <div key={transaction.id} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 md:flex-row md:items-center md:justify-between"><div><div className="flex flex-wrap items-center gap-2"><Badge>{formatType(transaction.type)}</Badge><p className="font-medium text-foreground">{transaction.assetName}</p><p className="text-sm text-muted">{transaction.symbol} · {transaction.accountName}</p></div><p className="mt-2 text-sm text-muted">{transaction.quantityLabel} · {transaction.displayPricePerUnit ? `${formatDecimalCurrency(transaction.displayPricePerUnit, transaction.currency)} / ${transaction.displayPriceUnit}` : "No acquisition price"} · {formatUtcDate(transaction.executedAt)}</p>{transaction.note ? <p className="mt-2 text-sm text-muted">{transaction.note}</p> : null}</div><form action={deleteTransactionAction} onSubmit={(event) => { if (!window.confirm("Delete this transaction? Holdings will be recalculated.")) event.preventDefault(); }}><input type="hidden" name="id" value={transaction.id} /><Button type="submit" variant="ghost"><Trash2 className="mr-2 h-4 w-4" />Delete</Button></form></div>)}</div>}</Card>;
+function TransactionsSection({ portfolio, onAddTransaction, onEditTransaction }: PortfolioClientProps & { onAddTransaction: () => void; onEditTransaction: (transactionId: string) => void }) {
+  return <Card><div className="mb-4 flex items-center justify-between gap-4"><div><h2 className="text-lg font-semibold text-foreground">Transactions</h2><p className="mt-1 text-sm text-muted">Enter older trades first so historical balance checks remain clear.</p></div><Button type="button" variant="secondary" onClick={onAddTransaction}><Plus className="mr-2 h-4 w-4" />Add transaction</Button></div>{portfolio.transactions.length === 0 ? <EmptyState title="No transactions yet" description="Record a current balance or your first historical buy." /> : <div className="space-y-3">{portfolio.transactions.map((transaction) => <div key={transaction.id} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 md:flex-row md:items-center md:justify-between"><div><div className="flex flex-wrap items-center gap-2"><Badge>{formatType(transaction.type)}</Badge><p className="font-medium text-foreground">{transaction.assetName}</p><p className="text-sm text-muted">{transaction.symbol} · {transaction.accountName}</p></div><p className="mt-2 text-sm text-muted">{transaction.quantityLabel} · {transaction.displayPricePerUnit ? `${formatDecimalCurrency(transaction.displayPricePerUnit, transaction.currency)} / ${transaction.displayPriceUnit}` : "No acquisition price"} · {formatUtcDate(transaction.executedAt)}</p>{transaction.note ? <p className="mt-2 text-sm text-muted">{transaction.note}</p> : null}</div><div className="flex items-center gap-2">{transaction.type !== "TRANSFER_IN" && transaction.type !== "TRANSFER_OUT" ? <Button type="button" variant="ghost" title="Edit transaction" aria-label="Edit transaction" onClick={() => onEditTransaction(transaction.id)}><Pencil className="h-4 w-4" /></Button> : null}<form action={deleteTransactionAction} onSubmit={(event) => { if (!window.confirm("Delete this transaction? Holdings will be recalculated.")) event.preventDefault(); }}><input type="hidden" name="id" value={transaction.id} /><Button type="submit" variant="ghost"><Trash2 className="mr-2 h-4 w-4" />Delete</Button></form></div></div>)}</div>}</Card>;
 }
 
 function toCatalogResult(asset: PortfolioReadModel["assets"][number]): AssetCatalogResult {

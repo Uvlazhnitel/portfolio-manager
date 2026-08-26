@@ -7,6 +7,7 @@ import {
   createTransferMutation,
   createTransactionMutation,
   deleteTransactionMutation,
+  updateTransactionMutation,
 } from "@/features/portfolio/mutations";
 import { createTestDatabase, type TestDatabase } from "../helpers/test-db";
 
@@ -412,6 +413,60 @@ describe("portfolio mutations", () => {
     const results = await Promise.allSettled([sell(), sell()]);
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+  });
+
+  it("updates acquisition data while keeping transaction identity fixed", async () => {
+    const account = await testDb.prisma.account.create({ data: { name: "Editable Wallet", type: AccountType.WALLET } });
+    const asset = await testDb.prisma.asset.create({
+      data: { symbol: "EDITABLE", name: "Editable Asset", assetClass: AssetClass.OTHER, assetType: AssetType.OTHER, currency: "EUR" },
+    });
+    const original = await testDb.prisma.transaction.create({
+      data: { accountId: account.id, assetId: asset.id, type: TransactionType.INITIAL_BALANCE, quantity: "1", pricePerUnit: null, currency: "EUR", executedAt: new Date("2026-01-01") },
+    });
+
+    await updateTransactionMutation({
+      id: original.id,
+      quantity: "1.5",
+      totalAmount: "300",
+      fee: "2",
+      executedAt: new Date("2026-01-02"),
+      note: "Cost basis restored",
+    }, testDb.prisma);
+
+    const updated = await testDb.prisma.transaction.findUniqueOrThrow({ where: { id: original.id } });
+    expect(updated).toEqual(expect.objectContaining({
+      id: original.id,
+      accountId: account.id,
+      assetId: asset.id,
+      type: TransactionType.INITIAL_BALANCE,
+      currency: "EUR",
+      note: "Cost basis restored",
+    }));
+    expect(updated.quantity.toString()).toBe("1.5");
+    expect(updated.pricePerUnit?.toString()).toBe("200");
+    expect(updated.fee?.toString()).toBe("2");
+  });
+
+  it("rolls back an edit that would invalidate later holdings", async () => {
+    const account = await testDb.prisma.account.create({ data: { name: "Edit Chronology", type: AccountType.WALLET } });
+    const asset = await testDb.prisma.asset.create({
+      data: { symbol: "EDIT_HISTORY", name: "Edit History", assetClass: AssetClass.OTHER, assetType: AssetType.OTHER, currency: "EUR" },
+    });
+    const buy = await testDb.prisma.transaction.create({
+      data: { accountId: account.id, assetId: asset.id, type: TransactionType.BUY, quantity: "1", pricePerUnit: "100", currency: "EUR", executedAt: new Date("2026-01-01") },
+    });
+    await testDb.prisma.transaction.create({
+      data: { accountId: account.id, assetId: asset.id, type: TransactionType.SELL, quantity: "1", pricePerUnit: "120", currency: "EUR", executedAt: new Date("2026-01-02") },
+    });
+
+    await expect(updateTransactionMutation({
+      id: buy.id,
+      quantity: "0.5",
+      pricePerUnit: "100",
+      executedAt: new Date("2026-01-01"),
+    }, testDb.prisma)).rejects.toThrow("required by a later sale");
+
+    expect((await testDb.prisma.transaction.findUniqueOrThrow({ where: { id: buy.id } })).quantity.toString()).toBe("1");
   });
 
   it("enforces database constraints and relation delete policies", async () => {

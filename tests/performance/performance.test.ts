@@ -7,7 +7,6 @@ import { DailyMarketPriceRepository, type DailyMarketPriceStore } from "@/featur
 import { HISTORY_RETRY_DELAY_MS, millisecondsUntilNextCapture, runHistoryWorker } from "@/features/performance/worker";
 import {
   calculateHistoricalPerformance,
-  calculateTrackedPerformance,
   type EngineAsset,
   type EngineTransaction,
 } from "@/features/portfolio-engine";
@@ -44,9 +43,9 @@ describe("historical performance engine", () => {
       ],
     });
 
-    expect(history[0]).toEqual(expect.objectContaining({ portfolioValue: "1000.00", netContributed: "1000.00", investmentGain: "0.00", simpleReturnPercent: "0.00" }));
-    expect(history[1]).toEqual(expect.objectContaining({ portfolioValue: "1200.00", netContributed: "1000.00", investmentGain: "200.00", simpleReturnPercent: "20.00" }));
-    expect(history[2]).toEqual(expect.objectContaining({ portfolioValue: "1300.00", netContributed: "800.00", investmentGain: "500.00", simpleReturnPercent: "62.50" }));
+    expect(history[0]).toEqual(expect.objectContaining({ portfolioValue: "1000.00", netInvested: "1000.00", investmentGain: "0.00", simpleReturnPercent: "0.00" }));
+    expect(history[1]).toEqual(expect.objectContaining({ portfolioValue: "1200.00", netInvested: "1000.00", investmentGain: "200.00", simpleReturnPercent: "20.00" }));
+    expect(history[2]).toEqual(expect.objectContaining({ portfolioValue: "1300.00", netInvested: "900.00", investmentGain: "400.00", simpleReturnPercent: "44.44" }));
   });
 
   it("leaves incomplete valuations blank without losing the cashflow series", () => {
@@ -59,7 +58,7 @@ describe("historical performance engine", () => {
 
     expect(history[0]).toEqual(expect.objectContaining({
       portfolioValue: null,
-      netContributed: "1000.00",
+      netInvested: "1000.00",
       investmentGain: null,
       simpleReturnPercent: null,
       isComplete: false,
@@ -80,7 +79,7 @@ describe("historical performance engine", () => {
     expect(after[0].portfolioValue).toBe("1320.00");
   });
 
-  it("uses the first tracked valuation as the opening contribution baseline", () => {
+  it("marks missing acquisition prices partial without estimating them from the snapshot", () => {
     const openingTransaction = assetTransaction(
       "opening-balance",
       TransactionType.INITIAL_BALANCE,
@@ -94,25 +93,75 @@ describe("historical performance engine", () => {
       baseCurrency: "USD",
       snapshots: [snapshot("2026-08-26", "12000")],
     });
-    const current = calculateTrackedPerformance({
-      assets,
-      transactions: [openingTransaction],
+    expect(history[0]).toEqual(expect.objectContaining({
+      portfolioValue: "1200.00",
+      netInvested: "0.00",
+      investmentGain: "0.00",
+      simpleReturnPercent: null,
+      isCostBasisPartial: true,
+      missingCostBasisSymbols: ["BTC"],
+    }));
+  });
+
+  it("calculates partial gain only from assets with complete cost basis", () => {
+    const eth: EngineAsset = { id: "eth", symbol: "ETH", name: "Ethereum", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "ETH" };
+    const history = calculateHistoricalPerformance({
+      assets: [...assets, eth],
+      transactions: [
+        assetTransaction("known-btc", TransactionType.BUY, "0.1", "2026-08-24T10:00:00Z"),
+        { id: "unknown-eth", assetId: "eth", accountId: "exchange", type: TransactionType.INITIAL_BALANCE, quantity: "1", pricePerUnit: null, currency: "USD", executedAt: "2026-08-25T10:00:00Z" },
+      ],
       baseCurrency: "USD",
-      openingSnapshot: snapshot("2026-08-26", "12000"),
-      currentMarketPrices: { BTC: "13000", USD: "1" },
+      snapshots: [{ date: "2026-08-26", marketPrices: { BTC: "15000", ETH: "2000", USD: "1" }, hasStalePrices: false }],
     });
 
     expect(history[0]).toEqual(expect.objectContaining({
-      portfolioValue: "1200.00",
-      netContributed: "1200.00",
-      investmentGain: "0.00",
-      simpleReturnPercent: "0.00",
+      portfolioValue: "3500.00",
+      netInvested: "1000.00",
+      investmentGain: "500.00",
+      simpleReturnPercent: "50.00",
+      isCostBasisPartial: true,
+      missingCostBasisSymbols: ["ETH"],
     }));
-    expect(current).toEqual({
-      netContributed: "1200.00",
-      investmentGain: "100.00",
-      simpleReturnPercent: "8.33",
+  });
+
+  it("derives opening contributions from buys minus reused sale proceeds", () => {
+    const openingTransactions = [
+      assetTransaction("first-buy", TransactionType.BUY, "0.1", "2026-08-24T10:00:00Z"),
+      assetTransaction("sale", TransactionType.SELL, "0.04", "2026-08-24T11:00:00Z"),
+      { ...assetTransaction("reinvest", TransactionType.BUY, "0.03", "2026-08-25T10:00:00Z"), pricePerUnit: "12000" },
+    ];
+    const history = calculateHistoricalPerformance({
+      assets,
+      transactions: openingTransactions,
+      baseCurrency: "USD",
+      snapshots: [snapshot("2026-08-26", "15000")],
     });
+
+    expect(history[0]).toEqual(expect.objectContaining({
+      portfolioValue: "1350.00",
+      netInvested: "960.00",
+      investmentGain: "390.00",
+      simpleReturnPercent: "40.63",
+    }));
+  });
+
+  it("adds buy fees and subtracts sell fees from net proceeds", () => {
+    const buy = { ...assetTransaction("buy-with-fee", TransactionType.BUY, "0.1", "2026-08-24T10:00:00Z"), fee: "10" };
+    const sell = { ...assetTransaction("sell-with-fee", TransactionType.SELL, "0.04", "2026-08-25T10:00:00Z"), fee: "2" };
+    const history = calculateHistoricalPerformance({
+      assets,
+      transactions: [buy, sell],
+      baseCurrency: "USD",
+      snapshots: [snapshot("2026-08-26", "15000")],
+    });
+
+    expect(history[0]).toEqual(expect.objectContaining({
+      portfolioValue: "900.00",
+      netInvested: "612.00",
+      investmentGain: "288.00",
+      simpleReturnPercent: "47.06",
+    }));
   });
 });
 
@@ -210,7 +259,7 @@ describe("performance read model", () => {
       dailyPriceStore: { listDailyPrices: async () => dailyRows, saveDailyPrices: vi.fn() },
     });
 
-    expect(model.summary).toEqual(expect.objectContaining({ portfolioValue: "1000.00", netContributed: "1000.00", investmentGain: "0.00", simpleReturnPercent: "0.00", isPartial: false }));
+    expect(model.summary).toEqual(expect.objectContaining({ portfolioValue: "1000.00", netInvested: "1000.00", netContributed: "1000.00", investmentGain: "0.00", simpleReturnPercent: "0.00", isPartial: false }));
     expect(model.history).toHaveLength(1);
     expect(model.trackingStartedAt).toBe("2026-08-26");
   });

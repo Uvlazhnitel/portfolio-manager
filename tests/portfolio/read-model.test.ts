@@ -110,6 +110,7 @@ describe("priced portfolio read models", () => {
     const goldTransaction = model.transactions.find((transaction) => transaction.symbol === "PHYSICAL_GOLD");
     expect(goldTransaction).toEqual(expect.objectContaining({
       quantityLabel: "0.3215 oz",
+      inputQuantity: expect.stringMatching(/^0\.3215/),
       displayPricePerUnit: "2488.278144",
       displayPriceUnit: "troy oz",
     }));

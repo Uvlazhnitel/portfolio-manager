@@ -15,7 +15,6 @@ import type {
   CalculatePortfolioAnalyticsInput,
   CalculateHoldingCostBasisInput,
   CalculateHistoricalPerformanceInput,
-  CalculateTrackedPerformanceInput,
   CalculateStrategyAlignmentInput,
   ContributionAllocation,
   ContributionAssetRecommendation,
@@ -38,7 +37,6 @@ import type {
   SimulateContributionInput,
   StrategyWarning,
   StrategyAlignment,
-  TrackedPerformanceSummary,
   ValuedHolding,
 } from "@/features/portfolio-engine/types";
 
@@ -165,9 +163,14 @@ export function calculatePortfolioAnalytics(input: CalculatePortfolioAnalyticsIn
     totalUnrealizedPnl: totalUnrealizedPnl ? toDecimalString(totalUnrealizedPnl) : null,
     investmentGain: performance.investmentGain,
     netInvested: performance.netInvested,
+    netContributed: performance.netContributed,
     externalContributions: performance.externalContributions,
     externalWithdrawals: performance.externalWithdrawals,
     simpleReturnPercent: performance.simpleReturnPercent,
+    isCostBasisPartial: performance.isCostBasisPartial,
+    missingCostBasisSymbols: performance.missingCostBasisSymbols,
+    isExternalCashflowPartial: performance.isExternalCashflowPartial,
+    missingExternalCashflowSymbols: performance.missingExternalCashflowSymbols,
     priceCoverage: {
       pricedHoldings,
       totalHoldings,
@@ -186,18 +189,6 @@ export function calculateHistoricalPerformance(
 ): PortfolioPerformancePoint[] {
   const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
   const snapshots = [...input.snapshots].sort((left, right) => left.date.localeCompare(right.date));
-  const openingSnapshot = snapshots[0];
-  if (!openingSnapshot) return [];
-  const trackingStartedAt = startOfUtcDate(openingSnapshot.date);
-  const openingTransactions = transactionsBefore(input.transactions, trackingStartedAt);
-  const openingPortfolio = calculatePortfolio({
-    assets: input.assets,
-    transactions: openingTransactions,
-    marketPrices: openingSnapshot.marketPrices,
-  });
-  const openingValue = openingPortfolio.missingPriceSymbols.length === 0
-    ? decimal(openingPortfolio.totalValue)
-    : null;
 
   return snapshots
     .map((snapshot) => {
@@ -209,68 +200,26 @@ export function calculateHistoricalPerformance(
         transactions,
         marketPrices: snapshot.marketPrices,
       });
-      const trackedTransactions = transactions.filter((transaction) => transactionTimestamp(transaction) >= trackingStartedAt);
-      const cashflows = calculateExternalCashflows(trackedTransactions, assetById, input.baseCurrency);
+      const performance = calculatePerformanceSummary(
+        { portfolio, assets: input.assets, transactions, baseCurrency: input.baseCurrency },
+        assetById,
+      );
       const isComplete = portfolio.missingPriceSymbols.length === 0;
       const portfolioValue = isComplete ? decimal(portfolio.totalValue) : null;
-      const netContributed = openingValue && cashflows
-        ? openingValue.plus(cashflows.netInvested)
-        : null;
-      const investmentGain = portfolioValue && netContributed
-        ? portfolioValue.minus(netContributed)
-        : null;
-      const simpleReturnPercent = investmentGain && netContributed && netContributed.greaterThan(ZERO)
-        ? investmentGain.div(netContributed).mul(ONE_HUNDRED)
-        : null;
 
       return {
         date: snapshot.date,
         portfolioValue: portfolioValue ? toDecimalString(portfolioValue) : null,
-        netContributed: netContributed ? toDecimalString(netContributed) : null,
-        investmentGain: investmentGain ? toDecimalString(investmentGain) : null,
-        simpleReturnPercent: simpleReturnPercent ? toDecimalString(simpleReturnPercent) : null,
+        netInvested: performance.netInvested,
+        investmentGain: performance.investmentGain,
+        simpleReturnPercent: performance.simpleReturnPercent,
         isComplete,
         missingPriceSymbols: portfolio.missingPriceSymbols,
+        isCostBasisPartial: performance.isCostBasisPartial,
+        missingCostBasisSymbols: performance.missingCostBasisSymbols,
         hasStalePrices: snapshot.hasStalePrices,
       };
     });
-}
-
-export function calculateTrackedPerformance(
-  input: CalculateTrackedPerformanceInput,
-): TrackedPerformanceSummary {
-  const trackingStartedAt = startOfUtcDate(input.openingSnapshot.date);
-  const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
-  const openingPortfolio = calculatePortfolio({
-    assets: input.assets,
-    transactions: transactionsBefore(input.transactions, trackingStartedAt),
-    marketPrices: input.openingSnapshot.marketPrices,
-  });
-  const currentPortfolio = calculatePortfolio({
-    assets: input.assets,
-    transactions: input.transactions,
-    marketPrices: input.currentMarketPrices,
-  });
-  if (openingPortfolio.missingPriceSymbols.length > 0 || currentPortfolio.missingPriceSymbols.length > 0) {
-    return { netContributed: null, investmentGain: null, simpleReturnPercent: null };
-  }
-  const cashflows = calculateExternalCashflows(
-    input.transactions.filter((transaction) => transactionTimestamp(transaction) >= trackingStartedAt),
-    assetById,
-    input.baseCurrency,
-  );
-  if (!cashflows) return { netContributed: null, investmentGain: null, simpleReturnPercent: null };
-
-  const netContributed = decimal(openingPortfolio.totalValue).plus(cashflows.netInvested);
-  const investmentGain = decimal(currentPortfolio.totalValue).minus(netContributed);
-  const simpleReturnPercent = netContributed.greaterThan(ZERO)
-    ? investmentGain.div(netContributed).mul(ONE_HUNDRED)
-    : null;
-  return {
-    netContributed: toDecimalString(netContributed),
-    investmentGain: toDecimalString(investmentGain),
-    simpleReturnPercent: simpleReturnPercent ? toDecimalString(simpleReturnPercent) : null,
-  };
 }
 
 export function calculateStrategyAlignment(input: CalculateStrategyAlignmentInput): StrategyAlignment {
@@ -1160,32 +1109,87 @@ function calculatePerformanceSummary(
   input: CalculatePortfolioAnalyticsInput,
   assetById: Map<string, EngineAsset>,
 ) {
-  const cashflows = calculateExternalCashflows(input.transactions, assetById, input.baseCurrency);
-  if (!cashflows) {
-    return {
-      netInvested: null,
-      externalContributions: null,
-      externalWithdrawals: null,
-      investmentGain: null,
-      simpleReturnPercent: null,
-    };
+  const transactionsByAsset = new Map<string, EngineTransaction[]>();
+  for (const transaction of input.transactions) {
+    const transactions = transactionsByAsset.get(transaction.assetId) ?? [];
+    transactions.push(transaction);
+    transactionsByAsset.set(transaction.assetId, transactions);
   }
 
-  const isComplete = input.portfolio.missingPriceSymbols.length === 0;
-  const investmentGain = isComplete
-    ? decimal(input.portfolio.totalValue).minus(cashflows.netInvested)
+  const currentValueByAsset = new Map<string, Prisma.Decimal>();
+  for (const holding of input.portfolio.valuedHoldings) {
+    currentValueByAsset.set(
+      holding.assetId,
+      (currentValueByAsset.get(holding.assetId) ?? ZERO).plus(decimal(holding.value)),
+    );
+  }
+
+  let netInvested = ZERO;
+  let coveredPortfolioValue = ZERO;
+  const missingCostBasisSymbols = new Set<string>();
+  for (const [assetId, transactions] of transactionsByAsset) {
+    const asset = requireAsset(assetById, assetId);
+    const assetFlow = calculateAssetInvestmentFlow(transactions, asset, input.baseCurrency);
+    if (assetFlow === null) {
+      missingCostBasisSymbols.add(asset.symbol);
+      continue;
+    }
+    netInvested = netInvested.plus(assetFlow);
+    coveredPortfolioValue = coveredPortfolioValue.plus(currentValueByAsset.get(assetId) ?? ZERO);
+  }
+
+  const externalCashflows = calculateExternalCashflows(input.transactions, assetById, input.baseCurrency);
+  const hasCompletePrices = input.portfolio.missingPriceSymbols.length === 0;
+  const investmentGain = hasCompletePrices
+    ? coveredPortfolioValue.minus(netInvested)
     : null;
-  const simpleReturnPercent = investmentGain && cashflows.netInvested.greaterThan(ZERO)
-    ? investmentGain.div(cashflows.netInvested).mul(ONE_HUNDRED)
+  const simpleReturnPercent = investmentGain && netInvested.greaterThan(ZERO)
+    ? investmentGain.div(netInvested).mul(ONE_HUNDRED)
     : null;
 
   return {
-    netInvested: toDecimalString(cashflows.netInvested),
-    externalContributions: toDecimalString(cashflows.externalContributions),
-    externalWithdrawals: toDecimalString(cashflows.externalWithdrawals),
+    netInvested: toDecimalString(netInvested),
+    netContributed: toDecimalString(externalCashflows.netContributed),
+    externalContributions: toDecimalString(externalCashflows.externalContributions),
+    externalWithdrawals: toDecimalString(externalCashflows.externalWithdrawals),
     investmentGain: investmentGain ? toDecimalString(investmentGain) : null,
     simpleReturnPercent: simpleReturnPercent ? toDecimalString(simpleReturnPercent) : null,
+    isCostBasisPartial: missingCostBasisSymbols.size > 0,
+    missingCostBasisSymbols: [...missingCostBasisSymbols].sort(),
+    isExternalCashflowPartial: externalCashflows.missingSymbols.size > 0,
+    missingExternalCashflowSymbols: [...externalCashflows.missingSymbols].sort(),
   };
+}
+
+function calculateAssetInvestmentFlow(
+  transactions: EngineTransaction[],
+  asset: EngineAsset,
+  baseCurrency: string,
+) {
+  let netInvested = ZERO;
+  let transferQuantity = ZERO;
+
+  for (const transaction of transactions) {
+    const quantity = decimal(transaction.quantity);
+    if (transaction.type === TransactionType.TRANSFER_IN) {
+      transferQuantity = transferQuantity.plus(quantity);
+      continue;
+    }
+    if (transaction.type === TransactionType.TRANSFER_OUT) {
+      transferQuantity = transferQuantity.minus(quantity);
+      continue;
+    }
+
+    const value = transactionCashValue(transaction, asset, baseCurrency);
+    if (!value) return null;
+    if (transaction.type === TransactionType.SELL || transaction.type === TransactionType.WITHDRAWAL) {
+      netInvested = netInvested.minus(value.gross.minus(value.fee));
+    } else {
+      netInvested = netInvested.plus(value.gross.plus(value.fee));
+    }
+  }
+
+  return transferQuantity.equals(ZERO) ? netInvested : null;
 }
 
 function calculateExternalCashflows(
@@ -1195,6 +1199,7 @@ function calculateExternalCashflows(
 ) {
   let externalContributions = ZERO;
   let externalWithdrawals = ZERO;
+  const missingSymbols = new Set<string>();
 
   for (const transaction of transactions) {
     const isContribution = transaction.type === TransactionType.INITIAL_BALANCE || transaction.type === TransactionType.DEPOSIT;
@@ -1203,49 +1208,51 @@ function calculateExternalCashflows(
 
     const asset = assetById.get(transaction.assetId);
     if (!asset) continue;
-    if (transaction.currency?.toUpperCase() !== baseCurrency.toUpperCase()) return null;
-    const quantity = decimal(transaction.quantity);
-    const pricePerUnit = transaction.pricePerUnit === null || transaction.pricePerUnit === undefined
-      ? asset.assetType === "FIAT" && asset.currency?.toUpperCase() === baseCurrency.toUpperCase()
-        ? decimal(1)
-        : null
-      : decimal(transaction.pricePerUnit);
-    const cashflowValue = pricePerUnit
-      ? quantity.mul(pricePerUnit).plus(transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee))
-      : null;
+    const value = transactionCashValue(transaction, asset, baseCurrency);
+    if (!value) {
+      missingSymbols.add(asset.symbol);
+      continue;
+    }
+    const cashflowValue = value.gross.plus(value.fee);
 
     if (isContribution) {
-      if (!cashflowValue) return null;
       externalContributions = externalContributions.plus(cashflowValue);
     }
     if (isWithdrawal) {
-      if (!cashflowValue) return null;
-      externalWithdrawals = externalWithdrawals.plus(cashflowValue);
+      externalWithdrawals = externalWithdrawals.plus(value.gross.minus(value.fee));
     }
   }
 
-  const netInvested = externalContributions.minus(externalWithdrawals);
-  return { netInvested, externalContributions, externalWithdrawals };
+  const netContributed = externalContributions.minus(externalWithdrawals);
+  return { netContributed, externalContributions, externalWithdrawals, missingSymbols };
 }
 
-function startOfUtcDate(date: string) {
-  const timestamp = Date.parse(`${date}T00:00:00.000Z`);
-  if (!Number.isFinite(timestamp)) throw new Error(`Invalid historical snapshot date ${date}.`);
-  return timestamp;
+function transactionCashValue(
+  transaction: EngineTransaction,
+  asset: EngineAsset,
+  baseCurrency: string,
+) {
+  if (transaction.currency?.toUpperCase() !== baseCurrency.toUpperCase()) return null;
+  const price = transaction.pricePerUnit === null || transaction.pricePerUnit === undefined
+    ? asset.assetType === "FIAT" && asset.currency?.toUpperCase() === baseCurrency.toUpperCase()
+      ? decimal(1)
+      : null
+    : decimal(transaction.pricePerUnit);
+  if (!price) return null;
+  return {
+    gross: decimal(transaction.quantity).mul(price),
+    fee: transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee),
+  };
+}
+
+function transactionsThrough(transactions: EngineTransaction[], timestamp: number) {
+  return transactions.filter((transaction) => transactionTimestamp(transaction) <= timestamp);
 }
 
 function transactionTimestamp(transaction: EngineTransaction) {
   if (!transaction.executedAt) return Number.NEGATIVE_INFINITY;
   const timestamp = new Date(transaction.executedAt).getTime();
   return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
-}
-
-function transactionsBefore(transactions: EngineTransaction[], timestamp: number) {
-  return transactions.filter((transaction) => transactionTimestamp(transaction) < timestamp);
-}
-
-function transactionsThrough(transactions: EngineTransaction[], timestamp: number) {
-  return transactions.filter((transaction) => transactionTimestamp(transaction) <= timestamp);
 }
 
 function transactionTime(transaction: EngineTransaction, fallback: number) {
