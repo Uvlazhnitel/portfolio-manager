@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import {
   useActionState,
   useCallback,
@@ -11,7 +12,7 @@ import {
   useTransition,
   type ReactNode,
 } from "react";
-import { ArrowLeft, ChevronRight, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { searchAssetsAction } from "@/features/asset-catalog/actions";
 import type { AssetCatalogResult } from "@/features/asset-catalog/types";
 import type { AssetCatalogKind } from "@/features/asset-catalog/types";
@@ -28,6 +29,7 @@ import type { PortfolioReadModel } from "@/features/portfolio/read-model";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { DataQualitySummary, type DataQualityItem } from "@/components/ui/data-quality-summary";
 import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
 import { formatDecimalCurrency } from "@/lib/format/decimal";
@@ -60,56 +62,15 @@ const operationChoices: Array<[TransactionOperation, string]> = [
 export function PortfolioClient({ portfolio }: PortfolioClientProps) {
   const [activeTab, setActiveTab] = useState<PortfolioTab>("holdings");
   const [dialog, setDialog] = useState<DialogState>(null);
+  const dataQualityItems = portfolioDataQualityItems(portfolio);
 
   return (
     <div className="space-y-4">
       <form id="open-add-asset" action={() => setDialog({ kind: "asset" })} />
 
-      <Card className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <p className="text-sm text-muted">Valued portfolio</p>
-          <p className="mt-1 break-words text-2xl font-semibold text-foreground">
-            {formatCurrency(portfolio.valuation.totalValue, portfolio.valuation.currency)}
-          </p>
-        </div>
-        <div className="grid gap-2 text-sm sm:grid-cols-2 sm:text-right">
-          <Metric label="Net invested" value={portfolio.valuation.netInvested ? formatCurrency(portfolio.valuation.netInvested, portfolio.valuation.currency) : "Unavailable"} />
-          <Metric label="Simple return" value={portfolio.valuation.simpleReturnPercent ? `${portfolio.valuation.simpleReturnPercent}%` : "Unavailable"} />
-        </div>
-        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-          {portfolio.valuation.isPartial ? <Badge tone="warning">Partial valuation</Badge> : <Badge tone="success">All prices available</Badge>}
-          {portfolio.valuation.isCostBasisPartial ? <Badge tone="warning">Partial cost basis</Badge> : null}
-          {portfolio.valuation.hasStalePrices ? <Badge tone="warning">Stale prices</Badge> : null}
-          <span className="text-xs text-muted">Last updated {formatTimestamp(portfolio.valuation.lastUpdated)}</span>
-        </div>
-      </Card>
+      <PortfolioOverview portfolio={portfolio} dataQualityItems={dataQualityItems} />
 
-      {portfolio.valuation.isCostBasisPartial ? <p className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">Net invested, gain, and return exclude: {portfolio.valuation.missingCostBasisSymbols.join(", ")}.</p> : null}
-
-      {portfolio.valuation.warning ? (
-        <p className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">{portfolio.valuation.warning}</p>
-      ) : null}
-
-      {portfolio.strategyStatus ? (
-        <Card>
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm text-muted">Portfolio status · {portfolio.strategyStatus.name}</p>
-              <p className="mt-1 text-xl font-semibold text-foreground">
-                {portfolio.strategyStatus.inRangeCount}/{portfolio.strategyStatus.totalCount} classes in range
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {portfolio.strategyStatus.comparisons.map((comparison) => (
-                <Badge key={comparison.assetClass} tone={comparison.status === "IN_RANGE" ? "success" : "warning"}>
-                  {comparison.assetClass}: {comparison.status}
-                </Badge>
-              ))}
-            </div>
-          </div>
-          {portfolio.valuation.isPartial ? <p className="mt-3 text-sm text-warning">Status is partial until all holding prices are available.</p> : null}
-        </Card>
-      ) : null}
+      {portfolio.strategyStatus ? <StrategySummary portfolio={portfolio} /> : null}
 
       <div className="flex flex-wrap items-center gap-2">
         {(["holdings", "accounts", "transactions"] as const).map((tab) => (
@@ -132,7 +93,7 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
       ) : null}
       {activeTab === "accounts" ? <AccountsSection portfolio={portfolio} onAddAccount={() => setDialog({ kind: "account" })} /> : null}
       {activeTab === "transactions" ? (
-        <TransactionsSection portfolio={portfolio} onAddTransaction={() => setDialog({ kind: "asset" })} onEditTransaction={(transactionId) => setDialog({ kind: "edit-transaction", transactionId })} />
+        <TransactionsSection portfolio={portfolio} onAddTransaction={() => setDialog({ kind: "transaction" })} onEditTransaction={(transactionId) => setDialog({ kind: "edit-transaction", transactionId })} />
       ) : null}
 
       {dialog?.kind === "asset" ? <AddAssetDialog portfolio={portfolio} onClose={() => setDialog(null)} /> : null}
@@ -144,6 +105,84 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
         <EditTransactionDialog portfolio={portfolio} transactionId={dialog.transactionId} onClose={() => setDialog(null)} />
       ) : null}
     </div>
+  );
+}
+
+function PortfolioOverview({ portfolio, dataQualityItems }: PortfolioClientProps & { dataQualityItems: DataQualityItem[] }) {
+  const { valuation } = portfolio;
+  return (
+    <Card className="space-y-5">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,2fr)] lg:items-end">
+        <div className="min-w-0">
+          <p className="text-xs uppercase tracking-wide text-muted">Portfolio value</p>
+          <p className="mt-2 break-words text-4xl font-semibold text-foreground sm:text-5xl">
+            {formatCurrency(valuation.totalValue, valuation.currency)}
+          </p>
+        </div>
+        <dl className="grid gap-0 overflow-hidden rounded-lg border border-border sm:grid-cols-4 sm:divide-x sm:divide-border">
+          <SummaryMetric label="Net invested" value={formatCurrency(valuation.netInvested, valuation.currency)} />
+          <SummaryMetric label="Investment gain" value={valuation.investmentGain ? formatMoneyWithSign(valuation.investmentGain, valuation.currency) : "Unavailable"} tone={moneyTone(valuation.investmentGain)} />
+          <SummaryMetric label="Simple return" value={valuation.simpleReturnPercent ? formatPercentWithSign(valuation.simpleReturnPercent) : "Unavailable"} tone={moneyTone(valuation.simpleReturnPercent)} />
+          <SummaryMetric label="Last updated" value={formatTimestamp(valuation.lastUpdated)} muted />
+        </dl>
+      </div>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <DataQualitySummary items={dataQualityItems} okText="Data complete" className="lg:max-w-2xl" />
+        <Link href="/performance" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border px-3 text-sm font-medium text-muted transition hover:border-primary/50 hover:text-foreground">
+          Performance <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </div>
+    </Card>
+  );
+}
+
+function SummaryMetric({ label, value, tone = "default", muted = false }: { label: string; value: string; tone?: "default" | "positive" | "negative"; muted?: boolean }) {
+  return (
+    <div className="min-w-0 bg-surface px-4 py-3">
+      <dt className="text-xs text-muted">{label}</dt>
+      <dd className={cn("mt-1 break-words text-sm font-semibold tabular-nums text-foreground", muted && "text-muted", tone === "positive" && "text-success", tone === "negative" && "text-destructive")}>
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+function StrategySummary({ portfolio }: PortfolioClientProps) {
+  const status = portfolio.strategyStatus;
+  if (!status) return null;
+  const problemClasses = status.comparisons
+    .filter((comparison) => comparison.status !== "IN_RANGE")
+    .sort((a, b) => Math.abs(Number(b.currentPercent) - Number(b.targetPercent)) - Math.abs(Number(a.currentPercent) - Number(a.targetPercent)))
+    .slice(0, 3);
+
+  return (
+    <Card className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className="min-w-0">
+        <p className="text-xs uppercase tracking-wide text-muted">Strategy · {status.name}</p>
+        <p className="mt-1 text-lg font-semibold text-foreground">
+          {status.inRangeCount}/{status.totalCount} classes in range
+        </p>
+      </div>
+      <div className="min-w-0 flex-1">
+        {problemClasses.length > 0 ? (
+          <div className="grid gap-2 md:grid-cols-3">
+            {problemClasses.map((comparison) => (
+              <div key={comparison.assetClass} className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-sm">
+                <span className="truncate text-foreground">{comparison.assetClass}</span>
+                <span className={cn("shrink-0 font-medium", comparison.status === "OVERWEIGHT" ? "text-destructive" : "text-warning")}>
+                  {comparison.status === "OVERWEIGHT" ? "Over" : "Under"} {formatPercentWithSign(String(Number(comparison.currentPercent) - Number(comparison.targetPercent)))}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-lg border border-success/20 bg-success/10 px-3 py-2 text-sm text-success">All active classes are inside their configured ranges.</p>
+        )}
+      </div>
+      <Link href="/plan/strategy" className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-border px-3 text-sm font-medium text-muted transition hover:border-primary/50 hover:text-foreground">
+        Strategy <ArrowRight className="h-4 w-4" aria-hidden="true" />
+      </Link>
+    </Card>
   );
 }
 
@@ -618,23 +657,215 @@ function AssetAvatar({ asset, size }: { asset: Pick<AssetCatalogResult, "imageUr
 function HoldingsSection({ portfolio, onAddTransaction }: PortfolioClientProps & { onAddTransaction: (assetId: string, accountId: string) => void }) {
   if (portfolio.holdings.length === 0) return <EmptyState title="Your portfolio is empty" description="Add an asset and enter the amount you currently own." icon={<Plus className="h-5 w-5" aria-hidden="true" />} />;
   return (
-    <Card>
+    <Card className="overflow-hidden p-0">
+      <div className="border-b border-border px-4 py-3 sm:px-5">
+        <div>
+          <h2 className="font-semibold text-foreground">Holdings</h2>
+          <p className="mt-1 text-xs text-muted">{portfolio.holdings.length} open {portfolio.holdings.length === 1 ? "position" : "positions"}</p>
+        </div>
+      </div>
       <div className="hidden overflow-x-auto md:block">
-        <table className="w-full text-left text-sm"><thead className="text-xs uppercase text-muted"><tr className="border-b border-border"><th className="py-3 pr-4">Asset</th><th className="py-3 pr-4">Account</th><th className="py-3 pr-4">Quantity</th><th className="py-3 pr-4">Price</th><th className="py-3 pr-4">Current value</th><th className="py-3 pr-4">Avg price</th><th className="py-3 pr-4">P&amp;L</th><th className="py-3 pr-4">Class</th><th className="py-3 pr-4">Weight</th><th className="py-3"><span className="sr-only">Actions</span></th></tr></thead>
-          <tbody>{portfolio.holdings.map((holding) => <tr key={`${holding.accountId}:${holding.assetId}`} className="border-b border-border/70 last:border-0"><td className="py-4 pr-4"><div className="flex items-center gap-3"><AssetAvatar asset={{ imageUrl: holding.imageUrl, symbol: holding.symbol, name: holding.assetName }} size={34} /><div><div className="font-medium text-foreground">{holding.assetName}</div><div className="text-xs text-muted">{holding.symbol}</div></div></div></td><td className="py-4 pr-4 text-muted">{holding.accountName}</td><td className="py-4 pr-4 text-foreground">{holding.quantityLabel}</td><td className="py-4 pr-4">{formatUnitPriceOrDash(holding.currentPrice, portfolio.valuation.currency, holding.displayPriceUnit)}</td><td className="py-4 pr-4"><div className="flex items-center gap-2">{formatMoneyOrUnavailable(holding.currentValue, portfolio.valuation.currency)}<PriceBadge holding={holding} /></div></td><td className="py-4 pr-4">{formatUnitPriceOrDash(holding.averageAcquisitionPrice, portfolio.valuation.currency, holding.displayPriceUnit)}</td><td className="py-4 pr-4">{formatMoneyOrUnavailable(holding.pnl, portfolio.valuation.currency)}</td><td className="py-4 pr-4"><Badge tone="primary">{holding.assetClass}</Badge></td><td className="py-4 pr-4">{holding.portfolioWeight ? `${holding.portfolioWeight}%` : "Price unavailable"}</td><td className="py-4"><button type="button" onClick={() => onAddTransaction(holding.assetId, holding.accountId)} className="min-h-11 whitespace-nowrap rounded-lg px-3 text-sm text-primary hover:bg-primary/10">Add transaction</button></td></tr>)}</tbody>
+        <table className="w-full min-w-[980px] text-left text-sm">
+          <thead className="border-b border-border bg-surface/60 text-xs uppercase tracking-wide text-muted">
+            <tr>
+              <th className="px-4 py-3 font-medium">Asset</th>
+              <th className="px-4 py-3 font-medium">Account</th>
+              <th className="px-4 py-3 text-right font-medium">Quantity</th>
+              <th className="px-4 py-3 text-right font-medium">Price</th>
+              <th className="px-4 py-3 text-right font-medium">Value</th>
+              <th className="px-4 py-3 text-right font-medium">Avg cost</th>
+              <th className="px-4 py-3 text-right font-medium">P&amp;L</th>
+              <th className="px-4 py-3 text-right font-medium">Weight</th>
+              <th className="px-4 py-3"><span className="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/70">
+            {portfolio.holdings.map((holding) => (
+              <tr key={`${holding.accountId}:${holding.assetId}`} className="transition hover:bg-surface/45">
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <AssetAvatar asset={{ imageUrl: holding.imageUrl, symbol: holding.symbol, name: holding.assetName }} size={34} />
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-foreground">{holding.assetName}</div>
+                      <div className="text-xs text-muted">{holding.symbol} · {holding.assetClass}</div>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-muted">{holding.accountName}</td>
+                <td className="px-4 py-3 text-right tabular-nums text-foreground">{holding.quantityLabel}</td>
+                <td className="px-4 py-3 text-right tabular-nums">
+                  {formatUnitPriceOrDash(holding.currentPrice, portfolio.valuation.currency, holding.displayPriceUnit)}
+                  <p className={cn("mt-1 text-xs", holding.isPriceStale ? "text-warning" : "text-muted")}>{priceStatusText(holding)}</p>
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums">{formatMoneyOrUnavailable(holding.currentValue, portfolio.valuation.currency)}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{formatUnitPriceOrDash(holding.averageAcquisitionPrice, portfolio.valuation.currency, holding.displayPriceUnit)}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{formatMoneyOrUnavailable(holding.pnl, portfolio.valuation.currency)}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{holding.portfolioWeight ? `${holding.portfolioWeight}%` : "Unavailable"}</td>
+                <td className="px-4 py-3 text-right">
+                  <button type="button" onClick={() => onAddTransaction(holding.assetId, holding.accountId)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary" title="Add transaction" aria-label={`Add transaction for ${holding.assetName}`}>
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
         </table>
       </div>
-      <div className="space-y-3 md:hidden">{portfolio.holdings.map((holding) => <div key={`${holding.accountId}:${holding.assetId}:mobile`} className="rounded-lg border border-border bg-surface p-4"><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><AssetAvatar asset={{ imageUrl: holding.imageUrl, symbol: holding.symbol, name: holding.assetName }} size={38} /><div className="min-w-0"><p className="truncate font-medium text-foreground">{holding.assetName}</p><p className="text-sm text-muted">{holding.symbol} · {holding.accountName}</p></div></div><Badge tone="primary">{holding.assetClass}</Badge></div><dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><Info label="Quantity" value={holding.quantityLabel} /><Info label="Price" value={formatUnitPriceOrDashText(holding.currentPrice, portfolio.valuation.currency, holding.displayPriceUnit)} /><Info label="Value" value={formatMoneyOrUnavailableText(holding.currentValue, portfolio.valuation.currency)} /><Info label="Avg price" value={formatUnitPriceOrDashText(holding.averageAcquisitionPrice, portfolio.valuation.currency, holding.displayPriceUnit)} /><Info label="P&L" value={formatMoneyOrUnavailableText(holding.pnl, portfolio.valuation.currency)} /><Info label="Price status" value={holding.currentPrice ? `${holding.priceSource}${holding.isPriceStale ? " · stale" : ""}` : "Unavailable"} /></dl><Button type="button" variant="ghost" onClick={() => onAddTransaction(holding.assetId, holding.accountId)} className="mt-3 w-full"><Plus className="mr-2 h-4 w-4" />Add transaction</Button></div>)}</div>
+      <div className="space-y-3 p-4 md:hidden">
+        {portfolio.holdings.map((holding) => (
+          <div key={`${holding.accountId}:${holding.assetId}:mobile`} className="rounded-lg border border-border bg-surface p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <AssetAvatar asset={{ imageUrl: holding.imageUrl, symbol: holding.symbol, name: holding.assetName }} size={38} />
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-foreground">{holding.assetName}</p>
+                  <p className="text-sm text-muted">{holding.symbol} · {holding.assetClass} · {holding.accountName}</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => onAddTransaction(holding.assetId, holding.accountId)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary" title="Add transaction" aria-label={`Add transaction for ${holding.assetName}`}>
+                <Plus className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            <p className="mt-3 text-xs text-muted">{holding.quantityLabel}</p>
+            <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+              <Info label="Price" value={formatUnitPriceOrDashText(holding.currentPrice, portfolio.valuation.currency, holding.displayPriceUnit)} />
+              <Info label="Value" value={formatMoneyOrUnavailableText(holding.currentValue, portfolio.valuation.currency)} />
+              <Info label="P&L" value={formatMoneyOrUnavailableText(holding.pnl, portfolio.valuation.currency)} />
+              <Info label="Weight" value={holding.portfolioWeight ? `${holding.portfolioWeight}%` : "Unavailable"} />
+              <Info label="Avg cost" value={formatUnitPriceOrDashText(holding.averageAcquisitionPrice, portfolio.valuation.currency, holding.displayPriceUnit)} />
+              <Info label="Price status" value={priceStatusText(holding)} />
+            </dl>
+          </div>
+        ))}
+      </div>
     </Card>
   );
 }
 
 function AccountsSection({ portfolio, onAddAccount }: PortfolioClientProps & { onAddAccount: () => void }) {
-  return <Card><div className="mb-4 flex items-center justify-between gap-4"><h2 className="text-lg font-semibold text-foreground">Accounts</h2><Button type="button" variant="secondary" onClick={onAddAccount}><Plus className="mr-2 h-4 w-4" />Add account</Button></div><div className="grid gap-3 md:grid-cols-3">{portfolio.accounts.map((account) => <div key={account.id} className="rounded-lg border border-border bg-surface p-4"><p className="font-medium text-foreground">{account.name}</p><p className="mt-1 text-sm text-muted">{formatType(account.type)}</p>{account.description ? <p className="mt-3 text-sm text-muted">{account.description}</p> : null}</div>)}</div></Card>;
+  return (
+    <Card className="overflow-hidden p-0">
+      <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-3 sm:px-5">
+        <div>
+          <h2 className="font-semibold text-foreground">Accounts</h2>
+          <p className="mt-1 text-xs text-muted">{portfolio.accounts.length} configured</p>
+        </div>
+        <Button type="button" variant="secondary" onClick={onAddAccount}><Plus className="mr-2 h-4 w-4" />Add account</Button>
+      </div>
+      <div className="divide-y divide-border">
+        {portfolio.accounts.map((account) => (
+          <div key={account.id} className="grid gap-2 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_9rem_minmax(0,1.2fr)] sm:items-center sm:px-5">
+            <p className="font-medium text-foreground">{account.name}</p>
+            <p className="text-sm text-muted">{formatType(account.type)}</p>
+            <p className="text-sm text-muted">{account.description ?? "No description"}</p>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
 }
 
 function TransactionsSection({ portfolio, onAddTransaction, onEditTransaction }: PortfolioClientProps & { onAddTransaction: () => void; onEditTransaction: (transactionId: string) => void }) {
-  return <Card><div className="mb-4 flex items-center justify-between gap-4"><div><h2 className="text-lg font-semibold text-foreground">Transactions</h2><p className="mt-1 text-sm text-muted">Enter older trades first so historical balance checks remain clear.</p></div><Button type="button" variant="secondary" onClick={onAddTransaction}><Plus className="mr-2 h-4 w-4" />Add transaction</Button></div>{portfolio.transactions.length === 0 ? <EmptyState title="No transactions yet" description="Record a current balance or your first historical buy." /> : <div className="space-y-3">{portfolio.transactions.map((transaction) => <div key={transaction.id} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 md:flex-row md:items-center md:justify-between"><div><div className="flex flex-wrap items-center gap-2"><Badge>{formatType(transaction.type)}</Badge><p className="font-medium text-foreground">{transaction.assetName}</p><p className="text-sm text-muted">{transaction.symbol} · {transaction.accountName}</p></div><p className="mt-2 text-sm text-muted">{transaction.quantityLabel} · {transaction.displayPricePerUnit ? `${formatDecimalCurrency(transaction.displayPricePerUnit, transaction.currency)} / ${transaction.displayPriceUnit}` : "No acquisition price"} · {formatUtcDate(transaction.executedAt)}</p>{transaction.note ? <p className="mt-2 text-sm text-muted">{transaction.note}</p> : null}</div><div className="flex items-center gap-2">{transaction.type !== "TRANSFER_IN" && transaction.type !== "TRANSFER_OUT" ? <Button type="button" variant="ghost" title="Edit transaction" aria-label="Edit transaction" onClick={() => onEditTransaction(transaction.id)}><Pencil className="h-4 w-4" /></Button> : null}<form action={deleteTransactionAction} onSubmit={(event) => { if (!window.confirm("Delete this transaction? Holdings will be recalculated.")) event.preventDefault(); }}><input type="hidden" name="id" value={transaction.id} /><Button type="submit" variant="ghost"><Trash2 className="mr-2 h-4 w-4" />Delete</Button></form></div></div>)}</div>}</Card>;
+  return (
+    <Card className="overflow-hidden p-0">
+      <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-3 sm:px-5">
+        <div>
+          <h2 className="font-semibold text-foreground">Transactions</h2>
+          <p className="mt-1 text-xs text-muted">{portfolio.transactions.length} ledger {portfolio.transactions.length === 1 ? "entry" : "entries"}</p>
+        </div>
+        <Button type="button" variant="secondary" onClick={onAddTransaction}><Plus className="mr-2 h-4 w-4" />Add transaction</Button>
+      </div>
+      {portfolio.transactions.length === 0 ? (
+        <div className="p-5"><EmptyState title="No transactions yet" description="Record a current balance or your first historical buy." /></div>
+      ) : (
+        <>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full min-w-[920px] text-left text-sm">
+              <thead className="border-b border-border bg-surface/60 text-xs uppercase tracking-wide text-muted">
+                <tr>
+                  <th className="px-4 py-3 font-medium">Date</th>
+                  <th className="px-4 py-3 font-medium">Type</th>
+                  <th className="px-4 py-3 font-medium">Asset</th>
+                  <th className="px-4 py-3 font-medium">Account</th>
+                  <th className="px-4 py-3 text-right font-medium">Quantity</th>
+                  <th className="px-4 py-3 text-right font-medium">Price</th>
+                  <th className="px-4 py-3"><span className="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/70">
+                {portfolio.transactions.map((transaction) => (
+                  <tr key={transaction.id} className="transition hover:bg-surface/45">
+                    <td className="px-4 py-3 text-muted">{formatUtcDate(transaction.executedAt)}</td>
+                    <td className="px-4 py-3"><TransactionTypePill type={transaction.type} /></td>
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-foreground">{transaction.assetName}</p>
+                      <p className="mt-1 text-xs text-muted">{transaction.symbol}</p>
+                    </td>
+                    <td className="px-4 py-3 text-muted">{transaction.accountName}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-foreground">{transaction.quantityLabel}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-muted">{transaction.displayPricePerUnit ? `${formatDecimalCurrency(transaction.displayPricePerUnit, transaction.currency)} / ${transaction.displayPriceUnit}` : "No price"}</td>
+                    <td className="px-4 py-3">
+                      <TransactionActions transaction={transaction} onEditTransaction={onEditTransaction} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="divide-y divide-border md:hidden">
+            {portfolio.transactions.map((transaction) => (
+              <div key={`${transaction.id}:mobile`} className="px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <TransactionTypePill type={transaction.type} />
+                      <span className="text-xs text-muted">{formatUtcDate(transaction.executedAt)}</span>
+                    </div>
+                    <p className="mt-2 truncate font-medium text-foreground">{transaction.assetName}</p>
+                    <p className="mt-1 text-sm text-muted">{transaction.symbol} · {transaction.accountName}</p>
+                  </div>
+                  <TransactionActions transaction={transaction} onEditTransaction={onEditTransaction} />
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                  <Info label="Quantity" value={transaction.quantityLabel} />
+                  <Info label="Price" value={transaction.displayPricePerUnit ? `${formatDecimalCurrency(transaction.displayPricePerUnit, transaction.currency)} / ${transaction.displayPriceUnit}` : "No price"} />
+                </div>
+                {transaction.note ? <p className="mt-3 text-sm text-muted">{transaction.note}</p> : null}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+function TransactionTypePill({ type }: { type: string }) {
+  const tone = type === "BUY" || type === "DEPOSIT" || type === "TRANSFER_IN"
+    ? "success"
+    : type === "SELL" || type === "WITHDRAWAL" || type === "TRANSFER_OUT"
+      ? "warning"
+      : "primary";
+  return <Badge tone={tone}>{formatType(type)}</Badge>;
+}
+
+function TransactionActions({ transaction, onEditTransaction }: { transaction: PortfolioReadModel["transactions"][number]; onEditTransaction: (transactionId: string) => void }) {
+  const canEdit = transaction.type !== "TRANSFER_IN" && transaction.type !== "TRANSFER_OUT";
+  return (
+    <div className="flex items-center justify-end gap-1">
+      {canEdit ? (
+        <Button type="button" variant="ghost" title="Edit transaction" aria-label={`Edit ${transaction.assetName} transaction`} onClick={() => onEditTransaction(transaction.id)}>
+          <Pencil className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      ) : null}
+      <form action={deleteTransactionAction} onSubmit={(event) => { if (!window.confirm("Delete this transaction? Holdings will be recalculated.")) event.preventDefault(); }}>
+        <input type="hidden" name="id" value={transaction.id} />
+        <Button type="submit" variant="ghost" title="Delete transaction" aria-label={`Delete ${transaction.assetName} transaction`}>
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </form>
+    </div>
+  );
 }
 
 function toCatalogResult(asset: PortfolioReadModel["assets"][number]): AssetCatalogResult {
@@ -655,12 +886,52 @@ function preferredAccountId(accounts: PortfolioReadModel["accounts"], physicalGo
   return (physicalGold ? accounts.find((account) => account.type === "PHYSICAL") : accounts[0])?.id ?? "";
 }
 
+function portfolioDataQualityItems(portfolio: PortfolioReadModel): DataQualityItem[] {
+  const items: DataQualityItem[] = [];
+  if (portfolio.valuation.isPartial) {
+    items.push({ message: "Partial valuation: at least one holding is missing a current price." });
+  }
+  if (portfolio.valuation.isCostBasisPartial) {
+    items.push({ message: `Partial cost basis: net invested, gain, and return exclude ${portfolio.valuation.missingCostBasisSymbols.join(", ")}.` });
+  }
+  if (portfolio.valuation.hasStalePrices) {
+    items.push({ message: "Some prices are stale; current value still uses the latest cached observation." });
+  }
+  if (portfolio.valuation.warning) {
+    items.push({ message: portfolio.valuation.warning });
+  }
+  return items;
+}
+
+function priceStatusText(holding: PortfolioReadModel["holdings"][number]) {
+  if (!holding.currentPrice) return "Price unavailable";
+  const source = holding.priceSource ? formatType(holding.priceSource) : "Market price";
+  return holding.isPriceStale ? `${source} - stale` : source;
+}
+
+function moneyTone(value: string | null): "default" | "positive" | "negative" {
+  if (!value) return "default";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric === 0) return "default";
+  return numeric > 0 ? "positive" : "negative";
+}
+
+function formatMoneyWithSign(value: string, currency: string) {
+  const numeric = Number(value);
+  const sign = Number.isFinite(numeric) && numeric < 0 ? "-" : "+";
+  return `${sign}${formatCurrency(value.replace(/^-/, ""), currency)}`;
+}
+
+function formatPercentWithSign(value: string) {
+  const numeric = Number(value);
+  const sign = Number.isFinite(numeric) && numeric < 0 ? "-" : "+";
+  return `${sign}${value.replace(/^-/, "")}%`;
+}
+
 function today() { return new Date().toISOString().slice(0, 10); }
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block text-sm"><span className="mb-2 block font-medium text-muted">{label}</span>{children}</label>; }
 function Info({ label, value }: { label: string; value: string }) { return <div><dt className="text-xs text-muted">{label}</dt><dd className="mt-1 break-words text-foreground">{value}</dd></div>; }
-function Metric({ label, value }: { label: string; value: string }) { return <div><p className="text-xs uppercase tracking-wide text-muted">{label}</p><p className="mt-1 font-semibold text-foreground">{value}</p></div>; }
 function ActionMessage({ state }: { state: { ok: boolean; message: string } }) { return state.message ? <p className={cn("rounded-lg border p-3 text-sm", state.ok ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/10 text-destructive")}>{state.message}</p> : null; }
-function PriceBadge({ holding }: { holding: PortfolioReadModel["holdings"][number] }) { if (!holding.currentPrice) return <Badge>Unavailable</Badge>; if (holding.isPriceStale) return <Badge tone="warning">Stale</Badge>; return <Badge tone={holding.priceSource === "MANUAL" ? "primary" : "success"}>{holding.priceSource}</Badge>; }
 function formatType(type: string) {
   if (type === "TRANSFER_OUT") return "Transfer out";
   if (type === "TRANSFER_IN") return "Transfer in";

@@ -1,9 +1,10 @@
 "use client";
 
-import { AlertCircle, CalendarDays, ChartNoAxesCombined, CircleDollarSign, Landmark, TrendingUp } from "lucide-react";
+import { CalendarDays, ChartNoAxesCombined, CircleDollarSign, Landmark, TrendingUp } from "lucide-react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { DataQualitySummary, type DataQualityItem } from "@/components/ui/data-quality-summary";
 import type { PerformanceReadModel } from "@/features/performance/read-model";
 import { decimalSign, formatDecimalCurrency, formatDecimalPercent } from "@/lib/format/decimal";
 import { cn } from "@/lib/utils";
@@ -32,15 +33,7 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
 
   return (
     <div className="space-y-4">
-      {summary.isPartial ? (
-        <Notice>Current performance is unavailable because prices are missing for: {summary.missingPriceSymbols.join(", ")}.</Notice>
-      ) : null}
-      {performance.incompleteDates > 0 ? (
-        <Notice>{performance.incompleteDates} historical {performance.incompleteDates === 1 ? "day has" : "days have"} incomplete price coverage. The chart leaves those values blank.</Notice>
-      ) : null}
-      {summary.isCostBasisPartial ? (
-        <Notice>Partial cost basis. Net invested, gain, and return exclude: {summary.missingCostBasisSymbols.join(", ")}.</Notice>
-      ) : null}
+      <DataQualitySummary items={performanceDataQualityItems(performance)} okText="Data complete" />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryMetric icon={Landmark} label="Portfolio value" value={formatDecimalCurrency(summary.portfolioValue, currency)} />
@@ -89,7 +82,7 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
         <DetailMetric label="External withdrawals" value={moneyOrUnavailable(summary.externalWithdrawals, currency)} />
         <DetailMetric label="Net contributed" value={formatDecimalCurrency(summary.netContributed, currency)} />
       </div>
-      {summary.isExternalCashflowPartial ? <p className="text-xs text-warning">External cashflow totals are partial: {summary.missingExternalCashflowSymbols.join(", ")} has missing acquisition data.</p> : null}
+      {summary.isExternalCashflowPartial ? <DataQualitySummary items={[{ message: `External cashflow totals are partial: ${summary.missingExternalCashflowSymbols.join(", ")} has missing acquisition data.` }]} label="Cashflow data" /> : null}
 
       <p className="text-sm leading-6 text-muted">Net invested follows transaction cashflow: purchases add their cost, sales subtract net proceeds, and transfers have no effect. External contributions and withdrawals remain separate for cashflow-based performance metrics.</p>
     </div>
@@ -108,7 +101,15 @@ function PerformanceTooltip({ active, row, currency }: { active?: boolean; row?:
 function DetailMetric({ label, value }: { label: string; value: string }) { return <div><p className="text-xs uppercase text-muted">{label}</p><p className="mt-1 font-medium text-foreground">{value}</p></div>; }
 
 function TooltipValue({ label, value }: { label: string; value: string }) { return <div className="flex items-center justify-between gap-5"><span className="text-muted">{label}</span><span className="font-medium text-foreground">{value}</span></div>; }
-function Notice({ children }: { children: React.ReactNode }) { return <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{children}</div>; }
+function performanceDataQualityItems(performance: PerformanceReadModel): DataQualityItem[] {
+  const { summary } = performance;
+  const items: DataQualityItem[] = [];
+  if (summary.isPartial) items.push({ message: `Current performance is unavailable because prices are missing for: ${summary.missingPriceSymbols.join(", ")}.` });
+  if (performance.incompleteDates > 0) items.push({ message: `${performance.incompleteDates} historical ${performance.incompleteDates === 1 ? "day has" : "days have"} incomplete price coverage.` });
+  if (summary.isCostBasisPartial) items.push({ message: `Partial cost basis: net invested, gain, and return exclude ${summary.missingCostBasisSymbols.join(", ")}.` });
+  if (performance.staleDates > 0 || summary.hasStalePrices) items.push({ message: "Some observations include stale prices." });
+  return items;
+}
 function formatDate(value: string) { return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`)); }
 function formatShortDate(value: string) { return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`)); }
 function compactMoney(value: number, currency: string) { return new Intl.NumberFormat("en", { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 }).format(value); }

@@ -11,6 +11,7 @@ import { contributionClassLabels as classLabels, contributionReasonText } from "
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { DataQualitySummary, type DataQualityItem } from "@/components/ui/data-quality-summary";
 import { cn } from "@/lib/utils";
 import { formatDecimalCurrency, formatDecimalPercent } from "@/lib/format/decimal";
 import { formatUtcTimestamp } from "@/lib/format/date";
@@ -116,9 +117,7 @@ export function ContributionPlanner({ model }: { model: ContributionPlannerModel
             {isCustomized ? <Badge tone="primary">Custom allocation</Badge> : <Badge tone="success">Recommended</Badge>}
           </div>
         </div>
-        {preview.valuation.isPartial ? <Notice tone="warning">Planning uses the valued portion of your portfolio. Price unavailable for: {preview.valuation.missingPriceSymbols.join(", ")}.</Notice> : null}
-        {preview.valuation.hasStalePrices ? <Notice tone="warning">Some market prices are stale.</Notice> : null}
-        {preview.valuation.warning ? <Notice tone="warning">{preview.valuation.warning}</Notice> : null}
+        <DataQualitySummary items={contributionDataQualityItems(preview)} okText="Planning data complete" className="mt-4" />
         {model.setupError ? <Notice tone="destructive">{model.setupError}</Notice> : null}
         {preview.valuation.lastUpdated ? <p className="mt-3 text-xs text-muted">Prices last updated {formatUtcTimestamp(preview.valuation.lastUpdated)}</p> : null}
       </Card>
@@ -218,6 +217,14 @@ function Reasons({ projection }: { projection: ContributionProjection }) {
 
 function StatusBadge({ status }: { status: "UNDERWEIGHT" | "IN_RANGE" | "OVERWEIGHT" }) {
   return <Badge tone={status === "IN_RANGE" ? "success" : status === "OVERWEIGHT" ? "warning" : "primary"}>{status === "IN_RANGE" ? "In range" : status === "OVERWEIGHT" ? "Overweight" : "Underweight"}</Badge>;
+}
+
+function contributionDataQualityItems(preview: PreviewState): DataQualityItem[] {
+  const items: DataQualityItem[] = [];
+  if (preview.valuation.isPartial) items.push({ message: `Planning uses the valued portion of your portfolio. Price unavailable for: ${preview.valuation.missingPriceSymbols.join(", ")}.` });
+  if (preview.valuation.hasStalePrices) items.push({ message: "Some market prices are stale." });
+  if (preview.valuation.warning) items.push({ message: preview.valuation.warning });
+  return items;
 }
 
 function Notice({ children, tone }: { children: ReactNode; tone: "warning" | "destructive" | "success" }) {

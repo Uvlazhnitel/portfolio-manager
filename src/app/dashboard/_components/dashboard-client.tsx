@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { AlertTriangle, ArrowRight, CheckCircle2, CircleDollarSign, Clock3, Target, TrendingUp } from "lucide-react";
+import { ArrowRight, CircleDollarSign, Clock3, Target, TrendingUp } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { contributionClassLabels } from "@/features/contributions/presentation";
 import type { DashboardReadModel } from "@/features/dashboard/read-model";
@@ -13,6 +13,7 @@ import {
 } from "@/features/dashboard/presentation";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { DataQualitySummary, type DataQualityItem } from "@/components/ui/data-quality-summary";
 import { decimalSign } from "@/lib/format/decimal";
 import { cn } from "@/lib/utils";
 
@@ -40,7 +41,6 @@ export function DashboardClient({ dashboard }: { dashboard: DashboardReadModel }
 function OverviewPanel({ dashboard }: { dashboard: DashboardReadModel }) {
   const { valuation } = dashboard;
   const gainSign = valuation.investmentGain === null ? null : decimalSign(valuation.investmentGain);
-  const health = dataHealth(dashboard);
 
   return (
     <Card className="order-1 min-w-0 xl:col-start-1 xl:row-start-1">
@@ -69,10 +69,7 @@ function OverviewPanel({ dashboard }: { dashboard: DashboardReadModel }) {
         />
       </dl>
 
-      <div className={cn("mt-5 flex items-start gap-2 text-sm", health.tone === "good" ? "text-success" : "text-warning")}>
-        {health.tone === "good" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />}
-        <p className="leading-5">{health.text}</p>
-      </div>
+      <DataQualitySummary items={dashboardDataQualityItems(dashboard)} okText="Prices and cost basis are complete." className="mt-5" />
     </Card>
   );
 }
@@ -293,15 +290,13 @@ function StatusLabel({ status }: { status: DashboardReadModel["allocation"][numb
   return <Badge tone={tone}>{label}</Badge>;
 }
 
-function dataHealth(dashboard: DashboardReadModel): { tone: "good" | "warning"; text: string } {
-  const issues: string[] = [];
-  if (dashboard.valuation.isPartial) issues.push(`Missing prices: ${dashboard.valuation.missingPriceSymbols.join(", ")}`);
-  if (dashboard.valuation.isCostBasisPartial) issues.push(`Partial cost basis: ${dashboard.valuation.missingCostBasisSymbols.join(", ")}`);
-  if (dashboard.valuation.hasStalePrices) issues.push("Stale prices included");
-  if (dashboard.valuation.warning) issues.push(dashboard.valuation.warning);
-  return issues.length > 0
-    ? { tone: "warning", text: issues.join(" · ") }
-    : { tone: "good", text: "Prices and cost basis are complete." };
+function dashboardDataQualityItems(dashboard: DashboardReadModel): DataQualityItem[] {
+  const items: DataQualityItem[] = [];
+  if (dashboard.valuation.isPartial) items.push({ message: `Missing prices: ${dashboard.valuation.missingPriceSymbols.join(", ")}` });
+  if (dashboard.valuation.isCostBasisPartial) items.push({ message: `Partial cost basis: ${dashboard.valuation.missingCostBasisSymbols.join(", ")}` });
+  if (dashboard.valuation.hasStalePrices) items.push({ message: "Stale prices included" });
+  if (dashboard.valuation.warning) items.push({ message: dashboard.valuation.warning });
+  return items;
 }
 
 function signedPercent(value: string) {
