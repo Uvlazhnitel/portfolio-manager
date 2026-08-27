@@ -980,6 +980,7 @@ function calculateCostPools(
 ) {
   const pools = new Map<string, CostPool>();
   const transferLotsByAsset = new Map<string, TransferLot[]>();
+  const transferLotsByGroup = new Map<string, TransferLot>();
   const affectedAssetIds = new Set<string>();
   const transactions = input.transactions
     .map((transaction, index) => ({ transaction, index }))
@@ -1043,15 +1044,22 @@ function calculateCostPools(
       pool.cost = pool.cost.minus(movedCost);
 
       if (transaction.type === TransactionType.TRANSFER_OUT) {
-        const lots = transferLotsByAsset.get(transaction.assetId) ?? [];
-        lots.push({ quantity, cost: movedCost });
-        transferLotsByAsset.set(transaction.assetId, lots);
+        if (transaction.transactionGroupId && transaction.transactionGroup?.kind === "TRANSFER") {
+          transferLotsByGroup.set(transaction.transactionGroupId, { quantity, cost: movedCost });
+        } else {
+          const lots = transferLotsByAsset.get(transaction.assetId) ?? [];
+          lots.push({ quantity, cost: movedCost });
+          transferLotsByAsset.set(transaction.assetId, lots);
+        }
       }
       continue;
     }
 
     if (transaction.type === TransactionType.TRANSFER_IN) {
-      const lots = transferLotsByAsset.get(transaction.assetId) ?? [];
+      const groupedLot = transaction.transactionGroupId && transaction.transactionGroup?.kind === "TRANSFER"
+        ? transferLotsByGroup.get(transaction.transactionGroupId)
+        : undefined;
+      const lots = groupedLot ? [groupedLot] : transferLotsByAsset.get(transaction.assetId) ?? [];
       let remainingQuantity = quantity;
       let movedCost = ZERO;
       while (remainingQuantity.greaterThan(ZERO) && lots.length > 0) {
@@ -1073,6 +1081,7 @@ function calculateCostPools(
 
       pool.quantity = pool.quantity.plus(quantity);
       pool.cost = pool.cost.plus(movedCost);
+      if (groupedLot && transaction.transactionGroupId) transferLotsByGroup.delete(transaction.transactionGroupId);
     }
   }
 
@@ -1080,6 +1089,10 @@ function calculateCostPools(
     if (lots.some((lot) => lot.quantity.greaterThan(ZERO))) {
       markAssetUnavailable(assetId, "ACCOUNT_TRANSFER_COST_UNKNOWN");
     }
+  }
+  for (const [groupId] of transferLotsByGroup) {
+    const transaction = transactions.find((item) => item.transactionGroupId === groupId);
+    if (transaction) markAssetUnavailable(transaction.assetId, "ACCOUNT_TRANSFER_COST_UNKNOWN");
   }
 
   for (const assetId of affectedAssetIds) {

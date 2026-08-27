@@ -13,6 +13,7 @@ import type { MarketDataStore } from "@/features/market-data/repository";
 import { MarketDataService, resetMarketDataRuntimeCacheForTests } from "@/features/market-data/service";
 import { DailyMarketPriceRepository } from "@/features/performance/repository";
 import { getPortfolioReadModel } from "@/features/portfolio/read-model";
+import { createTradeMutation, createTransferMutation, deleteTransactionGroupMutation } from "@/features/portfolio/mutations";
 import { PortfolioRepository } from "@/features/portfolio/repository";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { createTestDatabase, type TestDatabase } from "../helpers/test-db";
@@ -86,6 +87,26 @@ afterAll(async () => {
 });
 
 describe("priced portfolio read models", () => {
+  it("collapses linked transfers and trades into logical operations", async () => {
+    const main = await testDb.prisma.account.findUniqueOrThrow({ where: { name: "Main" } });
+    const empty = await testDb.prisma.account.findUniqueOrThrow({ where: { name: "Empty" } });
+    const btc = await testDb.prisma.asset.findUniqueOrThrow({ where: { symbol: "BTC" } });
+    const eur = await testDb.prisma.asset.findUniqueOrThrow({ where: { symbol: "EUR" } });
+    await createTransferMutation({ assetId: btc.id, fromAccountId: main.id, toAccountId: empty.id, quantity: "0.1", currency: "EUR", executedAt: new Date("2026-08-06") }, testDb.prisma);
+    await createTradeMutation({ sourceAccountId: main.id, sourceAssetId: btc.id, sourceQuantity: "0.1", destinationAccountId: empty.id, destinationAssetId: eur.id, destinationQuantity: "5000", fee: "1", currency: "EUR", executedAt: new Date("2026-08-07") }, testDb.prisma);
+    const groups = await testDb.prisma.transactionGroup.findMany({ where: { transactions: { some: { accountId: main.id, executedAt: { gte: new Date("2026-08-06") } } } } });
+    try {
+      resetMarketDataRuntimeCacheForTests();
+      const model = await getPortfolioReadModel({ repository: new PortfolioRepository(testDb.prisma), strategyRepository: new StrategyRepository(testDb.prisma), marketDataService });
+      const grouped = model.transactions.filter((row) => row.groupId && groups.some((group) => group.id === row.groupId));
+      expect(grouped).toHaveLength(2);
+      expect(grouped.map((row) => row.operationKind).sort()).toEqual(["TRADE", "TRANSFER"]);
+      expect(grouped.every((row) => row.destination)).toBe(true);
+    } finally {
+      for (const group of groups.reverse()) await deleteTransactionGroupMutation(group.id, testDb.prisma);
+    }
+  });
+
   it("keeps gram-based valuation while presenting physical gold in troy ounces", async () => {
     resetMarketDataRuntimeCacheForTests();
     const model = await getPortfolioReadModel({

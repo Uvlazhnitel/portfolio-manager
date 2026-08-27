@@ -44,6 +44,8 @@ export type PortfolioHoldingRow = {
 
 export type PortfolioTransactionRow = {
   id: string;
+  groupId: string | null;
+  operationKind: "TRANSACTION" | "TRANSFER" | "TRADE";
   assetId: string;
   accountId: string;
   type: string;
@@ -60,6 +62,20 @@ export type PortfolioTransactionRow = {
   currency: string;
   executedAt: string;
   note: string | null;
+  destination: PortfolioOperationLeg | null;
+};
+
+export type PortfolioOperationLeg = {
+  id: string;
+  assetId: string;
+  accountId: string;
+  type: string;
+  assetName: string;
+  symbol: string;
+  accountName: string;
+  quantity: string;
+  inputQuantity: string;
+  quantityLabel: string;
 };
 
 export type PortfolioReadModel = {
@@ -164,7 +180,7 @@ export async function getPortfolioReadModel({
       description: account.description,
     })),
     holdings,
-    transactions: transactions.map(serializeTransactionRow),
+    transactions: buildTransactionRows(transactions),
     valuation: {
       totalValue: portfolio.totalValue,
       currency: resolvedBaseCurrency,
@@ -300,6 +316,8 @@ export function serializeTransactionRow(transaction: TransactionWithRelations): 
 
   return {
     id: transaction.id,
+    groupId: transaction.transactionGroupId,
+    operationKind: transaction.transactionGroup?.kind ?? "TRANSACTION",
     assetId: transaction.assetId,
     accountId: transaction.accountId,
     type: transaction.type,
@@ -322,6 +340,54 @@ export function serializeTransactionRow(transaction: TransactionWithRelations): 
     currency: transaction.currency,
     executedAt: transaction.executedAt.toISOString(),
     note: transaction.note,
+    destination: null,
+  };
+}
+
+function buildTransactionRows(transactions: TransactionWithRelations[]): PortfolioTransactionRow[] {
+  const rows: PortfolioTransactionRow[] = [];
+  const seenGroups = new Set<string>();
+  for (const transaction of transactions) {
+    if (!transaction.transactionGroupId || !transaction.transactionGroup) {
+      rows.push(serializeTransactionRow(transaction));
+      continue;
+    }
+    if (seenGroups.has(transaction.transactionGroupId)) continue;
+    seenGroups.add(transaction.transactionGroupId);
+    const legs = transactions.filter((candidate) => candidate.transactionGroupId === transaction.transactionGroupId);
+    const sourceType = transaction.transactionGroup.kind === "TRANSFER" ? "TRANSFER_OUT" : "SELL";
+    const destinationType = transaction.transactionGroup.kind === "TRANSFER" ? "TRANSFER_IN" : "BUY";
+    const source = legs.find((leg) => leg.type === sourceType);
+    const destination = legs.find((leg) => leg.type === destinationType);
+    if (!source || !destination) {
+      rows.push(...legs.map(serializeTransactionRow));
+      continue;
+    }
+    rows.push({
+      ...serializeTransactionRow(source),
+      id: transaction.transactionGroupId,
+      type: transaction.transactionGroup.kind,
+      operationKind: transaction.transactionGroup.kind,
+      fee: serializeNullableDecimal(destination.fee),
+      destination: serializeOperationLeg(destination),
+    });
+  }
+  return rows;
+}
+
+function serializeOperationLeg(transaction: TransactionWithRelations): PortfolioOperationLeg {
+  const row = serializeTransactionRow(transaction);
+  return {
+    id: transaction.id,
+    assetId: row.assetId,
+    accountId: row.accountId,
+    type: row.type,
+    assetName: row.assetName,
+    symbol: row.symbol,
+    accountName: row.accountName,
+    quantity: row.quantity,
+    inputQuantity: row.inputQuantity,
+    quantityLabel: row.quantityLabel,
   };
 }
 

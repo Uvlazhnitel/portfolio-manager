@@ -1,4 +1,4 @@
-import { AssetClass, AssetType, TransactionType } from "@prisma/client";
+import { AssetClass, AssetType, TransactionGroupKind, TransactionType } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import {
   calculateAssetNetCostBasis,
@@ -809,5 +809,23 @@ describe("portfolio engine asset net cost basis", () => {
     expect(calculateAssetNetCostBasis({ portfolio: transferOnlyPortfolio, assets, transactions: transferOnly, baseCurrency: "EUR" })).toContainEqual(
       expect.objectContaining({ assetId: "btc", status: "UNAVAILABLE", netCost: null, averageNetCost: null }),
     );
+  });
+
+  it("uses durable group identity when carrying transfer cost between accounts", () => {
+    const grouped = (id: string) => ({ id, kind: TransactionGroupKind.TRANSFER });
+    const transactions: EngineTransaction[] = [
+      { assetId: "btc", accountId: "cheap", type: TransactionType.BUY, quantity: "1", pricePerUnit: "100", currency: "EUR", executedAt: "2026-01-01" },
+      { assetId: "btc", accountId: "expensive", type: TransactionType.BUY, quantity: "1", pricePerUnit: "200", currency: "EUR", executedAt: "2026-01-01" },
+      { assetId: "btc", accountId: "cheap", type: TransactionType.TRANSFER_OUT, quantity: "1", transactionGroupId: "cheap-group", transactionGroup: grouped("cheap-group"), executedAt: "2026-01-02" },
+      { assetId: "btc", accountId: "expensive", type: TransactionType.TRANSFER_OUT, quantity: "1", transactionGroupId: "expensive-group", transactionGroup: grouped("expensive-group"), executedAt: "2026-01-02" },
+      { assetId: "btc", accountId: "expensive-wallet", type: TransactionType.TRANSFER_IN, quantity: "1", transactionGroupId: "expensive-group", transactionGroup: grouped("expensive-group"), executedAt: "2026-01-02" },
+      { assetId: "btc", accountId: "cheap-wallet", type: TransactionType.TRANSFER_IN, quantity: "1", transactionGroupId: "cheap-group", transactionGroup: grouped("cheap-group"), executedAt: "2026-01-02" },
+    ];
+    const portfolio = calculatePortfolio({ assets, transactions, marketPrices: prices });
+    const basis = calculateHoldingCostBasis({ portfolio, assets, transactions, baseCurrency: "EUR" });
+    expect(basis).toEqual(expect.arrayContaining([
+      expect.objectContaining({ accountId: "cheap-wallet", totalCost: "100.00" }),
+      expect.objectContaining({ accountId: "expensive-wallet", totalCost: "200.00" }),
+    ]));
   });
 });

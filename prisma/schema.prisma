@@ -43,6 +43,11 @@ enum TransactionType {
   TRANSFER_OUT
 }
 
+enum TransactionGroupKind {
+  TRANSFER
+  TRADE
+}
+
 enum PortfolioRuleType {
   PREFER_CONTRIBUTIONS_OVER_SELLING
   CHALLENGE_STRATEGY_VIOLATIONS
@@ -161,25 +166,36 @@ model Account {
 }
 
 model Transaction {
-  id           String          @id @default(cuid())
-  assetId      String
-  accountId    String
-  type         TransactionType
-  quantity     Decimal         @db.Decimal(36, 18)
-  pricePerUnit Decimal?        @db.Decimal(28, 8)
-  fee          Decimal?        @db.Decimal(28, 8)
-  currency     String
-  executedAt   DateTime
-  note         String?
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  id                 String          @id @default(cuid())
+  assetId            String
+  accountId          String
+  type               TransactionType
+  quantity           Decimal         @db.Decimal(36, 18)
+  pricePerUnit       Decimal?        @db.Decimal(28, 8)
+  fee                Decimal?        @db.Decimal(28, 8)
+  currency           String
+  executedAt         DateTime
+  note               String?
+  transactionGroupId String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
 
-  asset   Asset   @relation(fields: [assetId], references: [id], onDelete: Restrict)
-  account Account @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  asset            Asset             @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  account          Account           @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  transactionGroup TransactionGroup? @relation(fields: [transactionGroupId], references: [id], onDelete: Cascade)
 
   @@index([assetId])
   @@index([accountId])
   @@index([executedAt])
+  @@index([transactionGroupId])
+}
+
+model TransactionGroup {
+  id           String               @id @default(cuid())
+  kind         TransactionGroupKind
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  transactions Transaction[]
 }
 
 model Strategy {

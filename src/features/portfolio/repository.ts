@@ -17,6 +17,7 @@ export class PortfolioRepository {
       include: {
         account: true,
         asset: true,
+        transactionGroup: true,
       },
       orderBy: { executedAt: "desc" },
     });
@@ -27,6 +28,7 @@ export class PortfolioRepository {
       include: {
         account: true,
         asset: true,
+        transactionGroup: true,
       },
       orderBy: { executedAt: "asc" },
     });

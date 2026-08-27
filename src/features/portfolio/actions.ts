@@ -4,10 +4,14 @@ import { AccountType, AssetClass, AssetType, TransactionType } from "@prisma/cli
 import { revalidatePath } from "next/cache";
 import {
   createAccountMutation,
+  createTradeMutation,
   createTransferMutation,
   createTransactionMutation,
+  deleteTransactionGroupMutation,
   deleteTransactionMutation,
   linkAssetQuoteMutation,
+  updateTradeMutation,
+  updateTransferMutation,
   updateTransactionMutation,
   type PortfolioMutationResult,
 } from "@/features/portfolio/mutations";
@@ -113,6 +117,31 @@ export async function createTransferAction(
   }
 }
 
+export async function createTradeAction(
+  previousState: PortfolioActionState = initialState,
+  formData: FormData,
+): Promise<PortfolioActionState> {
+  void previousState;
+  try {
+    const strategy = await new StrategyRepository().findActiveStrategy();
+    const baseCurrency = strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
+    return await withPortfolioRevalidation(createTradeMutation({
+      sourceAccountId: String(formData.get("sourceAccountId") ?? ""),
+      sourceAssetId: String(formData.get("sourceAssetId") ?? ""),
+      sourceQuantity: String(formData.get("sourceQuantity") ?? ""),
+      destinationAccountId: String(formData.get("destinationAccountId") ?? ""),
+      destinationAssetId: String(formData.get("destinationAssetId") ?? ""),
+      destinationQuantity: String(formData.get("destinationQuantity") ?? ""),
+      fee: nullableString(formData.get("fee")) ?? undefined,
+      currency: baseCurrency,
+      executedAt: String(formData.get("executedAt") ?? ""),
+      note: nullableString(formData.get("note")) ?? undefined,
+    }));
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
 export async function createPositionAction(
   previousState: PortfolioActionState = initialState,
   formData: FormData,
@@ -184,9 +213,7 @@ function parseImplementedTransactionType(value: string) {
     value === TransactionType.BUY ||
     value === TransactionType.SELL ||
     value === TransactionType.DEPOSIT ||
-    value === TransactionType.WITHDRAWAL ||
-    value === TransactionType.TRANSFER_IN ||
-    value === TransactionType.TRANSFER_OUT
+    value === TransactionType.WITHDRAWAL
   ) {
     return value;
   }
@@ -196,6 +223,60 @@ function parseImplementedTransactionType(value: string) {
 
 export async function deleteTransactionAction(formData: FormData): Promise<void> {
   await withPortfolioRevalidation(deleteTransactionMutation(String(formData.get("id") ?? "")));
+}
+
+export async function deleteTransactionGroupAction(formData: FormData): Promise<void> {
+  await withPortfolioRevalidation(deleteTransactionGroupMutation(String(formData.get("groupId") ?? "")));
+}
+
+export async function updateTransferAction(
+  previousState: PortfolioActionState = initialState,
+  formData: FormData,
+): Promise<PortfolioActionState> {
+  void previousState;
+  try {
+    const strategy = await new StrategyRepository().findActiveStrategy();
+    const baseCurrency = strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
+    return await withPortfolioRevalidation(updateTransferMutation({
+      groupId: String(formData.get("groupId") ?? ""),
+      assetId: String(formData.get("assetId") ?? ""),
+      fromAccountId: String(formData.get("fromAccountId") ?? ""),
+      toAccountId: String(formData.get("toAccountId") ?? ""),
+      quantity: nullableString(formData.get("quantity")) ?? undefined,
+      physicalGoldWeightTroyOunces: nullableString(formData.get("physicalGoldWeightTroyOunces")) ?? undefined,
+      currency: baseCurrency,
+      executedAt: String(formData.get("executedAt") ?? ""),
+      note: nullableString(formData.get("note")) ?? undefined,
+    }));
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
+export async function updateTradeAction(
+  previousState: PortfolioActionState = initialState,
+  formData: FormData,
+): Promise<PortfolioActionState> {
+  void previousState;
+  try {
+    const strategy = await new StrategyRepository().findActiveStrategy();
+    const baseCurrency = strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
+    return await withPortfolioRevalidation(updateTradeMutation({
+      groupId: String(formData.get("groupId") ?? ""),
+      sourceAccountId: String(formData.get("sourceAccountId") ?? ""),
+      sourceAssetId: String(formData.get("sourceAssetId") ?? ""),
+      sourceQuantity: String(formData.get("sourceQuantity") ?? ""),
+      destinationAccountId: String(formData.get("destinationAccountId") ?? ""),
+      destinationAssetId: String(formData.get("destinationAssetId") ?? ""),
+      destinationQuantity: String(formData.get("destinationQuantity") ?? ""),
+      fee: nullableString(formData.get("fee")) ?? undefined,
+      currency: baseCurrency,
+      executedAt: String(formData.get("executedAt") ?? ""),
+      note: nullableString(formData.get("note")) ?? undefined,
+    }));
+  } catch (error) {
+    return toActionError(error);
+  }
 }
 
 export async function updateTransactionAction(

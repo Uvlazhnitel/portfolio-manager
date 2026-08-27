@@ -19,10 +19,14 @@ import type { AssetCatalogKind } from "@/features/asset-catalog/types";
 import {
   createAccountAction,
   createPositionAction,
+  createTradeAction,
   createTransferAction,
   createTransactionAction,
+  deleteTransactionGroupAction,
   deleteTransactionAction,
   linkAssetQuoteAction,
+  updateTradeAction,
+  updateTransferAction,
   updateTransactionAction,
 } from "@/features/portfolio/actions";
 import type { PortfolioReadModel } from "@/features/portfolio/read-model";
@@ -43,7 +47,7 @@ type DialogState =
   | { kind: "edit-transaction"; transactionId: string }
   | null;
 type AssetSelection = AssetCatalogResult | { source: "CUSTOM" };
-type TransactionOperation = "INITIAL_BALANCE" | "BUY" | "SELL" | "TRANSFER" | "DEPOSIT" | "WITHDRAWAL";
+type TransactionOperation = "INITIAL_BALANCE" | "BUY" | "SELL" | "TRANSFER" | "TRADE" | "DEPOSIT" | "WITHDRAWAL";
 
 type PortfolioClientProps = { portfolio: PortfolioReadModel };
 
@@ -55,6 +59,7 @@ const operationChoices: Array<[TransactionOperation, string]> = [
   ["BUY", "Buy"],
   ["SELL", "Sell"],
   ["TRANSFER", "Transfer"],
+  ["TRADE", "Trade"],
   ["DEPOSIT", "Deposit"],
   ["WITHDRAWAL", "Withdrawal"],
 ];
@@ -440,7 +445,7 @@ function PositionForm({
       ) : null}
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {operationChoices.map(([value, label]) => (
+        {operationChoices.filter(([value]) => value !== "TRADE").map(([value, label]) => (
           <Button key={value} type="button" variant={type === value ? "primary" : "secondary"} disabled={(value === "SELL" || value === "TRANSFER" || value === "WITHDRAWAL") && !asset?.existingAssetId} onClick={() => setType(value)}>{label}</Button>
         ))}
       </div>
@@ -553,6 +558,17 @@ function AddTransactionDialog({ portfolio, initialAssetId, initialAccountId, onC
   const actionState = isTransfer ? transferState : state;
   const pending = isTransfer ? isTransferPending : isPending;
 
+  if (type === "TRADE") {
+    return (
+      <DialogShell title="Add trade" description="Convert one portfolio asset into another." onClose={onClose}>
+        <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {operationChoices.map(([choice, label]) => <Button key={choice} type="button" variant={type === choice ? "primary" : "secondary"} onClick={() => setType(choice)}>{label}</Button>)}
+        </div>
+        <TradeForm portfolio={portfolio} onDone={onClose} initialSourceAssetId={assetId} initialSourceAccountId={accountId} />
+      </DialogShell>
+    );
+  }
+
   return (
     <DialogShell title="Add transaction" description="Record a specific purchase or sale." onClose={onClose}>
       {actionState.ok ? (
@@ -586,10 +602,43 @@ function AddTransactionDialog({ portfolio, initialAssetId, initialAccountId, onC
   );
 }
 
+function TradeForm({ portfolio, onDone, initialSourceAssetId, initialSourceAccountId }: PortfolioClientProps & { onDone: () => void; initialSourceAssetId?: string; initialSourceAccountId?: string }) {
+  const [state, action, isPending] = useActionState(createTradeAction, { ok: false, message: "" });
+  const [sourceAssetId, setSourceAssetId] = useState(initialSourceAssetId ?? portfolio.assets[0]?.id ?? "");
+  const [destinationAssetId, setDestinationAssetId] = useState(portfolio.assets.find((asset) => asset.id !== sourceAssetId)?.id ?? "");
+  if (state.ok) return <div className="space-y-4"><ActionMessage state={state} /><Button type="button" onClick={onDone} className="w-full">Done</Button></div>;
+  return (
+    <form action={action} className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Source account"><select name="sourceAccountId" required className={inputClassName} defaultValue={initialSourceAccountId ?? portfolio.accounts[0]?.id ?? ""}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
+        <Field label="Source asset"><select name="sourceAssetId" required className={inputClassName} value={sourceAssetId} onChange={(event) => { const value = event.target.value; setSourceAssetId(value); if (value === destinationAssetId) setDestinationAssetId(portfolio.assets.find((asset) => asset.id !== value)?.id ?? ""); }}>{portfolio.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field>
+        <Field label="Source quantity"><input name="sourceQuantity" required className={inputClassName} inputMode="decimal" placeholder="500" /></Field>
+        <div aria-hidden="true" className="hidden sm:block" />
+        <Field label="Destination account"><select name="destinationAccountId" required className={inputClassName} defaultValue={initialSourceAccountId ?? portfolio.accounts[0]?.id ?? ""}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
+        <Field label="Destination asset"><select name="destinationAssetId" required className={inputClassName} value={destinationAssetId} onChange={(event) => setDestinationAssetId(event.target.value)}>{portfolio.assets.filter((asset) => asset.id !== sourceAssetId).map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field>
+        <Field label="Destination quantity"><input name="destinationQuantity" required className={inputClassName} inputMode="decimal" placeholder="0.0045" /></Field>
+        <Field label={`Fee in ${portfolio.valuation.currency} (optional)`}><input name="fee" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
+        <Field label="Date"><input name="executedAt" required type="date" className={inputClassName} defaultValue={today()} /></Field>
+      </div>
+      <p className="text-xs text-muted">The source asset&apos;s proportional acquisition cost is carried to the destination. This is an internal reallocation, not a contribution or withdrawal.</p>
+      <Field label="Note (optional)"><textarea name="note" className={textareaClassName} rows={3} /></Field>
+      <ActionMessage state={state} />
+      <Button type="submit" disabled={isPending || portfolio.accounts.length === 0 || portfolio.assets.length < 2}>{isPending ? "Saving…" : "Save trade"}</Button>
+    </form>
+  );
+}
+
 function EditTransactionDialog({ portfolio, transactionId, onClose }: PortfolioClientProps & { transactionId: string; onClose: () => void }) {
   const transaction = portfolio.transactions.find((item) => item.id === transactionId);
-  const [state, action, isPending] = useActionState(updateTransactionAction, { ok: false, message: "" });
   if (!transaction) return null;
+  if (transaction.operationKind === "TRANSFER" || transaction.operationKind === "TRADE") {
+    return <EditGroupedOperationDialog portfolio={portfolio} transaction={transaction} onClose={onClose} />;
+  }
+  return <EditStandaloneTransactionDialog transaction={transaction} onClose={onClose} />;
+}
+
+function EditStandaloneTransactionDialog({ transaction, onClose }: { transaction: PortfolioReadModel["transactions"][number]; onClose: () => void }) {
+  const [state, action, isPending] = useActionState(updateTransactionAction, { ok: false, message: "" });
   const isPhysicalGold = transaction.displayPriceUnit === "troy oz";
 
   return (
@@ -610,6 +659,40 @@ function EditTransactionDialog({ portfolio, transactionId, onClose }: PortfolioC
           <Field label="Note (optional)"><textarea name="note" className={textareaClassName} rows={3} defaultValue={transaction.note ?? ""} /></Field>
           <ActionMessage state={state} />
           <Button type="submit" disabled={isPending}>{isPending ? "Saving…" : "Save changes"}</Button>
+        </form>
+      )}
+    </DialogShell>
+  );
+}
+
+function EditGroupedOperationDialog({ portfolio, transaction, onClose }: PortfolioClientProps & { transaction: PortfolioReadModel["transactions"][number]; onClose: () => void }) {
+  const isTrade = transaction.operationKind === "TRADE";
+  const destination = transaction.destination;
+  const [sourceAssetId, setSourceAssetId] = useState(transaction.assetId);
+  const isPhysicalTransfer = !isTrade && portfolio.assets.find((asset) => asset.id === sourceAssetId)?.assetType === "PHYSICAL_GOLD";
+  const [tradeState, tradeAction, isTradePending] = useActionState(updateTradeAction, { ok: false, message: "" });
+  const [transferState, transferAction, isTransferPending] = useActionState(updateTransferAction, { ok: false, message: "" });
+  const state = isTrade ? tradeState : transferState;
+  const action = isTrade ? tradeAction : transferAction;
+  if (!destination) return null;
+  return (
+    <DialogShell title={`Edit ${isTrade ? "trade" : "transfer"}`} description={`${transaction.symbol} → ${destination.symbol}`} onClose={onClose}>
+      {state.ok ? <div className="space-y-4"><ActionMessage state={state} /><Button type="button" onClick={onClose} className="w-full">Done</Button></div> : (
+        <form action={action} className="space-y-5">
+          <input type="hidden" name="groupId" value={transaction.groupId ?? ""} />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Source account"><select name={isTrade ? "sourceAccountId" : "fromAccountId"} required className={inputClassName} defaultValue={transaction.accountId}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
+            <Field label="Source asset"><select name={isTrade ? "sourceAssetId" : "assetId"} required className={inputClassName} value={sourceAssetId} onChange={(event) => setSourceAssetId(event.target.value)}>{portfolio.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field>
+            <Field label={isPhysicalTransfer ? "Weight (troy oz)" : "Source quantity"}><input name={isTrade ? "sourceQuantity" : isPhysicalTransfer ? "physicalGoldWeightTroyOunces" : "quantity"} required className={inputClassName} inputMode="decimal" defaultValue={transaction.inputQuantity} /></Field>
+            <Field label="Destination account"><select name={isTrade ? "destinationAccountId" : "toAccountId"} required className={inputClassName} defaultValue={destination.accountId}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
+            {isTrade ? <Field label="Destination asset"><select name="destinationAssetId" required className={inputClassName} defaultValue={destination.assetId}>{portfolio.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field> : null}
+            {isTrade ? <Field label="Destination quantity"><input name="destinationQuantity" required className={inputClassName} inputMode="decimal" defaultValue={destination.inputQuantity} /></Field> : null}
+            {isTrade ? <Field label={`Fee in ${portfolio.valuation.currency} (optional)`}><input name="fee" className={inputClassName} inputMode="decimal" defaultValue={transaction.fee ?? ""} /></Field> : null}
+            <Field label="Date"><input name="executedAt" required type="date" className={inputClassName} defaultValue={transaction.executedAt.slice(0, 10)} /></Field>
+          </div>
+          <Field label="Note (optional)"><textarea name="note" className={textareaClassName} rows={3} defaultValue={transaction.note ?? ""} /></Field>
+          <ActionMessage state={state} />
+          <Button type="submit" disabled={isTrade ? isTradePending : isTransferPending}>{(isTrade ? isTradePending : isTransferPending) ? "Saving…" : "Save changes"}</Button>
         </form>
       )}
     </DialogShell>
@@ -773,7 +856,7 @@ function TransactionsSection({ portfolio, onAddTransaction, onEditTransaction }:
       <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-3 sm:px-5">
         <div>
           <h2 className="font-semibold text-foreground">Transactions</h2>
-          <p className="mt-1 text-xs text-muted">{portfolio.transactions.length} ledger {portfolio.transactions.length === 1 ? "entry" : "entries"}</p>
+          <p className="mt-1 text-xs text-muted">{portfolio.transactions.length} logical {portfolio.transactions.length === 1 ? "operation" : "operations"}</p>
         </div>
         <Button type="button" variant="secondary" onClick={onAddTransaction}><Plus className="mr-2 h-4 w-4" />Add transaction</Button>
       </div>
@@ -801,11 +884,11 @@ function TransactionsSection({ portfolio, onAddTransaction, onEditTransaction }:
                     <td className="px-4 py-3"><TransactionTypePill type={transaction.type} /></td>
                     <td className="px-4 py-3">
                       <p className="font-medium text-foreground">{transaction.assetName}</p>
-                      <p className="mt-1 text-xs text-muted">{transaction.symbol}</p>
+                      <p className="mt-1 text-xs text-muted">{transaction.symbol}{transaction.destination ? ` → ${transaction.destination.symbol}` : ""}</p>
                     </td>
-                    <td className="px-4 py-3 text-muted">{transaction.accountName}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-foreground">{transaction.quantityLabel}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-muted">{transaction.displayPricePerUnit ? `${formatDecimalCurrency(transaction.displayPricePerUnit, transaction.currency)} / ${transaction.displayPriceUnit}` : "No price"}</td>
+                    <td className="px-4 py-3 text-muted">{transaction.accountName}{transaction.destination ? ` → ${transaction.destination.accountName}` : ""}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-foreground">{transaction.quantityLabel}{transaction.destination ? ` → ${transaction.destination.quantityLabel}` : ""}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-muted">{transaction.operationKind !== "TRANSACTION" ? (transaction.fee ? `Fee ${formatDecimalCurrency(transaction.fee, transaction.currency)}` : "Internal") : transaction.displayPricePerUnit ? `${formatDecimalCurrency(transaction.displayPricePerUnit, transaction.currency)} / ${transaction.displayPriceUnit}` : "No price"}</td>
                     <td className="px-4 py-3">
                       <TransactionActions transaction={transaction} onEditTransaction={onEditTransaction} />
                     </td>
@@ -824,13 +907,13 @@ function TransactionsSection({ portfolio, onAddTransaction, onEditTransaction }:
                       <span className="text-xs text-muted">{formatUtcDate(transaction.executedAt)}</span>
                     </div>
                     <p className="mt-2 truncate font-medium text-foreground">{transaction.assetName}</p>
-                    <p className="mt-1 text-sm text-muted">{transaction.symbol} · {transaction.accountName}</p>
+                    <p className="mt-1 text-sm text-muted">{transaction.symbol} · {transaction.accountName}{transaction.destination ? ` → ${transaction.destination.symbol} · ${transaction.destination.accountName}` : ""}</p>
                   </div>
                   <TransactionActions transaction={transaction} onEditTransaction={onEditTransaction} />
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                  <Info label="Quantity" value={transaction.quantityLabel} />
-                  <Info label="Price" value={transaction.displayPricePerUnit ? `${formatDecimalCurrency(transaction.displayPricePerUnit, transaction.currency)} / ${transaction.displayPriceUnit}` : "No price"} />
+                  <Info label="Quantity" value={`${transaction.quantityLabel}${transaction.destination ? ` → ${transaction.destination.quantityLabel}` : ""}`} />
+                  <Info label={transaction.operationKind === "TRADE" ? "Fee" : "Price"} value={transaction.operationKind !== "TRANSACTION" ? (transaction.fee ? formatDecimalCurrency(transaction.fee, transaction.currency) : "Internal") : transaction.displayPricePerUnit ? `${formatDecimalCurrency(transaction.displayPricePerUnit, transaction.currency)} / ${transaction.displayPriceUnit}` : "No price"} />
                 </div>
                 {transaction.note ? <p className="mt-3 text-sm text-muted">{transaction.note}</p> : null}
               </div>
@@ -845,14 +928,15 @@ function TransactionsSection({ portfolio, onAddTransaction, onEditTransaction }:
 function TransactionTypePill({ type }: { type: string }) {
   const tone = type === "BUY" || type === "DEPOSIT" || type === "TRANSFER_IN"
     ? "success"
-    : type === "SELL" || type === "WITHDRAWAL" || type === "TRANSFER_OUT"
+    : type === "SELL" || type === "WITHDRAWAL" || type === "TRANSFER_OUT" || type === "TRADE"
       ? "warning"
       : "primary";
   return <Badge tone={tone}>{formatType(type)}</Badge>;
 }
 
 function TransactionActions({ transaction, onEditTransaction }: { transaction: PortfolioReadModel["transactions"][number]; onEditTransaction: (transactionId: string) => void }) {
-  const canEdit = transaction.type !== "TRANSFER_IN" && transaction.type !== "TRANSFER_OUT";
+  const isLegacyTransfer = transaction.operationKind === "TRANSACTION" && (transaction.type === "TRANSFER_IN" || transaction.type === "TRANSFER_OUT");
+  const canEdit = !isLegacyTransfer;
   return (
     <div className="flex items-center justify-end gap-1">
       {canEdit ? (
@@ -860,12 +944,10 @@ function TransactionActions({ transaction, onEditTransaction }: { transaction: P
           <Pencil className="h-4 w-4" aria-hidden="true" />
         </Button>
       ) : null}
-      <form action={deleteTransactionAction} onSubmit={(event) => { if (!window.confirm("Delete this transaction? Holdings will be recalculated.")) event.preventDefault(); }}>
-        <input type="hidden" name="id" value={transaction.id} />
-        <Button type="submit" variant="ghost" title="Delete transaction" aria-label={`Delete ${transaction.assetName} transaction`}>
-          <Trash2 className="h-4 w-4" aria-hidden="true" />
-        </Button>
-      </form>
+      {!isLegacyTransfer ? <form action={transaction.groupId ? deleteTransactionGroupAction : deleteTransactionAction} onSubmit={(event) => { if (!window.confirm(`Delete this ${transaction.operationKind.toLowerCase()}? Holdings will be recalculated.`)) event.preventDefault(); }}>
+        {transaction.groupId ? <input type="hidden" name="groupId" value={transaction.groupId} /> : <input type="hidden" name="id" value={transaction.id} />}
+        <Button type="submit" variant="ghost" title="Delete operation" aria-label={`Delete ${transaction.assetName} operation`}><Trash2 className="h-4 w-4" aria-hidden="true" /></Button>
+      </form> : null}
     </div>
   );
 }
