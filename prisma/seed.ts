@@ -28,6 +28,13 @@ const strategyAllocations = [
   { assetClass: AssetClass.CASH, targetPercent: "2", minPercent: "0", maxPercent: "5" },
 ];
 
+const coinGeckoSeedImages = {
+  BTC: "https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png",
+  ETH: "https://coin-images.coingecko.com/coins/images/279/large/ethereum.png",
+  XAUT: "https://coin-images.coingecko.com/coins/images/10481/large/tether-gold.png",
+  USDT: "https://coin-images.coingecko.com/coins/images/325/large/Tether.png",
+} as const;
+
 async function main() {
   await Promise.all([
     prisma.account.upsert({
@@ -65,17 +72,17 @@ async function main() {
     prisma.asset.upsert({
       where: { symbol: "BTC" },
       update: { externalId: "bitcoin" },
-      create: { symbol: "BTC", name: "Bitcoin", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "BTC", externalId: "bitcoin" },
+      create: { symbol: "BTC", name: "Bitcoin", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "BTC", externalId: "bitcoin", metadata: { imageUrl: coinGeckoSeedImages.BTC } },
     }),
     prisma.asset.upsert({
       where: { symbol: "ETH" },
       update: { externalId: "ethereum" },
-      create: { symbol: "ETH", name: "Ethereum", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "ETH", externalId: "ethereum" },
+      create: { symbol: "ETH", name: "Ethereum", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "ETH", externalId: "ethereum", metadata: { imageUrl: coinGeckoSeedImages.ETH } },
     }),
     prisma.asset.upsert({
       where: { symbol: "XAUT" },
       update: { externalId: "tether-gold" },
-      create: { symbol: "XAUT", name: "Tether Gold", assetClass: AssetClass.GOLD, assetType: AssetType.TOKENIZED_GOLD, currency: "XAUT", externalId: "tether-gold" },
+      create: { symbol: "XAUT", name: "Tether Gold", assetClass: AssetClass.GOLD, assetType: AssetType.TOKENIZED_GOLD, currency: "XAUT", externalId: "tether-gold", metadata: { imageUrl: coinGeckoSeedImages.XAUT } },
     }),
     prisma.asset.upsert({
       where: { symbol: "PHYSICAL_GOLD" },
@@ -95,9 +102,20 @@ async function main() {
     prisma.asset.upsert({
       where: { symbol: "USDT" },
       update: { externalId: "tether" },
-      create: { symbol: "USDT", name: "Tether USD", assetClass: AssetClass.CASH, assetType: AssetType.STABLECOIN, currency: "USDT", externalId: "tether" },
+      create: { symbol: "USDT", name: "Tether USD", assetClass: AssetClass.CASH, assetType: AssetType.STABLECOIN, currency: "USDT", externalId: "tether", metadata: { imageUrl: coinGeckoSeedImages.USDT } },
     }),
   ]);
+
+  const logoSeedAssets = await prisma.asset.findMany({
+    where: { symbol: { in: Object.keys(coinGeckoSeedImages) } },
+  });
+  await Promise.all(logoSeedAssets.map((asset) => {
+    if (metadataImageUrl(asset.metadata)) return null;
+    return prisma.asset.update({
+      where: { id: asset.id },
+      data: { metadata: { imageUrl: coinGeckoSeedImages[asset.symbol as keyof typeof coinGeckoSeedImages] } },
+    });
+  }));
 
   const seededAssets = await prisma.asset.findMany({
     where: { symbol: { in: ["VWCE", "BTC", "ETH", "PHYSICAL_GOLD", "XAUT", "USD", "EUR", "USDT"] } },
@@ -210,6 +228,11 @@ async function main() {
   }
 
   await backfillStrategyAssetAllocations(prisma);
+}
+
+function metadataImageUrl(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata) || !("imageUrl" in metadata)) return null;
+  return typeof metadata.imageUrl === "string" ? metadata.imageUrl : null;
 }
 
 main()
