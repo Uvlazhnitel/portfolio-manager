@@ -25,6 +25,7 @@ import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 
 export const MARKET_PRICE_CACHE_TTL_MS = 5 * 60 * 1_000;
 export const MARKET_PRICE_STALE_AFTER_MS = 15 * 60 * 1_000;
+export const MANUAL_PRICE_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1_000;
 export const MARKET_PRICE_REFRESH_COOLDOWN_MS = 60 * 1_000;
 
 const refreshAttempts = new Map<string, number>();
@@ -224,7 +225,7 @@ function buildSnapshot(
       timestamp: cached.timestamp,
       fetchedAt: cached.fetchedAt,
       source: cached.source,
-      isStale: now.getTime() - cached.timestamp.getTime() >= MARKET_PRICE_STALE_AFTER_MS,
+      isStale: isCachedPriceStale(cached, now),
     }];
   });
   const pricedAssetIds = new Set(prices.map((price) => price.assetId));
@@ -241,6 +242,19 @@ function buildSnapshot(
     refreshBlockedUntil,
     warning,
   };
+}
+
+function isCachedPriceStale(cached: CachedPriceRecord, now: Date) {
+  const source = cached.source.toUpperCase();
+
+  if (source === "ALPHA_VANTAGE") {
+    return !isSameUtcDay(cached.fetchedAt, now);
+  }
+
+  const staleAfterMs = source === "MANUAL"
+    ? MANUAL_PRICE_STALE_AFTER_MS
+    : MARKET_PRICE_STALE_AFTER_MS;
+  return now.getTime() - cached.timestamp.getTime() >= staleAfterMs;
 }
 
 function expandGoldReferenceRefresh(assets: MarketDataAsset[], needsRefresh: MarketDataAsset[]) {

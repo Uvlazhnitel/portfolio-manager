@@ -16,6 +16,7 @@ import { AlphaVantageMarketDataProvider } from "@/features/market-data/providers
 import { TwelveDataMarketDataProvider } from "@/features/market-data/providers/twelve-data";
 import type { MarketDataStore } from "@/features/market-data/repository";
 import {
+  MANUAL_PRICE_STALE_AFTER_MS,
   MARKET_PRICE_CACHE_TTL_MS,
   MarketDataService,
   resetMarketDataRuntimeCacheForTests,
@@ -314,6 +315,105 @@ describe("market data cache service", () => {
 
     expect(provider.getCurrentPrices).not.toHaveBeenCalled();
     expect(snapshot.prices[0].price).toBe("140");
+    expect(snapshot.prices[0].isStale).toBe(false);
+    expect(snapshot.hasStalePrices).toBe(false);
+  });
+
+  it("keeps the latest Alpha trading-day close fresh after a successful weekend check", async () => {
+    const sunday = new Date("2026-08-30T12:00:00.000Z");
+    const store = new FakeStore([cachedPrice({
+      assetId: alphaVwce.id,
+      fetchedAt: new Date("2026-08-30T08:00:00.000Z"),
+      timestamp: new Date("2026-08-28T23:59:59.000Z"),
+      source: "ALPHA_VANTAGE",
+      price: "140",
+    })]);
+    const provider = providerReturning([]);
+    const snapshot = await new MarketDataService(store, [provider]).getCurrentPrices({ assets: [alphaVwce], now: sunday });
+
+    expect(provider.getCurrentPrices).not.toHaveBeenCalled();
+    expect(snapshot.prices[0]).toEqual(expect.objectContaining({ source: "ALPHA_VANTAGE", isStale: false }));
+  });
+
+  it("marks an unverified previous-day Alpha cache stale when the daily refresh fails", async () => {
+    const tuesday = new Date("2026-09-01T08:00:00.000Z");
+    const store = new FakeStore([cachedPrice({
+      assetId: alphaVwce.id,
+      fetchedAt: new Date("2026-08-31T08:00:00.000Z"),
+      timestamp: new Date("2026-08-28T23:59:59.000Z"),
+      source: "ALPHA_VANTAGE",
+      price: "140",
+    })]);
+    const provider: MarketDataProvider = {
+      name: "ALPHA_VANTAGE",
+      getCurrentPrices: vi.fn(async () => { throw new Error("Unavailable"); }),
+    };
+    const snapshot = await new MarketDataService(store, [provider]).getCurrentPrices({ assets: [alphaVwce], now: tuesday });
+
+    expect(provider.getCurrentPrices).toHaveBeenCalledOnce();
+    expect(snapshot.prices[0].isStale).toBe(true);
+    expect(snapshot.warning).toContain("ALPHA_VANTAGE");
+  });
+
+  it("makes Alpha fresh again after the next successful daily verification", async () => {
+    const tuesday = new Date("2026-09-01T08:00:00.000Z");
+    const store = new FakeStore([cachedPrice({
+      assetId: alphaVwce.id,
+      fetchedAt: new Date("2026-08-31T08:00:00.000Z"),
+      timestamp: new Date("2026-08-28T23:59:59.000Z"),
+      source: "ALPHA_VANTAGE",
+      price: "140",
+    })]);
+    const provider = providerReturning([{
+      assetId: alphaVwce.id,
+      symbol: alphaVwce.symbol,
+      price: "141",
+      currency: "USD",
+      timestamp: new Date("2026-08-31T23:59:59.000Z"),
+      source: "ALPHA_VANTAGE",
+    }]);
+    const snapshot = await new MarketDataService(store, [provider]).getCurrentPrices({ assets: [alphaVwce], now: tuesday });
+
+    expect(provider.getCurrentPrices).toHaveBeenCalledOnce();
+    expect(snapshot.prices[0]).toEqual(expect.objectContaining({ price: "141", isStale: false }));
+  });
+
+  it("keeps the fifteen-minute stale policy for CoinGecko-like sources", async () => {
+    const freshStore = new FakeStore([cachedPrice({
+      fetchedAt: new Date(now.getTime() - 1_000),
+      timestamp: new Date(now.getTime() - 14 * 60 * 1_000),
+      source: "COINGECKO",
+    })]);
+    const staleStore = new FakeStore([cachedPrice({
+      fetchedAt: new Date(now.getTime() - 1_000),
+      timestamp: new Date(now.getTime() - 15 * 60 * 1_000),
+      source: "COINGECKO",
+    })]);
+
+    const fresh = await new MarketDataService(freshStore, [providerReturning([])]).getCurrentPrices({ assets: [btc], now });
+    const stale = await new MarketDataService(staleStore, [providerReturning([])]).getCurrentPrices({ assets: [btc], now });
+
+    expect(fresh.prices[0].isStale).toBe(false);
+    expect(stale.prices[0].isStale).toBe(true);
+  });
+
+  it("keeps manual prices fresh for seven days", async () => {
+    const freshStore = new FakeStore([cachedPrice({
+      fetchedAt: new Date(now.getTime() - 1_000),
+      timestamp: new Date(now.getTime() - MANUAL_PRICE_STALE_AFTER_MS + 1_000),
+      source: "MANUAL",
+    })]);
+    const staleStore = new FakeStore([cachedPrice({
+      fetchedAt: new Date(now.getTime() - 1_000),
+      timestamp: new Date(now.getTime() - MANUAL_PRICE_STALE_AFTER_MS),
+      source: "MANUAL",
+    })]);
+
+    const fresh = await new MarketDataService(freshStore, [providerReturning([])]).getCurrentPrices({ assets: [btc], now });
+    const stale = await new MarketDataService(staleStore, [providerReturning([])]).getCurrentPrices({ assets: [btc], now });
+
+    expect(fresh.prices[0].isStale).toBe(false);
+    expect(stale.prices[0].isStale).toBe(true);
   });
 
   it("refreshes expired cache and persists normalized provider data", async () => {
@@ -461,14 +561,14 @@ describe("market data cache service", () => {
         symbol: asset.symbol,
         price: "140",
         currency: "USD",
-        timestamp: now,
+        timestamp: new Date(now.getTime() - 8 * 24 * 60 * 60 * 1_000),
         source: "MANUAL",
       }))),
     };
 
     const snapshot = await new MarketDataService(store, [failure, manual]).getCurrentPrices({ assets: [alphaVwce], now });
 
-    expect(snapshot.prices).toEqual([expect.objectContaining({ assetId: alphaVwce.id, price: "140", source: "MANUAL" })]);
+    expect(snapshot.prices).toEqual([expect.objectContaining({ assetId: alphaVwce.id, price: "140", source: "MANUAL", isStale: true })]);
     expect(snapshot.warning).toContain("ALPHA_VANTAGE");
   });
 

@@ -190,6 +190,34 @@ describe("daily price capture", () => {
     expect(result).toEqual(expect.objectContaining({ date: "2026-08-26", capturedPrices: 1, unavailableAssetIds: ["usd"], hasStalePrices: true }));
     expect(writes[0]).toEqual(expect.objectContaining({ date: new Date("2026-08-26T00:00:00Z"), quoteTimestamp: new Date("2026-08-25T14:00:00Z"), isStaleAtCapture: true }));
   });
+
+  it("preserves a fresh Alpha daily close in history capture", async () => {
+    const writes: Parameters<DailyMarketPriceStore["saveDailyPrices"]>[0] = [];
+    const now = new Date("2026-08-27T14:30:00Z");
+    await captureDailyMarketPrices({
+      now,
+      portfolioRepository: { listAssets: async () => assets } as unknown as PortfolioRepository,
+      strategyRepository: { findActiveStrategy: async () => ({ baseCurrency: "USD" }) } as unknown as StrategyRepository,
+      marketDataService: {
+        getCurrentPrices: async () => ({
+          prices: [{ assetId: "btc", symbol: "BTC", price: "12345", currency: "USD", timestamp: new Date("2026-08-26T23:59:59Z"), fetchedAt: now, source: "ALPHA_VANTAGE", isStale: false }],
+          unavailableAssetIds: [],
+          lastUpdated: "2026-08-26T23:59:59.000Z",
+          hasStalePrices: false,
+          wasRefreshed: true,
+          refreshBlockedUntil: null,
+          warning: null,
+        }),
+      } as unknown as MarketDataService,
+      dailyPriceStore: { saveDailyPrices: async (prices) => { writes.push(...prices); }, listDailyPrices: async () => [] },
+    });
+
+    expect(writes[0]).toEqual(expect.objectContaining({
+      source: "ALPHA_VANTAGE",
+      quoteTimestamp: new Date("2026-08-26T23:59:59Z"),
+      isStaleAtCapture: false,
+    }));
+  });
 });
 
 describe("history worker", () => {
