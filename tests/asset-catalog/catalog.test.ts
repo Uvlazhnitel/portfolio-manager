@@ -172,6 +172,16 @@ describe("asset catalog service", () => {
     expect(search).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps ETF catalog searches cached for a full day", async () => {
+    const search = vi.fn(async () => []);
+    const service = new AssetCatalogService({ listAssets: async () => [] } as never, providers({ name: "TEST", search }));
+
+    await service.search("vwce", "ETF", 1_000);
+    await service.search("vwce", "ETF", 16 * 60 * 1_000);
+
+    expect(search).toHaveBeenCalledTimes(1);
+  });
+
   it("returns local matches when the online provider fails", async () => {
     const service = new AssetCatalogService(
       { listAssets: async () => [localBtc] } as never,
@@ -184,10 +194,31 @@ describe("asset catalog service", () => {
     expect(result.warning).toContain("temporarily unavailable");
   });
 
-  it("rejects short search queries before accessing the catalog", async () => {
+  it("rejects short crypto search queries before accessing the catalog", async () => {
     const result = await searchAssetsAction("x");
     expect(result.ok).toBe(false);
     expect(result.results).toEqual([]);
+  });
+
+  it("rejects ETF searches shorter than three characters before accessing the provider", async () => {
+    const search = vi.fn(async () => []);
+    const service = new AssetCatalogService({ listAssets: async () => [] } as never, providers({ name: "TEST", search }));
+
+    await expect(service.search("vw", "ETF")).rejects.toThrow("three characters");
+    const result = await searchAssetsAction("vw", "ETF");
+
+    expect(result.ok).toBe(false);
+    expect(result.results).toEqual([]);
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it("allows ETF searches once three characters are entered", async () => {
+    const search = vi.fn(async () => []);
+    const service = new AssetCatalogService({ listAssets: async () => [] } as never, providers({ name: "TEST", search }));
+
+    await service.search("vwc", "ETF");
+
+    expect(search).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a local ETF and exposes another Alpha Vantage listing as a remap", async () => {

@@ -3,6 +3,7 @@
 import Image from "next/image";
 import {
   useActionState,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -157,31 +158,48 @@ function AddAssetDialog({ portfolio, onClose }: PortfolioClientProps & { onClose
   const requestId = useRef(0);
   const [entryKey, setEntryKey] = useState(0);
   const [accountId, setAccountId] = useState(portfolio.accounts[0]?.id ?? "");
+  const trimmedQuery = query.trim();
+  const minimumSearchLength = catalogKind === "ETF" ? 3 : 2;
+  const canSearchRemote = trimmedQuery.length >= minimumSearchLength && !isSearchPending;
   const localAssets = useMemo(() => portfolio.assets.map(toCatalogResult), [portfolio.assets]);
   const visibleLocal = useMemo(() => {
-    const needle = query.trim().toLowerCase();
+    const needle = trimmedQuery.toLowerCase();
     return localAssets
       .filter((asset) => catalogKind === "ETF" ? asset.assetType === "ETF" : asset.assetType !== "ETF")
       .filter((asset) => !needle || asset.symbol.toLowerCase().includes(needle) || asset.name.toLowerCase().includes(needle));
-  }, [catalogKind, localAssets, query]);
+  }, [catalogKind, localAssets, trimmedQuery]);
+
+  const runRemoteSearch = useCallback((searchQuery = trimmedQuery) => {
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < minimumSearchLength || isSearchPending) {
+      return;
+    }
+    const currentRequest = ++requestId.current;
+    startSearch(async () => {
+      const result = await searchAssetsAction(trimmed, catalogKind);
+      if (requestId.current !== currentRequest) return;
+      setRemoteResults(result.results);
+      setSearchMessage(result.message);
+      setSearchWarning(result.warning);
+    });
+  }, [catalogKind, isSearchPending, minimumSearchLength, trimmedQuery]);
 
   useEffect(() => {
-    const trimmed = query.trim();
-    if (trimmed.length < 2) {
+    if (catalogKind !== "CRYPTO" || trimmedQuery.length < minimumSearchLength) {
       return;
     }
     const currentRequest = ++requestId.current;
     const timer = window.setTimeout(() => {
       startSearch(async () => {
-        const result = await searchAssetsAction(trimmed, catalogKind);
+        const result = await searchAssetsAction(trimmedQuery, catalogKind);
         if (requestId.current !== currentRequest) return;
         setRemoteResults(result.results);
         setSearchMessage(result.message);
         setSearchWarning(result.warning);
       });
-    }, 350);
+    }, 700);
     return () => window.clearTimeout(timer);
-  }, [catalogKind, query]);
+  }, [catalogKind, minimumSearchLength, trimmedQuery]);
 
   const results = remoteResults ?? visibleLocal;
 
@@ -210,23 +228,42 @@ function AddAssetDialog({ portfolio, onClose }: PortfolioClientProps & { onClose
               </button>
             ))}
           </div>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden="true" />
-            <input
-              autoFocus
-              value={query}
-              onChange={(event) => {
-                const nextQuery = event.target.value;
-                requestId.current += 1;
-                setQuery(nextQuery);
-                setRemoteResults(null);
-                setSearchMessage(null);
-                setSearchWarning(null);
-              }}
-              className={cn(inputClassName, "pl-10")}
-              placeholder={catalogKind === "ETF" ? "Search VWCE, IWDA, CSPX…" : "Search BTC, ETH, XAUT…"}
-              aria-label="Search assets"
-            />
+          <div className={cn("grid gap-2", catalogKind === "ETF" ? "sm:grid-cols-[1fr_auto]" : "")}>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden="true" />
+              <input
+                autoFocus
+                value={query}
+                onChange={(event) => {
+                  const nextQuery = event.target.value;
+                  requestId.current += 1;
+                  setQuery(nextQuery);
+                  setRemoteResults(null);
+                  setSearchMessage(null);
+                  setSearchWarning(null);
+                }}
+                onKeyDown={(event) => {
+                  if (catalogKind === "ETF" && event.key === "Enter") {
+                    event.preventDefault();
+                    runRemoteSearch();
+                  }
+                }}
+                className={cn(inputClassName, "pl-10")}
+                placeholder={catalogKind === "ETF" ? "Search VWCE, IWDA, CSPX…" : "Search BTC, ETH, XAUT…"}
+                aria-label="Search assets"
+              />
+            </div>
+            {catalogKind === "ETF" ? (
+              <Button
+                type="button"
+                onClick={() => runRemoteSearch()}
+                disabled={!canSearchRemote}
+                className="min-h-11 px-4"
+              >
+                <Search className="h-4 w-4" aria-hidden="true" />
+                Search
+              </Button>
+            ) : null}
           </div>
 
           <div className="min-h-52 space-y-2">

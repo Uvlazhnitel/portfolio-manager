@@ -6,6 +6,7 @@ import type { AssetCatalogKind, AssetCatalogProvider, AssetCatalogResult, AssetC
 import { PortfolioRepository } from "@/features/portfolio/repository";
 
 export const ASSET_CATALOG_CACHE_TTL_MS = 15 * 60 * 1_000;
+export const ETF_ASSET_CATALOG_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 
 type CatalogAsset = Awaited<ReturnType<PortfolioRepository["listAssets"]>>[number];
 type CatalogStore = Pick<PortfolioRepository, "listAssets">;
@@ -25,12 +26,13 @@ export class AssetCatalogService {
 
   async search(query: string, kind: AssetCatalogKind = "CRYPTO", now = Date.now()): Promise<AssetCatalogSearchResult> {
     const normalizedQuery = query.trim().toLowerCase();
+    validateSearchQuery(normalizedQuery, kind);
     const assets = await this.store.listAssets();
     const local = localMatches(assets, normalizedQuery, kind);
     const provider = this.providers[kind];
 
     try {
-      const remote = await cachedSearch(provider, normalizedQuery, now);
+      const remote = await cachedSearch(provider, kind, normalizedQuery, now, cacheTtlForKind(kind));
       return { results: mergeResults(local, remote, assets), warning: null };
     } catch {
       return {
@@ -38,6 +40,13 @@ export class AssetCatalogService {
         warning: "Online asset search is temporarily unavailable. Local assets are still available.",
       };
     }
+  }
+}
+
+export function validateSearchQuery(query: string, kind: AssetCatalogKind) {
+  const minLength = kind === "ETF" ? 3 : 2;
+  if (query.trim().length < minLength) {
+    throw new Error(kind === "ETF" ? "Enter at least three characters." : "Enter at least two characters.");
   }
 }
 
@@ -66,19 +75,23 @@ function localMatches(assets: CatalogAsset[], query: string, kind: AssetCatalogK
     }));
 }
 
-async function cachedSearch(provider: AssetCatalogProvider, query: string, now: number) {
-  const key = `${provider.name}:${query}`;
+async function cachedSearch(provider: AssetCatalogProvider, kind: AssetCatalogKind, query: string, now: number, ttlMs: number) {
+  const key = `${provider.name}:${kind}:${query}`;
   const cached = searchCache.get(key);
   if (cached && cached.expiresAt > now) return cached.results;
   const existing = inFlightSearches.get(key);
   if (existing) return existing;
 
   const request = provider.search(query).then((results) => {
-    searchCache.set(key, { expiresAt: now + ASSET_CATALOG_CACHE_TTL_MS, results });
+    searchCache.set(key, { expiresAt: now + ttlMs, results });
     return results;
   }).finally(() => inFlightSearches.delete(key));
   inFlightSearches.set(key, request);
   return request;
+}
+
+function cacheTtlForKind(kind: AssetCatalogKind) {
+  return kind === "ETF" ? ETF_ASSET_CATALOG_CACHE_TTL_MS : ASSET_CATALOG_CACHE_TTL_MS;
 }
 
 function mergeResults(local: AssetCatalogResult[], remote: AssetCatalogResult[], assets: CatalogAsset[]) {
