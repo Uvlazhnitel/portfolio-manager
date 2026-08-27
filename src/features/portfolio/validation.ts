@@ -51,8 +51,8 @@ export const assetQuoteLinkSchema = z.object({
   currency: z.string().trim().length(3).transform((value) => value.toUpperCase()),
   quoteProvider: z.enum(AssetQuoteProvider),
   quoteSymbol: z.string().trim().min(1).max(24).transform((value) => value.toUpperCase()),
-  quoteMicCode: z.string().trim().length(4).regex(/^[A-Za-z0-9]+$/).transform((value) => value.toUpperCase()),
-});
+  quoteMicCode: quoteMicCodeSchema,
+}).superRefine(validateQuoteLinkIdentity);
 
 export const accountInputSchema = z.object({
   name: z.string().trim().min(1),
@@ -83,13 +83,36 @@ function validateQuoteIdentity(value: {
   quoteSymbol?: string | null;
   quoteMicCode?: string | null;
 }, context: z.RefinementCtx) {
-  const fields = [value.quoteProvider, value.quoteSymbol, value.quoteMicCode];
-  const hasAny = fields.some(Boolean);
-  const hasAll = fields.every(Boolean);
-  if (hasAny && !hasAll) {
-    context.addIssue({ code: "custom", path: ["quoteProvider"], message: "Quote provider, symbol, and MIC must be provided together." });
-  }
+  const hasAny = Boolean(value.quoteProvider || value.quoteSymbol || value.quoteMicCode);
+  validateQuoteFields(value, context);
   if (hasAny && (value.assetClass !== AssetClass.ETF || value.assetType !== AssetType.ETF)) {
     context.addIssue({ code: "custom", path: ["quoteProvider"], message: "Automatic exchange quotes are only available for ETF assets." });
+  }
+}
+
+function validateQuoteLinkIdentity(value: {
+  quoteProvider: AssetQuoteProvider;
+  quoteSymbol: string;
+  quoteMicCode?: string | null;
+}, context: z.RefinementCtx) {
+  validateQuoteFields(value, context);
+}
+
+function validateQuoteFields(value: {
+  quoteProvider?: AssetQuoteProvider | null;
+  quoteSymbol?: string | null;
+  quoteMicCode?: string | null;
+}, context: z.RefinementCtx) {
+  if (value.quoteMicCode && !value.quoteProvider) {
+    context.addIssue({ code: "custom", path: ["quoteProvider"], message: "Quote provider is required when MIC is provided." });
+  }
+  if (value.quoteProvider && !value.quoteSymbol) {
+    context.addIssue({ code: "custom", path: ["quoteSymbol"], message: "Quote symbol is required for automatic exchange quotes." });
+  }
+  if (value.quoteSymbol && !value.quoteProvider) {
+    context.addIssue({ code: "custom", path: ["quoteProvider"], message: "Quote provider is required when quote symbol is provided." });
+  }
+  if (value.quoteProvider === AssetQuoteProvider.TWELVE_DATA && !value.quoteMicCode) {
+    context.addIssue({ code: "custom", path: ["quoteMicCode"], message: "Twelve Data quotes require a MIC." });
   }
 }

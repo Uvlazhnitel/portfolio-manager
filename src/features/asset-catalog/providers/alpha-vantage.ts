@@ -101,6 +101,6 @@ function isEtfMatch(type: string, name: string) {
 
 function micFromAlphaSymbol(symbol: string) {
   const suffix = symbol.split(".").at(-1)?.toUpperCase();
-  if (!suffix || suffix === symbol.toUpperCase()) return "XNAS";
-  return MIC_BY_SUFFIX[suffix] ?? suffix.slice(0, 4).padEnd(4, "X");
+  if (!suffix || suffix === symbol.toUpperCase()) return null;
+  return MIC_BY_SUFFIX[suffix] ?? null;
 }

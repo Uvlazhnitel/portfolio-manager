@@ -119,6 +119,21 @@ describe("Alpha Vantage asset catalog provider", () => {
     ]);
   });
 
+  it("does not invent MIC metadata for unknown or missing Alpha Vantage suffixes", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      bestMatches: [
+        { "1. symbol": "TEST.UNKNOWN", "2. name": "Test UCITS ETF", "3. type": "ETF", "4. region": "Testland", "8. currency": "USD", "9. matchScore": "0.9" },
+        { "1. symbol": "PLAIN", "2. name": "Plain ETF", "3. type": "ETF", "4. region": "United States", "8. currency": "USD", "9. matchScore": "0.8" },
+      ],
+    }), { status: 200 }));
+    const provider = new AlphaVantageAssetCatalogProvider("alpha-secret", fetcher as typeof fetch);
+
+    await expect(provider.search("test")).resolves.toEqual([
+      expect.objectContaining({ quoteSymbol: "TEST.UNKNOWN", quoteMicCode: null, exchange: null }),
+      expect.objectContaining({ quoteSymbol: "PLAIN", quoteMicCode: null, exchange: null }),
+    ]);
+  });
+
   it("rejects Alpha Vantage rate-limit and malformed search responses", async () => {
     const limited = new AlphaVantageAssetCatalogProvider("alpha-secret", vi.fn(async () => new Response(JSON.stringify({ Note: "rate limit" }), { status: 200 })) as typeof fetch);
     await expect(limited.search("vwce")).rejects.toThrow("rejected");
@@ -246,13 +261,39 @@ describe("asset catalog service", () => {
     expect(result.results[0]).toMatchObject({ source: "LOCAL", quoteMicCode: "XETR" });
     expect(result.results[1]).toMatchObject({ source: "ALPHA_VANTAGE", quoteMicCode: "XAMS", existingAssetId: "vwce-local", isSymbolConflict: false });
   });
+
+  it("matches Alpha Vantage quote identity by quote symbol without requiring MIC", async () => {
+    const localEtf = {
+      ...localBtc,
+      id: "plain-local",
+      symbol: "PLAIN",
+      name: "Plain ETF",
+      assetClass: "ETF",
+      assetType: "ETF",
+      currency: "USD",
+      externalId: null,
+      quoteProvider: "ALPHA_VANTAGE",
+      quoteSymbol: "PLAIN",
+      quoteMicCode: null,
+    } as const;
+    const provider: AssetCatalogProvider = {
+      name: "ALPHA_VANTAGE",
+      search: vi.fn(async () => [{ ...alphaVantageResult("PLAIN", null), symbol: "PLAIN", quoteMicCode: null }]),
+    };
+    const service = new AssetCatalogService({ listAssets: async () => [localEtf] } as never, providers(provider));
+
+    const result = await service.search("plain", "ETF");
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]).toMatchObject({ source: "LOCAL", existingAssetId: "plain-local" });
+  });
 });
 
 function providers(provider: AssetCatalogProvider) {
   return { CRYPTO: provider, ETF: provider };
 }
 
-function alphaVantageResult(quoteSymbol: string, mic: string) {
+function alphaVantageResult(quoteSymbol: string, mic: string | null) {
   return {
     source: "ALPHA_VANTAGE",
     externalId: null,

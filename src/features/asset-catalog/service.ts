@@ -124,9 +124,12 @@ function mergeResults(local: AssetCatalogResult[], remote: AssetCatalogResult[],
 }
 
 function quoteIdentity(asset: Pick<AssetCatalogResult, "quoteProvider" | "quoteSymbol" | "quoteMicCode"> | CatalogAsset) {
-  return asset.quoteProvider && asset.quoteSymbol && asset.quoteMicCode
-    ? `${asset.quoteProvider}:${asset.quoteSymbol.toUpperCase()}:${asset.quoteMicCode.toUpperCase()}`
-    : null;
+  if (!asset.quoteProvider || !asset.quoteSymbol) return null;
+  if (asset.quoteProvider === "ALPHA_VANTAGE") return `${asset.quoteProvider}:${asset.quoteSymbol.toUpperCase()}`;
+  if (asset.quoteProvider === "TWELVE_DATA" && asset.quoteMicCode) {
+    return `${asset.quoteProvider}:${asset.quoteSymbol.toUpperCase()}:${asset.quoteMicCode.toUpperCase()}`;
+  }
+  return null;
 }
 
 function imageUrlFromMetadata(metadata: unknown) {

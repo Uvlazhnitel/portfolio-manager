@@ -147,6 +147,36 @@ describe("portfolio mutations", () => {
     });
   });
 
+  it("persists an Alpha Vantage ETF listing without MIC metadata", async () => {
+    const account = await testDb.prisma.account.create({ data: { name: "No MIC Broker", type: AccountType.BROKER } });
+
+    await createTransactionMutation({
+      type: TransactionType.INITIAL_BALANCE,
+      accountId: account.id,
+      assetMode: "new",
+      newAsset: {
+        symbol: "TEST",
+        name: "Test UCITS ETF",
+        assetClass: AssetClass.ETF,
+        assetType: AssetType.ETF,
+        currency: "USD",
+        quoteProvider: AssetQuoteProvider.ALPHA_VANTAGE,
+        quoteSymbol: "TEST.UNKNOWN",
+        quoteMicCode: null,
+      },
+      quantity: "2",
+      totalAmount: "200",
+      currency: "USD",
+      executedAt: new Date("2026-01-01"),
+    }, testDb.prisma);
+
+    await expect(testDb.prisma.asset.findUniqueOrThrow({ where: { symbol: "TEST" } })).resolves.toMatchObject({
+      quoteProvider: AssetQuoteProvider.ALPHA_VANTAGE,
+      quoteSymbol: "TEST.UNKNOWN",
+      quoteMicCode: null,
+    });
+  });
+
   it("remaps an existing ETF listing and clears its cached quote", async () => {
     const etf = await testDb.prisma.asset.create({
       data: { symbol: "CSPX", name: "iShares Core S&P 500 UCITS ETF", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "USD" },
@@ -169,6 +199,44 @@ describe("portfolio mutations", () => {
       quoteMicCode: "XETR",
     });
     expect(await testDb.prisma.cachedMarketPrice.count({ where: { assetId: etf.id } })).toBe(0);
+  });
+
+  it("remaps an ETF to an Alpha Vantage listing without MIC and clears its cached quote", async () => {
+    const etf = await testDb.prisma.asset.create({
+      data: { symbol: "NOMIC", name: "No MIC UCITS ETF", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "USD" },
+    });
+    await testDb.prisma.cachedMarketPrice.create({
+      data: { assetId: etf.id, currency: "USD", price: "100", timestamp: new Date(), fetchedAt: new Date(), source: "MANUAL" },
+    });
+
+    await linkAssetQuoteMutation({
+      assetId: etf.id,
+      currency: "USD",
+      quoteProvider: AssetQuoteProvider.ALPHA_VANTAGE,
+      quoteSymbol: "NOMIC",
+      quoteMicCode: null,
+    }, testDb.prisma);
+
+    await expect(testDb.prisma.asset.findUniqueOrThrow({ where: { id: etf.id } })).resolves.toMatchObject({
+      quoteProvider: AssetQuoteProvider.ALPHA_VANTAGE,
+      quoteSymbol: "NOMIC",
+      quoteMicCode: null,
+    });
+    expect(await testDb.prisma.cachedMarketPrice.count({ where: { assetId: etf.id } })).toBe(0);
+  });
+
+  it("rejects Twelve Data quote links without MIC metadata", async () => {
+    const etf = await testDb.prisma.asset.create({
+      data: { symbol: "TDNOMIC", name: "Twelve Data ETF", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "USD" },
+    });
+
+    await expect(linkAssetQuoteMutation({
+      assetId: etf.id,
+      currency: "USD",
+      quoteProvider: AssetQuoteProvider.TWELVE_DATA,
+      quoteSymbol: "TDNOMIC",
+      quoteMicCode: null,
+    }, testDb.prisma)).rejects.toThrow("MIC");
   });
 
   it("creates buy transactions", async () => {

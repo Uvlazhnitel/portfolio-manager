@@ -218,6 +218,32 @@ describe("market data providers", () => {
     expect(requestedUrls.filter((url) => url.searchParams.get("function") === "CURRENCY_EXCHANGE_RATE")).toHaveLength(1);
   });
 
+  it("prices Alpha Vantage ETF listings without MIC metadata", async () => {
+    const noMic = { ...alphaVwce, quoteSymbol: "PLAIN", quoteMicCode: null };
+    const fetcher = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.searchParams.get("function") === "TIME_SERIES_DAILY") {
+        return new Response(JSON.stringify({
+          "Meta Data": { "2. Symbol": "PLAIN" },
+          "Time Series (Daily)": { "2026-08-24": { "4. close": "100" } },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        "Realtime Currency Exchange Rate": {
+          "1. From_Currency Code": "EUR",
+          "3. To_Currency Code": "USD",
+          "5. Exchange Rate": "1.1",
+          "6. Last Refreshed": "2026-08-24 20:00:00",
+        },
+      }), { status: 200 });
+    });
+    const provider = new AlphaVantageMarketDataProvider("alpha-secret", fetcher as typeof fetch, 0);
+
+    await expect(provider.getCurrentPrices({ assets: [noMic], baseCurrency: "USD" })).resolves.toEqual([
+      expect.objectContaining({ assetId: "vwce-id", price: "110", source: "ALPHA_VANTAGE" }),
+    ]);
+  });
+
   it("rejects Alpha Vantage rate limits and malformed daily responses", async () => {
     const limited = new AlphaVantageMarketDataProvider("alpha-secret", vi.fn(async () => new Response(JSON.stringify({ Note: "rate limit" }), { status: 200 })) as typeof fetch, 0);
     await expect(limited.getCurrentPrices({ assets: [alphaVwce], baseCurrency: "USD" })).rejects.toThrow("rejected");

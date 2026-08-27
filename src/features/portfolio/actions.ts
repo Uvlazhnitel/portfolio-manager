@@ -171,7 +171,7 @@ export async function linkAssetQuoteAction(
       currency: String(formData.get("quoteCurrency") ?? ""),
       quoteProvider: String(formData.get("quoteProvider") ?? "") as "ALPHA_VANTAGE" | "TWELVE_DATA",
       quoteSymbol: String(formData.get("quoteSymbol") ?? ""),
-      quoteMicCode: String(formData.get("quoteMicCode") ?? ""),
+      quoteMicCode: nullableString(formData.get("quoteMicCode")),
     }));
   } catch (error) {
     return toActionError(error);

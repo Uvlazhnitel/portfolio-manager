@@ -1,5 +1,6 @@
 import {
   AssetClass,
+  AssetQuoteProvider,
   AssetType,
   MarketPriceUnit,
   Prisma,
@@ -342,13 +343,13 @@ async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, d
       : null;
     if (existingByExternalId) return existingByExternalId;
 
-    const existingByQuoteIdentity = parsed.newAsset.quoteProvider && parsed.newAsset.quoteSymbol && parsed.newAsset.quoteMicCode
+    const existingByQuoteIdentity = parsed.newAsset.quoteProvider && parsed.newAsset.quoteSymbol
       ? await db.asset.findFirst({
-          where: {
+          where: quoteIdentityWhere({
             quoteProvider: parsed.newAsset.quoteProvider,
             quoteSymbol: parsed.newAsset.quoteSymbol,
             quoteMicCode: parsed.newAsset.quoteMicCode,
-          },
+          }),
         })
       : null;
     if (existingByQuoteIdentity) return existingByQuoteIdentity;
@@ -392,6 +393,16 @@ async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, d
   }
 
   return asset;
+}
+
+function quoteIdentityWhere(asset: {
+  quoteProvider: AssetQuoteProvider;
+  quoteSymbol: string;
+  quoteMicCode?: string | null;
+}) {
+  return asset.quoteProvider === AssetQuoteProvider.ALPHA_VANTAGE
+    ? { quoteProvider: asset.quoteProvider, quoteSymbol: asset.quoteSymbol }
+    : { quoteProvider: asset.quoteProvider, quoteSymbol: asset.quoteSymbol, quoteMicCode: asset.quoteMicCode ?? null };
 }
 
 function normalizeTransaction(parsed: z.infer<typeof transactionMutationSchema>, asset: { assetType: AssetType; currency: string }) {

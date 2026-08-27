@@ -33,7 +33,7 @@ type ResolvedExchangeRate = { rate: Prisma.Decimal; timestamp: Date };
 type SupportedAsset = Parameters<MarketDataProvider["getCurrentPrices"]>[0]["assets"][number] & {
   quoteProvider: typeof AssetQuoteProvider.ALPHA_VANTAGE;
   quoteSymbol: string;
-  quoteMicCode: string;
+  quoteMicCode: string | null;
 };
 
 export class AlphaVantageMarketDataProvider implements MarketDataProvider {
@@ -146,6 +146,5 @@ function wait(durationMs: number) {
 function isSupportedAsset(asset: Parameters<MarketDataProvider["getCurrentPrices"]>[0]["assets"][number]): asset is SupportedAsset {
   return asset.assetType === AssetType.ETF
     && asset.quoteProvider === AssetQuoteProvider.ALPHA_VANTAGE
-    && Boolean(asset.quoteSymbol)
-    && Boolean(asset.quoteMicCode);
+    && Boolean(asset.quoteSymbol);
 }

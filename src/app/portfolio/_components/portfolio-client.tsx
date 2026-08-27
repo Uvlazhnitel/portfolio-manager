@@ -272,7 +272,7 @@ function AddAssetDialog({ portfolio, onClose }: PortfolioClientProps & { onClose
               <p className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">No matching assets found.</p>
             ) : null}
             {!isSearchPending ? results.map((asset) => (
-              <AssetResultButton key={`${asset.source}:${asset.externalId ?? asset.quoteMicCode ?? asset.existingAssetId}`} asset={asset} onSelect={() => setSelection(asset)} />
+              <AssetResultButton key={assetResultKey(asset)} asset={asset} onSelect={() => setSelection(asset)} />
             )) : null}
           </div>
 
@@ -384,7 +384,7 @@ function PositionForm({
 
       {(asset?.source === "TWELVE_DATA" || asset?.source === "ALPHA_VANTAGE") && asset.existingAssetId ? (
         <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-muted">{asset.quoteSymbol} · {asset.quoteMicCode} · {asset.currency}</p>
+          <p className="text-sm text-muted">{formatQuoteIdentity(asset)}</p>
           <Button type="submit" formAction={linkAction} variant="secondary" disabled={isLinking}>
             {isLinking ? "Linking…" : linkState.ok ? "Quote linked" : "Link market quote"}
           </Button>
@@ -639,6 +639,16 @@ function TransactionsSection({ portfolio, onAddTransaction, onEditTransaction }:
 
 function toCatalogResult(asset: PortfolioReadModel["assets"][number]): AssetCatalogResult {
   return { source: "LOCAL", externalId: null, symbol: asset.symbol, name: asset.name, imageUrl: asset.imageUrl, marketCapRank: null, existingAssetId: asset.id, assetClass: asset.assetClass as AssetCatalogResult["assetClass"], assetType: asset.assetType as AssetCatalogResult["assetType"], currency: asset.currency, quoteProvider: asset.quoteProvider as AssetCatalogResult["quoteProvider"], quoteSymbol: asset.quoteSymbol, quoteMicCode: asset.quoteMicCode, exchange: asset.quoteMicCode, country: null, accessPlan: null, isSymbolConflict: false };
+}
+
+function assetResultKey(asset: AssetCatalogResult) {
+  return [asset.source, asset.externalId, asset.quoteProvider, asset.quoteSymbol, asset.quoteMicCode, asset.existingAssetId, asset.symbol]
+    .filter(Boolean)
+    .join(":");
+}
+
+function formatQuoteIdentity(asset: AssetCatalogResult) {
+  return [asset.quoteSymbol, asset.quoteMicCode, asset.currency].filter(Boolean).join(" · ");
 }
 
 function preferredAccountId(accounts: PortfolioReadModel["accounts"], physicalGold: boolean) {
