@@ -117,7 +117,7 @@ export function ContributionPlanner({ model }: { model: ContributionPlannerModel
             {isCustomized ? <Badge tone="primary">Custom allocation</Badge> : <Badge tone="success">Recommended</Badge>}
           </div>
         </div>
-        <DataQualitySummary items={contributionDataQualityItems(preview)} okText="Planning data complete" className="mt-4" />
+        <DataQualitySummary items={contributionDataQualityItems(preview)} className="ml-auto mt-4" />
         {model.setupError ? <Notice tone="destructive">{model.setupError}</Notice> : null}
         {preview.valuation.lastUpdated ? <p className="mt-3 text-xs text-muted">Prices last updated {formatUtcTimestamp(preview.valuation.lastUpdated)}</p> : null}
       </Card>

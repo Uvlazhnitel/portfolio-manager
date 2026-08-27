@@ -21,6 +21,7 @@ type ChartRow = {
 
 export function PerformanceClient({ performance }: { performance: PerformanceReadModel }) {
   const { summary, currency } = performance;
+  const dataQualityItems = performanceDataQualityItems(performance);
   const chartRows = performance.history.map<ChartRow>((point) => ({
     date: point.date,
     portfolioValue: point.portfolioValue === null ? null : Number(point.portfolioValue),
@@ -33,7 +34,7 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
 
   return (
     <div className="space-y-4">
-      <DataQualitySummary items={performanceDataQualityItems(performance)} okText="Data complete" />
+      {dataQualityItems.length > 0 ? <div className="flex justify-end"><DataQualitySummary items={dataQualityItems} /></div> : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryMetric icon={Landmark} label="Portfolio value" value={formatDecimalCurrency(summary.portfolioValue, currency)} />
@@ -85,15 +86,13 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
         <DetailMetric label="Gift tracking basis" value={formatDecimalCurrency(summary.giftTrackingBasis, currency)} />
         <DetailMetric label="Tracked capital (covered)" value={formatDecimalCurrency(summary.trackedCapital, currency)} />
       </div>
-      {summary.isExternalCashflowPartial ? <DataQualitySummary items={[{ message: `External cashflow totals are partial: ${summary.missingExternalCashflowSymbols.join(", ")} has missing acquisition data.` }]} label="Cashflow data" /> : null}
-
       <p className="text-sm leading-6 text-muted">Net invested is BUY cost plus fees minus SELL proceeds after fees. Internal trades and transfers, deposits, withdrawals, gifts, and opening balances do not change it. Deposits and withdrawals are external cashflows; opening and gift basis are tracked separately.</p>
     </div>
   );
 }
 
 function SummaryMetric({ icon: Icon, label, value, tone = "default", isPartial = false }: { icon: typeof Landmark; label: string; value: string; tone?: "default" | "positive" | "negative"; isPartial?: boolean }) {
-  return <Card className="min-w-0"><div className="flex items-center justify-between gap-3"><div className="flex min-w-0 items-center gap-2"><p className="text-xs uppercase text-muted">{label}</p>{isPartial ? <Badge tone="warning">Partial</Badge> : null}</div><Icon className="h-5 w-5 shrink-0 text-primary" /></div><p className={cn("mt-5 break-words text-2xl font-semibold", tone === "positive" && "text-success", tone === "negative" && "text-destructive")}>{value}</p></Card>;
+  return <Card className="min-w-0"><div className="flex items-center justify-between gap-3"><div className="flex min-w-0 items-center gap-2"><p className="text-xs uppercase text-muted">{label}</p>{isPartial ? <Badge>Partial</Badge> : null}</div><Icon className="h-5 w-5 shrink-0 text-primary" /></div><p className={cn("mt-5 break-words text-2xl font-semibold", tone === "positive" && "text-success", tone === "negative" && "text-destructive")}>{value}</p></Card>;
 }
 
 function PerformanceTooltip({ active, row, currency }: { active?: boolean; row?: ChartRow; currency: string }) {
@@ -112,6 +111,7 @@ function performanceDataQualityItems(performance: PerformanceReadModel): DataQua
   if (summary.isNetInvestedPartial) items.push({ message: `Net invested is partial because transaction values are missing for: ${summary.missingNetInvestedSymbols.join(", ")}.` });
   if (summary.isCostBasisPartial) items.push({ message: `Gain and return are partial. Excluded components: ${summary.performanceExclusions.map((item) => `${item.symbol} (${item.reasons.join(", ")})`).join("; ")}.` });
   if (summary.openingBasisUnknownSymbols.length > 0) items.push({ message: `Opening basis is unknown for: ${summary.openingBasisUnknownSymbols.join(", ")}. Valuation is retained, but those components are excluded from gain and return.` });
+  if (summary.isExternalCashflowPartial) items.push({ message: `External cashflow totals are partial: ${summary.missingExternalCashflowSymbols.join(", ")} has missing acquisition data.` });
   if (performance.staleDates > 0 || summary.hasStalePrices) items.push({ message: "Some observations include stale prices." });
   return items;
 }

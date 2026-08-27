@@ -45,9 +45,12 @@ function OverviewPanel({ dashboard }: { dashboard: DashboardReadModel }) {
   return (
     <Card className="order-1 min-w-0 xl:col-start-1 xl:row-start-1">
       <SectionHeading eyebrow="Portfolio" title="Current position" icon={<CircleDollarSign className="h-5 w-5" />}>
-        <Link href="/performance" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:text-primary/80">
-          Performance <ArrowRight className="h-4 w-4" aria-hidden="true" />
-        </Link>
+        <div className="flex items-center gap-2">
+          <DataQualitySummary items={dashboardDataQualityItems(dashboard)} />
+          <Link href="/performance" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:text-primary/80">
+            Performance <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        </div>
       </SectionHeading>
 
       <p className="mt-7 text-sm text-muted">Portfolio value</p>
@@ -73,8 +76,6 @@ function OverviewPanel({ dashboard }: { dashboard: DashboardReadModel }) {
         <OverviewMetric label="Opening basis (known)" value={formatCurrency(valuation.openingBasis, valuation.currency)} />
         <OverviewMetric label="Gift tracking basis" value={formatCurrency(valuation.giftTrackingBasis, valuation.currency)} />
       </dl>
-
-      <DataQualitySummary items={dashboardDataQualityItems(dashboard)} okText="Prices and cost basis are complete." className="mt-5" />
     </Card>
   );
 }

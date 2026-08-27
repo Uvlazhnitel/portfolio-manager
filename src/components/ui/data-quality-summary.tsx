@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type DataQualityItem = {
@@ -8,44 +8,65 @@ export type DataQualityItem = {
 
 type DataQualitySummaryProps = {
   items: DataQualityItem[];
-  okText?: string;
   label?: string;
   className?: string;
 };
 
 export function DataQualitySummary({
   items,
-  okText = "Data complete",
   label = "Data quality",
   className,
 }: DataQualitySummaryProps) {
-  if (items.length === 0) {
-    return (
-      <div className={cn("flex min-w-0 items-center gap-2 rounded-lg border border-success/20 bg-success/10 px-3 py-2 text-sm text-success", className)}>
-        <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
-        <span className="truncate">{okText}</span>
-      </div>
-    );
-  }
+  const uniqueItems = deduplicateDataQualityItems(items);
+  if (uniqueItems.length === 0) return null;
 
-  const hasDestructive = items.some((item) => item.tone === "destructive");
-  const toneClass = hasDestructive
-    ? "border-destructive/25 bg-destructive/10 text-destructive"
-    : "border-warning/25 bg-warning/10 text-warning";
+  const hasDestructive = uniqueItems.some((item) => item.tone === "destructive");
 
   return (
-    <details className={cn("group min-w-0 rounded-lg border px-3 py-2 text-sm", toneClass, className)}>
-      <summary className="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
-        <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+    <details className={cn("group relative z-20 w-fit max-w-full text-sm", className)}>
+      <summary
+        aria-label={`${label}: ${uniqueItems.length} ${uniqueItems.length === 1 ? "issue" : "issues"}`}
+        className={cn(
+          "flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-muted shadow-sm transition hover:border-primary/35 hover:text-foreground [&::-webkit-details-marker]:hidden",
+          hasDestructive && "border-destructive/35 text-destructive",
+        )}
+      >
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         <span className="font-medium">{label}</span>
-        <span className="min-w-0 flex-1 truncate text-current/80">
-          {items.length === 1 ? items[0].message : `${items.length} items need attention`}
+        <span className={cn(
+          "inline-flex min-w-5 items-center justify-center rounded-md bg-surface-strong px-1.5 py-0.5 text-xs tabular-nums text-muted",
+          hasDestructive && "bg-destructive/10 text-destructive",
+        )}>
+          {uniqueItems.length}
         </span>
-        <span className="text-xs text-current/70 group-open:hidden">Details</span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
       </summary>
-      <ul className="mt-2 space-y-1 pl-6 text-current/85">
-        {items.map((item) => <li key={item.message} className="list-disc">{item.message}</li>)}
-      </ul>
+      <div className="absolute right-0 top-full z-50 mt-2 max-h-80 w-[min(20rem,calc(100vw-3rem))] overflow-y-auto rounded-lg border border-border bg-card p-4 text-foreground shadow-xl shadow-black/25 sm:w-[min(24rem,calc(100vw-3rem))]">
+        <p className="font-medium">{label}</p>
+        <ul className="mt-3 space-y-2 pl-5 text-sm leading-5 text-muted">
+          {uniqueItems.map((item) => (
+            <li key={item.message} className={cn("list-disc", item.tone === "destructive" && "text-destructive")}>
+              {item.message}
+            </li>
+          ))}
+        </ul>
+      </div>
     </details>
   );
+}
+
+export function deduplicateDataQualityItems(items: DataQualityItem[]) {
+  const uniqueItems = new Map<string, DataQualityItem>();
+
+  for (const item of items) {
+    const message = item.message.trim();
+    if (!message) continue;
+
+    const existing = uniqueItems.get(message);
+    if (!existing || item.tone === "destructive") {
+      uniqueItems.set(message, { ...item, message });
+    }
+  }
+
+  return [...uniqueItems.values()];
 }

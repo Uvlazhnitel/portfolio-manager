@@ -120,7 +120,10 @@ function PortfolioOverview({ portfolio, dataQualityItems }: PortfolioClientProps
     <Card className="space-y-5">
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,2fr)] lg:items-end">
         <div className="min-w-0">
-          <p className="text-xs uppercase tracking-wide text-muted">Portfolio value</p>
+          <div className="flex items-start justify-between gap-3">
+            <p className="pt-2 text-xs uppercase tracking-wide text-muted">Portfolio value</p>
+            <DataQualitySummary items={dataQualityItems} />
+          </div>
           <p className="mt-2 break-words text-4xl font-semibold text-foreground sm:text-5xl">
             {formatCurrency(valuation.totalValue, valuation.currency)}
           </p>
@@ -137,8 +140,7 @@ function PortfolioOverview({ portfolio, dataQualityItems }: PortfolioClientProps
         <Info label="Opening basis (known)" value={formatCurrency(valuation.openingBasis, valuation.currency)} />
         <Info label="Gift tracking basis" value={formatCurrency(valuation.giftTrackingBasis, valuation.currency)} />
       </dl>
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <DataQualitySummary items={dataQualityItems} okText="Data complete" className="lg:max-w-2xl" />
+      <div className="flex justify-end">
         <Link href="/performance" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border px-3 text-sm font-medium text-muted transition hover:border-primary/50 hover:text-foreground">
           Performance <ArrowRight className="h-4 w-4" aria-hidden="true" />
         </Link>
