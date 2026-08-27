@@ -218,6 +218,39 @@ describe("daily price capture", () => {
       isStaleAtCapture: false,
     }));
   });
+
+  it("requests a forced market-data refresh for the 23:55 UTC history capture", async () => {
+    const writes: Parameters<DailyMarketPriceStore["saveDailyPrices"]>[0] = [];
+    const now = new Date("2026-08-27T23:55:00Z");
+    const getCurrentPrices = vi.fn(async () => ({
+      prices: [{ assetId: "btc", symbol: "BTC", price: "12345", currency: "USD", timestamp: new Date("2026-08-27T23:59:59Z"), fetchedAt: now, source: "ALPHA_VANTAGE", isStale: false }],
+      unavailableAssetIds: [],
+      lastUpdated: "2026-08-27T23:59:59.000Z",
+      hasStalePrices: false,
+      wasRefreshed: true,
+      refreshBlockedUntil: null,
+      warning: null,
+    }));
+
+    await captureDailyMarketPrices({
+      now,
+      portfolioRepository: { listAssets: async () => assets } as unknown as PortfolioRepository,
+      strategyRepository: { findActiveStrategy: async () => ({ baseCurrency: "USD" }) } as unknown as StrategyRepository,
+      marketDataService: { getCurrentPrices } as unknown as MarketDataService,
+      dailyPriceStore: { saveDailyPrices: async (prices) => { writes.push(...prices); }, listDailyPrices: async () => [] },
+    });
+
+    expect(getCurrentPrices).toHaveBeenCalledWith(expect.objectContaining({
+      baseCurrency: "USD",
+      forceRefresh: true,
+      now,
+    }));
+    expect(writes[0]).toEqual(expect.objectContaining({
+      source: "ALPHA_VANTAGE",
+      quoteTimestamp: new Date("2026-08-27T23:59:59Z"),
+      isStaleAtCapture: false,
+    }));
+  });
 });
 
 describe("history worker", () => {

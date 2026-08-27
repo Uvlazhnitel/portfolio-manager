@@ -27,6 +27,7 @@ export const MARKET_PRICE_CACHE_TTL_MS = 5 * 60 * 1_000;
 export const MARKET_PRICE_STALE_AFTER_MS = 15 * 60 * 1_000;
 export const MANUAL_PRICE_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1_000;
 export const MARKET_PRICE_REFRESH_COOLDOWN_MS = 60 * 1_000;
+export const ALPHA_VANTAGE_EOD_REFRESH_UTC_HOUR = 22;
 
 const refreshAttempts = new Map<string, number>();
 const inFlightRefreshes = new Map<string, Promise<MarketDataSnapshot>>();
@@ -69,11 +70,11 @@ export class MarketDataService {
     const cacheByAsset = new Map(cache.map((price) => [price.assetId, price]));
     const initiallyNeedsRefresh = input.assets.filter((asset) => {
       const cached = cacheByAsset.get(asset.id);
+      if (asset.quoteProvider === AssetQuoteProvider.ALPHA_VANTAGE) {
+        return shouldRefreshAlphaVantageCache(cached, now, Boolean(input.forceRefresh));
+      }
       if (!cached) return true;
       if (input.forceRefresh) return true;
-      if (asset.quoteProvider === AssetQuoteProvider.ALPHA_VANTAGE) {
-        return !isSameUtcDay(cached.fetchedAt, now);
-      }
       return now.getTime() - cached.fetchedAt.getTime() >= MARKET_PRICE_CACHE_TTL_MS;
     });
     const needsRefresh = expandGoldReferenceRefresh(input.assets, initiallyNeedsRefresh);
@@ -190,6 +191,14 @@ function isSameUtcDay(left: Date, right: Date) {
   return left.getUTCFullYear() === right.getUTCFullYear()
     && left.getUTCMonth() === right.getUTCMonth()
     && left.getUTCDate() === right.getUTCDate();
+}
+
+export function shouldRefreshAlphaVantageCache(cached: CachedPriceRecord | undefined, now: Date, forceRefresh = false) {
+  if (!cached) return true;
+  if (forceRefresh) return true;
+  if (!isSameUtcDay(cached.fetchedAt, now)) return true;
+  return now.getUTCHours() >= ALPHA_VANTAGE_EOD_REFRESH_UTC_HOUR
+    && cached.fetchedAt.getUTCHours() < ALPHA_VANTAGE_EOD_REFRESH_UTC_HOUR;
 }
 
 function buildSnapshot(

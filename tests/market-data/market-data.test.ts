@@ -20,6 +20,7 @@ import {
   MARKET_PRICE_CACHE_TTL_MS,
   MarketDataService,
   resetMarketDataRuntimeCacheForTests,
+  shouldRefreshAlphaVantageCache,
 } from "@/features/market-data/service";
 import type { MarketDataAsset, MarketDataProvider, MarketPrice } from "@/features/market-data/types";
 
@@ -320,7 +321,7 @@ describe("market data cache service", () => {
     expect(snapshot.hasStalePrices).toBe(false);
   });
 
-  it("reuses same-day Alpha Vantage ETF cache instead of refreshing every five minutes", async () => {
+  it("reuses same-day morning Alpha Vantage ETF cache before the EOD window", async () => {
     const oldSameDay = new Date("2026-08-24T08:00:00.000Z");
     const store = new FakeStore([cachedPrice({
       assetId: alphaVwce.id,
@@ -343,6 +344,125 @@ describe("market data cache service", () => {
     expect(snapshot.prices[0].price).toBe("140");
     expect(snapshot.prices[0].isStale).toBe(false);
     expect(snapshot.hasStalePrices).toBe(false);
+  });
+
+  it("refreshes a same-day morning Alpha Vantage ETF cache after the EOD window opens", async () => {
+    const evening = new Date("2026-08-24T22:05:00.000Z");
+    const store = new FakeStore([cachedPrice({
+      assetId: alphaVwce.id,
+      fetchedAt: new Date("2026-08-24T08:00:00.000Z"),
+      timestamp: new Date("2026-08-23T23:59:59.000Z"),
+      source: "ALPHA_VANTAGE",
+      price: "140",
+    })]);
+    const provider = providerReturning([{
+      assetId: alphaVwce.id,
+      symbol: alphaVwce.symbol,
+      price: "150",
+      currency: "USD",
+      timestamp: new Date("2026-08-24T23:59:59.000Z"),
+      source: "ALPHA_VANTAGE",
+    }]);
+
+    const snapshot = await new MarketDataService(store, [provider]).getCurrentPrices({ assets: [alphaVwce], now: evening });
+
+    expect(provider.getCurrentPrices).toHaveBeenCalledOnce();
+    expect(snapshot.prices[0]).toEqual(expect.objectContaining({ price: "150", isStale: false }));
+  });
+
+  it("reuses Alpha Vantage ETF cache that was already checked after the EOD window opened", async () => {
+    const store = new FakeStore([cachedPrice({
+      assetId: alphaVwce.id,
+      fetchedAt: new Date("2026-08-24T22:05:00.000Z"),
+      timestamp: new Date("2026-08-24T23:59:59.000Z"),
+      source: "ALPHA_VANTAGE",
+      price: "150",
+    })]);
+    const provider = providerReturning([{
+      assetId: alphaVwce.id,
+      symbol: alphaVwce.symbol,
+      price: "151",
+      currency: "USD",
+      timestamp: new Date("2026-08-24T23:59:59.000Z"),
+      source: "ALPHA_VANTAGE",
+    }]);
+
+    const snapshot = await new MarketDataService(store, [provider]).getCurrentPrices({
+      assets: [alphaVwce],
+      now: new Date("2026-08-24T23:55:00.000Z"),
+    });
+
+    expect(provider.getCurrentPrices).not.toHaveBeenCalled();
+    expect(snapshot.prices[0].price).toBe("150");
+  });
+
+  it("bypasses same-day and EOD Alpha Vantage cache when force refresh is requested", async () => {
+    const store = new FakeStore([cachedPrice({
+      assetId: alphaVwce.id,
+      fetchedAt: new Date("2026-08-24T22:05:00.000Z"),
+      timestamp: new Date("2026-08-24T23:59:59.000Z"),
+      source: "ALPHA_VANTAGE",
+      price: "150",
+    })]);
+    const provider = providerReturning([{
+      assetId: alphaVwce.id,
+      symbol: alphaVwce.symbol,
+      price: "151",
+      currency: "USD",
+      timestamp: new Date("2026-08-24T23:59:59.000Z"),
+      source: "ALPHA_VANTAGE",
+    }]);
+
+    const snapshot = await new MarketDataService(store, [provider]).getCurrentPrices({
+      assets: [alphaVwce],
+      forceRefresh: true,
+      now: new Date("2026-08-24T23:55:00.000Z"),
+    });
+
+    expect(provider.getCurrentPrices).toHaveBeenCalledOnce();
+    expect(snapshot.prices[0].price).toBe("151");
+  });
+
+  it("keeps same-day Alpha Vantage cache usable with a warning when the EOD refresh fails", async () => {
+    const store = new FakeStore([cachedPrice({
+      assetId: alphaVwce.id,
+      fetchedAt: new Date("2026-08-24T08:00:00.000Z"),
+      timestamp: new Date("2026-08-23T23:59:59.000Z"),
+      source: "ALPHA_VANTAGE",
+      price: "140",
+    })]);
+    const provider: MarketDataProvider = {
+      name: "ALPHA_VANTAGE",
+      getCurrentPrices: vi.fn(async () => { throw new Error("Unavailable"); }),
+    };
+
+    const snapshot = await new MarketDataService(store, [provider]).getCurrentPrices({
+      assets: [alphaVwce],
+      now: new Date("2026-08-24T22:05:00.000Z"),
+    });
+
+    expect(provider.getCurrentPrices).toHaveBeenCalledOnce();
+    expect(snapshot.prices[0]).toEqual(expect.objectContaining({ price: "140", isStale: false }));
+    expect(snapshot.warning).toContain("ALPHA_VANTAGE");
+  });
+
+  it("encodes the Alpha Vantage EOD refresh decision", () => {
+    const morningCache = cachedPrice({
+      assetId: alphaVwce.id,
+      fetchedAt: new Date("2026-08-24T08:00:00.000Z"),
+      source: "ALPHA_VANTAGE",
+    });
+    const eveningCache = cachedPrice({
+      assetId: alphaVwce.id,
+      fetchedAt: new Date("2026-08-24T22:05:00.000Z"),
+      source: "ALPHA_VANTAGE",
+    });
+
+    expect(shouldRefreshAlphaVantageCache(undefined, now)).toBe(true);
+    expect(shouldRefreshAlphaVantageCache(morningCache, new Date("2026-08-24T21:59:59.000Z"))).toBe(false);
+    expect(shouldRefreshAlphaVantageCache(morningCache, new Date("2026-08-24T22:00:00.000Z"))).toBe(true);
+    expect(shouldRefreshAlphaVantageCache(eveningCache, new Date("2026-08-24T23:55:00.000Z"))).toBe(false);
+    expect(shouldRefreshAlphaVantageCache(eveningCache, new Date("2026-08-24T23:55:00.000Z"), true)).toBe(true);
   });
 
   it("keeps the latest Alpha trading-day close fresh after a successful weekend check", async () => {
