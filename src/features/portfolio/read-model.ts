@@ -49,6 +49,7 @@ export type PortfolioTransactionRow = {
   assetId: string;
   accountId: string;
   type: string;
+  basisMethod: string | null;
   assetName: string;
   symbol: string;
   accountName: string;
@@ -111,7 +112,10 @@ export type PortfolioReadModel = {
     netInvested: string;
     externalContributions: string | null;
     externalWithdrawals: string | null;
-    simpleReturnPercent: string | null;
+    trackedCapitalReturnPercent: string | null;
+    trackedCapital: string;
+    openingBasis: string;
+    giftTrackingBasis: string;
     isCostBasisPartial: boolean;
     missingCostBasisSymbols: string[];
   };
@@ -193,7 +197,10 @@ export async function getPortfolioReadModel({
       netInvested: analytics.netInvested,
       externalContributions: analytics.externalContributions,
       externalWithdrawals: analytics.externalWithdrawals,
-      simpleReturnPercent: analytics.simpleReturnPercent,
+      trackedCapitalReturnPercent: analytics.trackedCapitalReturnPercent,
+      trackedCapital: analytics.trackedCapital,
+      openingBasis: analytics.openingBasis,
+      giftTrackingBasis: analytics.giftTrackingBasis,
       isCostBasisPartial: analytics.isCostBasisPartial,
       missingCostBasisSymbols: analytics.missingCostBasisSymbols,
     },
@@ -321,6 +328,7 @@ export function serializeTransactionRow(transaction: TransactionWithRelations): 
     assetId: transaction.assetId,
     accountId: transaction.accountId,
     type: transaction.type,
+    basisMethod: transaction.basisMethod,
     assetName: transaction.asset.name,
     symbol: transaction.asset.symbol,
     accountName: transaction.account.name,

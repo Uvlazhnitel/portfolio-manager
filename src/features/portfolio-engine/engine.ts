@@ -1,4 +1,4 @@
-import { AssetClass, TransactionType, type Prisma } from "@prisma/client";
+import { AssetClass, BasisMethod, TransactionGroupKind, TransactionType, type Prisma } from "@prisma/client";
 import {
   decimal,
   isZero,
@@ -33,6 +33,7 @@ import type {
   PortfolioSnapshot,
   PortfolioAnalytics,
   PortfolioPerformancePoint,
+  PerformanceExclusionReason,
   ReasonCode,
   SimulatedTransactionInput,
   SimulateContributionInput,
@@ -54,6 +55,7 @@ const allocationClassOrder = new Map<AssetClass, number>(
 
 const positiveQuantityTypes = new Set<TransactionType>([
   TransactionType.INITIAL_BALANCE,
+  TransactionType.GIFT,
   TransactionType.BUY,
   TransactionType.DEPOSIT,
   TransactionType.TRANSFER_IN,
@@ -167,7 +169,16 @@ export function calculatePortfolioAnalytics(input: CalculatePortfolioAnalyticsIn
     netContributed: performance.netContributed,
     externalContributions: performance.externalContributions,
     externalWithdrawals: performance.externalWithdrawals,
-    simpleReturnPercent: performance.simpleReturnPercent,
+    openingBasis: performance.openingBasis,
+    giftTrackingBasis: performance.giftTrackingBasis,
+    internalTradeFees: performance.internalTradeFees,
+    trackedCapital: performance.trackedCapital,
+    trackedCapitalReturnPercent: performance.trackedCapitalReturnPercent,
+    isNetInvestedPartial: performance.isNetInvestedPartial,
+    missingNetInvestedSymbols: performance.missingNetInvestedSymbols,
+    coveredSymbols: performance.coveredSymbols,
+    openingBasisUnknownSymbols: performance.openingBasisUnknownSymbols,
+    performanceExclusions: performance.performanceExclusions,
     isCostBasisPartial: performance.isCostBasisPartial,
     missingCostBasisSymbols: performance.missingCostBasisSymbols,
     isExternalCashflowPartial: performance.isExternalCashflowPartial,
@@ -212,12 +223,25 @@ export function calculateHistoricalPerformance(
         date: snapshot.date,
         portfolioValue: portfolioValue ? toDecimalString(portfolioValue) : null,
         netInvested: performance.netInvested,
+        externalContributions: performance.externalContributions,
+        externalWithdrawals: performance.externalWithdrawals,
+        openingBasis: performance.openingBasis,
+        giftTrackingBasis: performance.giftTrackingBasis,
+        internalTradeFees: performance.internalTradeFees,
         investmentGain: performance.investmentGain,
-        simpleReturnPercent: performance.simpleReturnPercent,
+        trackedCapital: performance.trackedCapital,
+        trackedCapitalReturnPercent: performance.trackedCapitalReturnPercent,
         isComplete,
         missingPriceSymbols: portfolio.missingPriceSymbols,
         isCostBasisPartial: performance.isCostBasisPartial,
         missingCostBasisSymbols: performance.missingCostBasisSymbols,
+        isNetInvestedPartial: performance.isNetInvestedPartial,
+        missingNetInvestedSymbols: performance.missingNetInvestedSymbols,
+        isExternalCashflowPartial: performance.isExternalCashflowPartial,
+        missingExternalCashflowSymbols: performance.missingExternalCashflowSymbols,
+        coveredSymbols: performance.coveredSymbols,
+        openingBasisUnknownSymbols: performance.openingBasisUnknownSymbols,
+        performanceExclusions: performance.performanceExclusions,
         hasStalePrices: snapshot.hasStalePrices,
       };
     });
@@ -1011,7 +1035,9 @@ function calculateCostPools(
     affectedAssetIds.add(transaction.assetId);
     const pool = poolFor(transaction.accountId, transaction.assetId);
     const quantity = decimal(transaction.quantity);
-    const implicitBaseCashPrice = asset.assetType === "FIAT" &&
+    const hasExplicitlyUnknownOpeningBasis = transaction.type === TransactionType.INITIAL_BALANCE &&
+      (transaction.basisMethod === BasisMethod.UNKNOWN || transaction.pricePerUnit === null || transaction.pricePerUnit === undefined);
+    const implicitBaseCashPrice = !hasExplicitlyUnknownOpeningBasis && asset.assetType === "FIAT" &&
       asset.currency?.toUpperCase() === input.baseCurrency.toUpperCase() &&
       (transaction.pricePerUnit === null || transaction.pricePerUnit === undefined);
     const pricePerUnit = implicitBaseCashPrice ? decimal(1) : transaction.pricePerUnit === null || transaction.pricePerUnit === undefined ? null : decimal(transaction.pricePerUnit);
@@ -1019,7 +1045,12 @@ function calculateCostPools(
       ? quantity.mul(pricePerUnit).plus(transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee))
       : ZERO;
 
-    if (transaction.type === TransactionType.INITIAL_BALANCE || transaction.type === TransactionType.BUY || transaction.type === TransactionType.DEPOSIT) {
+    if (
+      transaction.type === TransactionType.INITIAL_BALANCE ||
+      transaction.type === TransactionType.GIFT ||
+      transaction.type === TransactionType.BUY ||
+      transaction.type === TransactionType.DEPOSIT
+    ) {
       if (!pricePerUnit) {
         pool.reason = "MISSING_ACQUISITION_PRICE";
         continue;
@@ -1109,6 +1140,7 @@ function calculateCostPools(
 function transactionPriority(type: TransactionType) {
   if (
     type === TransactionType.INITIAL_BALANCE ||
+    type === TransactionType.GIFT ||
     type === TransactionType.BUY ||
     type === TransactionType.DEPOSIT
   ) return 0;
@@ -1165,13 +1197,6 @@ function calculatePerformanceSummary(
   input: CalculatePortfolioAnalyticsInput,
   assetById: Map<string, EngineAsset>,
 ) {
-  const transactionsByAsset = new Map<string, EngineTransaction[]>();
-  for (const transaction of input.transactions) {
-    const transactions = transactionsByAsset.get(transaction.assetId) ?? [];
-    transactions.push(transaction);
-    transactionsByAsset.set(transaction.assetId, transactions);
-  }
-
   const currentValueByAsset = new Map<string, Prisma.Decimal>();
   for (const holding of input.portfolio.valuedHoldings) {
     currentValueByAsset.set(
@@ -1180,41 +1205,237 @@ function calculatePerformanceSummary(
     );
   }
 
-  let netInvested = ZERO;
-  let coveredPortfolioValue = ZERO;
-  const missingCostBasisSymbols = new Set<string>();
-  for (const [assetId, transactions] of transactionsByAsset) {
-    const asset = requireAsset(assetById, assetId);
-    const assetFlow = calculateAssetInvestmentFlow(transactions, asset, input.baseCurrency);
-    if (assetFlow === null) {
-      missingCostBasisSymbols.add(asset.symbol);
-      continue;
+  const parent = new Map<string, string>();
+  const find = (assetId: string): string => {
+    const current = parent.get(assetId) ?? assetId;
+    if (current === assetId) {
+      parent.set(assetId, assetId);
+      return assetId;
     }
-    netInvested = netInvested.plus(assetFlow);
-    coveredPortfolioValue = coveredPortfolioValue.plus(currentValueByAsset.get(assetId) ?? ZERO);
+    const root = find(current);
+    parent.set(assetId, root);
+    return root;
+  };
+  const union = (left: string, right: string) => {
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot);
+  };
+  const tradeAssetsByGroup = new Map<string, string[]>();
+  for (const transaction of input.transactions) {
+    find(transaction.assetId);
+    if (transaction.transactionGroupId && transaction.transactionGroup?.kind === TransactionGroupKind.TRADE) {
+      const assets = tradeAssetsByGroup.get(transaction.transactionGroupId) ?? [];
+      assets.push(transaction.assetId);
+      tradeAssetsByGroup.set(transaction.transactionGroupId, assets);
+    }
+  }
+  for (const assets of tradeAssetsByGroup.values()) {
+    for (const assetId of assets.slice(1)) union(assets[0], assetId);
   }
 
-  const externalCashflows = calculateExternalCashflows(input.transactions, assetById, input.baseCurrency);
-  const hasCompletePrices = input.portfolio.missingPriceSymbols.length === 0;
-  const investmentGain = hasCompletePrices
-    ? coveredPortfolioValue.minus(netInvested)
+  type Component = {
+    assetIds: Set<string>;
+    basisFlow: Prisma.Decimal;
+    trackedCapital: Prisma.Decimal;
+    currentValue: Prisma.Decimal;
+    issues: Map<string, Set<PerformanceExclusionReason>>;
+  };
+  const components = new Map<string, Component>();
+  const componentFor = (assetId: string) => {
+    const root = find(assetId);
+    const component = components.get(root) ?? {
+      assetIds: new Set<string>(), basisFlow: ZERO, trackedCapital: ZERO, currentValue: ZERO,
+      issues: new Map<string, Set<PerformanceExclusionReason>>(),
+    };
+    component.assetIds.add(assetId);
+    components.set(root, component);
+    return component;
+  };
+  const addIssue = (assetId: string, reason: PerformanceExclusionReason) => {
+    const component = componentFor(assetId);
+    const reasons = component.issues.get(assetId) ?? new Set<PerformanceExclusionReason>();
+    reasons.add(reason);
+    component.issues.set(assetId, reasons);
+  };
+  const missingValueReason = (transaction: EngineTransaction): PerformanceExclusionReason =>
+    transaction.currency?.toUpperCase() !== input.baseCurrency.toUpperCase()
+      ? "UNSUPPORTED_TRANSACTION_CURRENCY"
+      : "MISSING_ACQUISITION_PRICE";
+
+  let netInvested = ZERO;
+  let externalContributions = ZERO;
+  let externalWithdrawals = ZERO;
+  let openingBasis = ZERO;
+  let giftTrackingBasis = ZERO;
+  let internalTradeFees = ZERO;
+  const missingNetInvestedSymbols = new Set<string>();
+  const missingExternalCashflowSymbols = new Set<string>();
+  const openingBasisUnknownSymbols = new Set<string>();
+
+  for (const transaction of input.transactions) {
+    const asset = requireAsset(assetById, transaction.assetId);
+    const component = componentFor(transaction.assetId);
+    const internalTrade = transaction.transactionGroup?.kind === TransactionGroupKind.TRADE;
+
+    if (internalTrade) {
+      if (transaction.type === TransactionType.BUY) {
+        const fee = transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee);
+        internalTradeFees = internalTradeFees.plus(fee);
+        component.basisFlow = component.basisFlow.plus(fee);
+      }
+      continue;
+    }
+
+    if (transaction.type === TransactionType.INITIAL_BALANCE &&
+      (transaction.basisMethod === BasisMethod.UNKNOWN || transaction.pricePerUnit === null || transaction.pricePerUnit === undefined)) {
+      openingBasisUnknownSymbols.add(asset.symbol);
+      addIssue(transaction.assetId, "UNKNOWN_OPENING_BASIS");
+      continue;
+    }
+
+    const value = transactionCashValue(transaction, asset, input.baseCurrency);
+    if (transaction.type === TransactionType.BUY || transaction.type === TransactionType.SELL) {
+      if (!value) {
+        missingNetInvestedSymbols.add(asset.symbol);
+        addIssue(transaction.assetId, missingValueReason(transaction));
+        continue;
+      }
+      const amount = transaction.type === TransactionType.BUY
+        ? value.gross.plus(value.fee)
+        : value.gross.minus(value.fee);
+      netInvested = transaction.type === TransactionType.BUY ? netInvested.plus(amount) : netInvested.minus(amount);
+      component.basisFlow = transaction.type === TransactionType.BUY ? component.basisFlow.plus(amount) : component.basisFlow.minus(amount);
+      if (transaction.type === TransactionType.BUY) component.trackedCapital = component.trackedCapital.plus(amount);
+      continue;
+    }
+
+    if (transaction.type === TransactionType.DEPOSIT || transaction.type === TransactionType.WITHDRAWAL) {
+      if (!value) {
+        missingExternalCashflowSymbols.add(asset.symbol);
+        addIssue(transaction.assetId, missingValueReason(transaction));
+        continue;
+      }
+      const amount = value.gross;
+      if (transaction.type === TransactionType.DEPOSIT) {
+        externalContributions = externalContributions.plus(amount);
+        component.basisFlow = component.basisFlow.plus(amount);
+        component.trackedCapital = component.trackedCapital.plus(amount);
+      } else {
+        externalWithdrawals = externalWithdrawals.plus(amount);
+        component.basisFlow = component.basisFlow.minus(amount);
+      }
+      continue;
+    }
+
+    if (transaction.type === TransactionType.INITIAL_BALANCE) {
+      if (!value) {
+        openingBasisUnknownSymbols.add(asset.symbol);
+        addIssue(transaction.assetId, missingValueReason(transaction));
+        continue;
+      }
+      const amount = value.gross.plus(value.fee);
+      openingBasis = openingBasis.plus(amount);
+      component.basisFlow = component.basisFlow.plus(amount);
+      component.trackedCapital = component.trackedCapital.plus(amount);
+      continue;
+    }
+
+    if (transaction.type === TransactionType.GIFT) {
+      if (!value) {
+        addIssue(transaction.assetId, missingValueReason(transaction));
+        continue;
+      }
+      const amount = transaction.basisMethod === BasisMethod.ZERO_COST ? ZERO : value.gross;
+      giftTrackingBasis = giftTrackingBasis.plus(amount);
+      component.basisFlow = component.basisFlow.plus(amount);
+      component.trackedCapital = component.trackedCapital.plus(amount);
+    }
+  }
+
+  const quantityByAsset = new Map<string, Prisma.Decimal>();
+  for (const holding of input.portfolio.holdings) {
+    quantityByAsset.set(holding.assetId, (quantityByAsset.get(holding.assetId) ?? ZERO).plus(decimal(holding.quantity)));
+    componentFor(holding.assetId);
+  }
+  for (const [assetId, quantity] of quantityByAsset) {
+    const asset = requireAsset(assetById, assetId);
+    if (quantity.greaterThan(ZERO) && input.portfolio.missingPriceSymbols.includes(asset.symbol)) {
+      addIssue(assetId, "MISSING_CURRENT_PRICE");
+    } else {
+      componentFor(assetId).currentValue = componentFor(assetId).currentValue.plus(currentValueByAsset.get(assetId) ?? ZERO);
+    }
+  }
+
+  const pools = calculateCostPools(input, assetById);
+  for (const assetId of parent.keys()) {
+    const expectedQuantity = quantityByAsset.get(assetId) ?? ZERO;
+    const assetPools = [...pools.entries()].filter(([key]) => key.endsWith(`:${assetId}`));
+    const poolQuantity = assetPools.reduce((sum, [, pool]) => sum.plus(pool.quantity), ZERO);
+    const existingIssues = componentFor(assetId).issues.get(assetId);
+    if (!existingIssues?.has("UNKNOWN_OPENING_BASIS")) {
+      const reason = assetPools.find(([, pool]) => pool.reason)?.[1].reason;
+      if (reason) addIssue(assetId, performanceReasonForCostPool(reason));
+      if (!poolQuantity.equals(expectedQuantity)) addIssue(assetId, "INCONSISTENT_TRANSACTION_HISTORY");
+    }
+  }
+
+  let coveredGain = ZERO;
+  let coveredTrackedCapital = ZERO;
+  const coveredSymbols = new Set<string>();
+  const exclusions = new Map<string, Set<PerformanceExclusionReason>>();
+  let hasCoveredActivity = false;
+  for (const component of components.values()) {
+    if (component.issues.size > 0) {
+      for (const assetId of component.assetIds) {
+        const asset = requireAsset(assetById, assetId);
+        const reasons = new Set(component.issues.get(assetId) ?? []);
+        if (reasons.size === 0 && component.assetIds.size > 1) reasons.add("LINKED_TRADE_COMPONENT_PARTIAL");
+        exclusions.set(asset.symbol, reasons);
+      }
+      continue;
+    }
+    hasCoveredActivity = hasCoveredActivity || component.assetIds.size > 0;
+    coveredGain = coveredGain.plus(component.currentValue.minus(component.basisFlow));
+    coveredTrackedCapital = coveredTrackedCapital.plus(component.trackedCapital);
+    for (const assetId of component.assetIds) coveredSymbols.add(requireAsset(assetById, assetId).symbol);
+  }
+  const investmentGain = hasCoveredActivity || components.size === 0 ? coveredGain : null;
+  const trackedCapitalReturnPercent = investmentGain !== null && coveredTrackedCapital.greaterThan(ZERO)
+    ? investmentGain.div(coveredTrackedCapital).mul(ONE_HUNDRED)
     : null;
-  const simpleReturnPercent = investmentGain && netInvested.greaterThan(ZERO)
-    ? investmentGain.div(netInvested).mul(ONE_HUNDRED)
-    : null;
+  const missingCostBasisSymbols = [...exclusions.keys()].sort();
 
   return {
     netInvested: toDecimalString(netInvested),
-    netContributed: toDecimalString(externalCashflows.netContributed),
-    externalContributions: toDecimalString(externalCashflows.externalContributions),
-    externalWithdrawals: toDecimalString(externalCashflows.externalWithdrawals),
-    investmentGain: investmentGain ? toDecimalString(investmentGain) : null,
-    simpleReturnPercent: simpleReturnPercent ? toDecimalString(simpleReturnPercent) : null,
-    isCostBasisPartial: missingCostBasisSymbols.size > 0,
-    missingCostBasisSymbols: [...missingCostBasisSymbols].sort(),
-    isExternalCashflowPartial: externalCashflows.missingSymbols.size > 0,
-    missingExternalCashflowSymbols: [...externalCashflows.missingSymbols].sort(),
+    netContributed: toDecimalString(externalContributions.minus(externalWithdrawals)),
+    externalContributions: toDecimalString(externalContributions),
+    externalWithdrawals: toDecimalString(externalWithdrawals),
+    openingBasis: toDecimalString(openingBasis),
+    giftTrackingBasis: toDecimalString(giftTrackingBasis),
+    internalTradeFees: toDecimalString(internalTradeFees),
+    trackedCapital: toDecimalString(coveredTrackedCapital),
+    investmentGain: investmentGain === null ? null : toDecimalString(investmentGain),
+    trackedCapitalReturnPercent: trackedCapitalReturnPercent === null ? null : toDecimalString(trackedCapitalReturnPercent),
+    isNetInvestedPartial: missingNetInvestedSymbols.size > 0,
+    missingNetInvestedSymbols: [...missingNetInvestedSymbols].sort(),
+    isCostBasisPartial: exclusions.size > 0,
+    missingCostBasisSymbols,
+    coveredSymbols: [...coveredSymbols].sort(),
+    openingBasisUnknownSymbols: [...openingBasisUnknownSymbols].sort(),
+    performanceExclusions: [...exclusions.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([symbol, reasons]) => ({ symbol, reasons: [...reasons].sort() })),
+    isExternalCashflowPartial: missingExternalCashflowSymbols.size > 0,
+    missingExternalCashflowSymbols: [...missingExternalCashflowSymbols].sort(),
   };
+}
+
+function performanceReasonForCostPool(reason: HoldingCostBasisReason): PerformanceExclusionReason {
+  if (reason === "ACCOUNT_TRANSFER_COST_UNKNOWN") return "AMBIGUOUS_TRANSFER_BASIS";
+  if (reason === "UNSUPPORTED_TRANSACTION_CURRENCY") return "UNSUPPORTED_TRANSACTION_CURRENCY";
+  if (reason === "MISSING_ACQUISITION_PRICE") return "MISSING_ACQUISITION_PRICE";
+  return "INCONSISTENT_TRANSACTION_HISTORY";
 }
 
 function calculateAssetInvestmentFlow(
@@ -1248,46 +1469,13 @@ function calculateAssetInvestmentFlow(
   return transferQuantity.equals(ZERO) ? netInvested : null;
 }
 
-function calculateExternalCashflows(
-  transactions: EngineTransaction[],
-  assetById: Map<string, EngineAsset>,
-  baseCurrency: string,
-) {
-  let externalContributions = ZERO;
-  let externalWithdrawals = ZERO;
-  const missingSymbols = new Set<string>();
-
-  for (const transaction of transactions) {
-    const isContribution = transaction.type === TransactionType.INITIAL_BALANCE || transaction.type === TransactionType.DEPOSIT;
-    const isWithdrawal = transaction.type === TransactionType.WITHDRAWAL;
-    if (!isContribution && !isWithdrawal) continue;
-
-    const asset = assetById.get(transaction.assetId);
-    if (!asset) continue;
-    const value = transactionCashValue(transaction, asset, baseCurrency);
-    if (!value) {
-      missingSymbols.add(asset.symbol);
-      continue;
-    }
-    const cashflowValue = value.gross.plus(value.fee);
-
-    if (isContribution) {
-      externalContributions = externalContributions.plus(cashflowValue);
-    }
-    if (isWithdrawal) {
-      externalWithdrawals = externalWithdrawals.plus(value.gross.minus(value.fee));
-    }
-  }
-
-  const netContributed = externalContributions.minus(externalWithdrawals);
-  return { netContributed, externalContributions, externalWithdrawals, missingSymbols };
-}
-
 function transactionCashValue(
   transaction: EngineTransaction,
   asset: EngineAsset,
   baseCurrency: string,
 ) {
+  if (transaction.type === TransactionType.INITIAL_BALANCE &&
+    (transaction.basisMethod === BasisMethod.UNKNOWN || transaction.pricePerUnit === null || transaction.pricePerUnit === undefined)) return null;
   if (transaction.currency?.toUpperCase() !== baseCurrency.toUpperCase()) return null;
   const price = transaction.pricePerUnit === null || transaction.pricePerUnit === undefined
     ? asset.assetType === "FIAT" && asset.currency?.toUpperCase() === baseCurrency.toUpperCase()

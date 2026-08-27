@@ -25,7 +25,10 @@ export type DashboardReadModel = {
     totalValue: string;
     investmentGain: string | null;
     netInvested: string;
-    simpleReturnPercent: string | null;
+    trackedCapital: string;
+    openingBasis: string;
+    giftTrackingBasis: string;
+    trackedCapitalReturnPercent: string | null;
     isCostBasisPartial: boolean;
     missingCostBasisSymbols: string[];
     currency: string;
@@ -133,7 +136,10 @@ export async function getDashboardReadModel({
       totalValue: portfolio.totalValue,
       investmentGain: analytics.investmentGain,
       netInvested: analytics.netInvested,
-      simpleReturnPercent: analytics.simpleReturnPercent,
+      trackedCapital: analytics.trackedCapital,
+      openingBasis: analytics.openingBasis,
+      giftTrackingBasis: analytics.giftTrackingBasis,
+      trackedCapitalReturnPercent: analytics.trackedCapitalReturnPercent,
       isCostBasisPartial: analytics.isCostBasisPartial,
       missingCostBasisSymbols: analytics.missingCostBasisSymbols,
       currency: baseCurrency,

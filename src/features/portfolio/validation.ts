@@ -1,4 +1,4 @@
-import { AccountType, AssetClass, AssetQuoteProvider, AssetType, Prisma, TransactionType } from "@prisma/client";
+import { AccountType, AssetClass, AssetQuoteProvider, AssetType, BasisMethod, Prisma, TransactionType } from "@prisma/client";
 import { z } from "zod";
 
 function decimalInputSchema({ integerDigits, decimalPlaces }: { integerDigits: number; decimalPlaces: number }) {
@@ -64,6 +64,7 @@ export const transactionInputSchema = z.object({
   assetId: z.string().min(1),
   accountId: z.string().min(1),
   type: z.enum(TransactionType),
+  basisMethod: z.enum(BasisMethod).nullable().optional(),
   quantity: positiveDecimalStringSchema,
   pricePerUnit: nonNegativeDecimalStringSchema.nullable().optional(),
   fee: nonNegativeDecimalStringSchema.nullable().optional(),

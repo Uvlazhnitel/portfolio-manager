@@ -2,6 +2,7 @@ import {
   AccountType,
   AssetClass,
   AssetType,
+  BasisMethod,
   Prisma,
   TransactionType,
   type CachedMarketPrice,
@@ -40,8 +41,8 @@ beforeAll(async () => {
     }),
   ]);
   await testDb.prisma.transaction.createMany({ data: [
-    { accountId: account.id, assetId: btc.id, type: TransactionType.INITIAL_BALANCE, quantity: "1", pricePerUnit: "40000", currency: "EUR", executedAt: new Date("2026-08-01") },
-    { accountId: account.id, assetId: gold.id, type: TransactionType.INITIAL_BALANCE, quantity: "10", pricePerUnit: "80", currency: "EUR", executedAt: new Date("2026-08-01") },
+    { accountId: account.id, assetId: btc.id, type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.KNOWN_COST, quantity: "1", pricePerUnit: "40000", currency: "EUR", executedAt: new Date("2026-08-01") },
+    { accountId: account.id, assetId: gold.id, type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.KNOWN_COST, quantity: "10", pricePerUnit: "80", currency: "EUR", executedAt: new Date("2026-08-01") },
     { accountId: account.id, assetId: btc.id, type: TransactionType.BUY, quantity: "0.0001", pricePerUnit: "40000", currency: "EUR", executedAt: new Date("2026-08-02") },
     { accountId: account.id, assetId: btc.id, type: TransactionType.SELL, quantity: "0.0001", pricePerUnit: "50000", currency: "EUR", executedAt: new Date("2026-08-03") },
     { accountId: account.id, assetId: btc.id, type: TransactionType.BUY, quantity: "0.0001", pricePerUnit: "40000", currency: "EUR", executedAt: new Date("2026-08-04") },
@@ -87,6 +88,13 @@ afterAll(async () => {
 });
 
 describe("priced portfolio read models", () => {
+  it("exposes explicit basis methods in transaction history", async () => {
+    resetMarketDataRuntimeCacheForTests();
+    const model = await getPortfolioReadModel({ repository: new PortfolioRepository(testDb.prisma), strategyRepository: new StrategyRepository(testDb.prisma), marketDataService });
+    expect(model.transactions.filter((row) => row.type === TransactionType.INITIAL_BALANCE)).not.toHaveLength(0);
+    expect(model.transactions.filter((row) => row.type === TransactionType.INITIAL_BALANCE).every((row) => row.basisMethod === BasisMethod.KNOWN_COST)).toBe(true);
+  });
+
   it("collapses linked transfers and trades into logical operations", async () => {
     const main = await testDb.prisma.account.findUniqueOrThrow({ where: { name: "Main" } });
     const empty = await testDb.prisma.account.findUniqueOrThrow({ where: { name: "Empty" } });

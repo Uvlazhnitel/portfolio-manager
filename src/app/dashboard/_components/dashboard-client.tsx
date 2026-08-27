@@ -63,10 +63,15 @@ function OverviewPanel({ dashboard }: { dashboard: DashboardReadModel }) {
           tone={gainSign === null || gainSign === 0 ? "default" : gainSign > 0 ? "positive" : "negative"}
         />
         <OverviewMetric
-          label="Simple return"
-          value={valuation.simpleReturnPercent === null ? "Unavailable" : signedPercent(valuation.simpleReturnPercent)}
+          label="Return on tracked capital"
+          value={valuation.trackedCapitalReturnPercent === null ? "Unavailable" : signedPercent(valuation.trackedCapitalReturnPercent)}
           tone={gainSign === null || gainSign === 0 ? "default" : gainSign > 0 ? "positive" : "negative"}
         />
+      </dl>
+      <dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
+        <OverviewMetric label="Tracked capital" value={formatCurrency(valuation.trackedCapital, valuation.currency)} />
+        <OverviewMetric label="Opening basis (known)" value={formatCurrency(valuation.openingBasis, valuation.currency)} />
+        <OverviewMetric label="Gift tracking basis" value={formatCurrency(valuation.giftTrackingBasis, valuation.currency)} />
       </dl>
 
       <DataQualitySummary items={dashboardDataQualityItems(dashboard)} okText="Prices and cost basis are complete." className="mt-5" />

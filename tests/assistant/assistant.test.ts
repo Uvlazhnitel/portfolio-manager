@@ -1,4 +1,4 @@
-import { AccountType, AssetClass, AssetType, AssistantMessageRole, Prisma, TransactionType, type CachedMarketPrice } from "@prisma/client";
+import { AccountType, AssetClass, AssetType, AssistantMessageRole, BasisMethod, Prisma, TransactionType, type CachedMarketPrice } from "@prisma/client";
 import type OpenAI from "openai";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AssistantRepository } from "@/features/assistant/repository";
@@ -26,9 +26,9 @@ beforeAll(async () => {
     testDb.prisma.asset.create({ data: { symbol: "XAUT", name: "Tether Gold", assetClass: AssetClass.GOLD, assetType: AssetType.TOKENIZED_GOLD, currency: "XAUT" } }),
   ]);
   await testDb.prisma.transaction.createMany({ data: [
-    { accountId: account.id, assetId: etf.id, type: TransactionType.INITIAL_BALANCE, quantity: "80", pricePerUnit: "8", currency: "EUR", executedAt: new Date("2026-08-01"), note: "DO_NOT_SEND_THIS_NOTE" },
-    { accountId: account.id, assetId: btc.id, type: TransactionType.INITIAL_BALANCE, quantity: "1", pricePerUnit: "75", currency: "EUR", executedAt: new Date("2026-08-02") },
-    { accountId: account.id, assetId: eur.id, type: TransactionType.INITIAL_BALANCE, quantity: "100", pricePerUnit: "1", currency: "EUR", executedAt: new Date("2026-08-03") },
+    { accountId: account.id, assetId: etf.id, type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.KNOWN_COST, quantity: "80", pricePerUnit: "8", currency: "EUR", executedAt: new Date("2026-08-01"), note: "DO_NOT_SEND_THIS_NOTE" },
+    { accountId: account.id, assetId: btc.id, type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.KNOWN_COST, quantity: "1", pricePerUnit: "75", currency: "EUR", executedAt: new Date("2026-08-02") },
+    { accountId: account.id, assetId: eur.id, type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.KNOWN_COST, quantity: "100", pricePerUnit: "1", currency: "EUR", executedAt: new Date("2026-08-03") },
   ] });
   const strategy = await testDb.prisma.strategy.create({
     data: {

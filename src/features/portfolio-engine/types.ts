@@ -1,4 +1,4 @@
-import { AssetClass, AssetType, TransactionGroupKind, TransactionType, type Prisma } from "@prisma/client";
+import { AssetClass, AssetType, BasisMethod, TransactionGroupKind, TransactionType, type Prisma } from "@prisma/client";
 
 export type DecimalLike = Prisma.Decimal | string | number;
 
@@ -16,6 +16,7 @@ export type EngineTransaction = {
   assetId: string;
   accountId: string;
   type: TransactionType;
+  basisMethod?: BasisMethod | null;
   quantity: DecimalLike;
   pricePerUnit?: DecimalLike | null;
   fee?: DecimalLike | null;
@@ -121,7 +122,16 @@ export type PortfolioAnalytics = {
   netContributed: string;
   externalContributions: string | null;
   externalWithdrawals: string | null;
-  simpleReturnPercent: string | null;
+  openingBasis: string;
+  giftTrackingBasis: string;
+  internalTradeFees: string;
+  trackedCapital: string;
+  trackedCapitalReturnPercent: string | null;
+  isNetInvestedPartial: boolean;
+  missingNetInvestedSymbols: string[];
+  coveredSymbols: string[];
+  openingBasisUnknownSymbols: string[];
+  performanceExclusions: PerformanceExclusion[];
   isCostBasisPartial: boolean;
   missingCostBasisSymbols: string[];
   isExternalCashflowPartial: boolean;
@@ -148,13 +158,40 @@ export type PortfolioPerformancePoint = {
   date: string;
   portfolioValue: string | null;
   netInvested: string;
+  externalContributions: string | null;
+  externalWithdrawals: string | null;
+  openingBasis: string;
+  giftTrackingBasis: string;
+  internalTradeFees: string;
   investmentGain: string | null;
-  simpleReturnPercent: string | null;
+  trackedCapital: string;
+  trackedCapitalReturnPercent: string | null;
   isComplete: boolean;
   missingPriceSymbols: string[];
   isCostBasisPartial: boolean;
   missingCostBasisSymbols: string[];
+  isNetInvestedPartial: boolean;
+  missingNetInvestedSymbols: string[];
+  isExternalCashflowPartial: boolean;
+  missingExternalCashflowSymbols: string[];
+  coveredSymbols: string[];
+  openingBasisUnknownSymbols: string[];
+  performanceExclusions: PerformanceExclusion[];
   hasStalePrices: boolean;
+};
+
+export type PerformanceExclusionReason =
+  | "MISSING_CURRENT_PRICE"
+  | "UNKNOWN_OPENING_BASIS"
+  | "MISSING_ACQUISITION_PRICE"
+  | "UNSUPPORTED_TRANSACTION_CURRENCY"
+  | "AMBIGUOUS_TRANSFER_BASIS"
+  | "INCONSISTENT_TRANSACTION_HISTORY"
+  | "LINKED_TRADE_COMPONENT_PARTIAL";
+
+export type PerformanceExclusion = {
+  symbol: string;
+  reasons: PerformanceExclusionReason[];
 };
 
 export type CalculateHistoricalPerformanceInput = {

@@ -64,7 +64,7 @@ describe("dashboard read model edge states", () => {
       ]),
     });
 
-    expect(dashboard.valuation).toEqual(expect.objectContaining({ totalValue: "10.00", isPartial: true, investmentGain: null }));
+    expect(dashboard.valuation).toEqual(expect.objectContaining({ totalValue: "10.00", isPartial: true, investmentGain: "5.00", isCostBasisPartial: true }));
     expect(dashboard.allocation.find((item) => item.assetClass === AssetClass.ETF)?.currentPercent).toBe("0.00");
     expect(dashboard.allocation.map((item) => item.assetClass)).toEqual([
       AssetClass.CRYPTO,

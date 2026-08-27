@@ -31,7 +31,10 @@ export type PortfolioAssistantContext = {
     netContributed: string;
     externalContributions: string | null;
     externalWithdrawals: string | null;
-    simpleReturnPercent: string | null;
+    trackedCapital: string;
+    trackedCapitalReturnPercent: string | null;
+    openingBasis: string;
+    giftTrackingBasis: string;
     isCostBasisPartial: boolean;
     missingCostBasisSymbols: string[];
     isExternalCashflowPartial: boolean;
@@ -172,7 +175,10 @@ export async function loadAssistantPortfolioRuntime({
       netContributed: analytics.netContributed,
       externalContributions: analytics.externalContributions,
       externalWithdrawals: analytics.externalWithdrawals,
-      simpleReturnPercent: analytics.simpleReturnPercent,
+      trackedCapital: analytics.trackedCapital,
+      trackedCapitalReturnPercent: analytics.trackedCapitalReturnPercent,
+      openingBasis: analytics.openingBasis,
+      giftTrackingBasis: analytics.giftTrackingBasis,
       isCostBasisPartial: analytics.isCostBasisPartial,
       missingCostBasisSymbols: analytics.missingCostBasisSymbols,
       isExternalCashflowPartial: analytics.isExternalCashflowPartial,

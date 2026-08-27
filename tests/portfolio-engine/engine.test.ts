@@ -1,4 +1,4 @@
-import { AssetClass, AssetType, TransactionGroupKind, TransactionType } from "@prisma/client";
+import { AssetClass, AssetType, BasisMethod, TransactionGroupKind, TransactionType } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import {
   calculateAssetNetCostBasis,
@@ -637,7 +637,7 @@ describe("portfolio engine dashboard analytics", () => {
       { assetId: "btc", accountId: "bybit", type: TransactionType.INITIAL_BALANCE, quantity: "1", pricePerUnit: "5000", currency: "EUR", executedAt: "2026-01-01" },
       { assetId: "btc", accountId: "bybit", type: TransactionType.TRANSFER_OUT, quantity: "0.4", executedAt: "2026-01-02" },
       { assetId: "btc", accountId: "wallet", type: TransactionType.TRANSFER_IN, quantity: "0.4", executedAt: "2026-01-02" },
-      { assetId: "eur", accountId: "bank", type: TransactionType.INITIAL_BALANCE, quantity: "1000", pricePerUnit: null, currency: "EUR", executedAt: "2026-01-01" },
+      { assetId: "eur", accountId: "bank", type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.KNOWN_COST, quantity: "1000", pricePerUnit: "1", currency: "EUR", executedAt: "2026-01-01" },
     ];
     const portfolio = calculatePortfolio({ assets: engineAssets, transactions, marketPrices: { BTC: "10000", EUR: "1" } });
     const analytics = calculatePortfolioAnalytics({ portfolio, assets: engineAssets, transactions, baseCurrency: "EUR" });
@@ -682,7 +682,7 @@ describe("portfolio engine dashboard analytics", () => {
     }));
   });
 
-  it("uses deposits and withdrawals for net invested and simple return", () => {
+  it("separates deposits and withdrawals from net invested", () => {
     const engineAssets = assets.map((asset) => asset.id === "eur" ? { ...asset, currency: "EUR" } : asset);
     const transactions: EngineTransaction[] = [
       { assetId: "eur", accountId: "bank", type: TransactionType.DEPOSIT, quantity: "1000", pricePerUnit: "1", currency: "EUR", executedAt: "2026-01-01" },
@@ -693,9 +693,53 @@ describe("portfolio engine dashboard analytics", () => {
 
     expect(analytics.externalContributions).toBe("1000.00");
     expect(analytics.externalWithdrawals).toBe("200.00");
-    expect(analytics.netInvested).toBe("800.00");
+    expect(analytics.netInvested).toBe("0.00");
     expect(analytics.totalUnrealizedPnl).toBe("0.00");
-    expect(analytics.simpleReturnPercent).toBe("0.00");
+    expect(analytics.trackedCapitalReturnPercent).toBe("0.00");
+  });
+
+  it("tracks opening and gift basis explicitly while preserving reliable partial performance", () => {
+    const transactions: EngineTransaction[] = [
+      { assetId: "btc", accountId: "wallet", type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.KNOWN_COST, quantity: "1", pricePerUnit: "100", currency: "EUR" },
+      { assetId: "eth", accountId: "wallet", type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.UNKNOWN, quantity: "1", pricePerUnit: null, currency: "EUR" },
+      { assetId: "xaut", accountId: "wallet", type: TransactionType.GIFT, basisMethod: BasisMethod.FAIR_VALUE, quantity: "2", pricePerUnit: "25", currency: "EUR" },
+      { assetId: "gold", accountId: "wallet", type: TransactionType.GIFT, basisMethod: BasisMethod.ZERO_COST, quantity: "1", pricePerUnit: "0", currency: "EUR" },
+    ];
+    const portfolio = calculatePortfolio({ assets, transactions, marketPrices: { BTC: "150", ETH: "200", XAUT: "30", PHYSICAL_GOLD: "30" } });
+    const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency: "EUR" });
+
+    expect(analytics).toEqual(expect.objectContaining({
+      netInvested: "0.00",
+      externalContributions: "0.00",
+      openingBasis: "100.00",
+      giftTrackingBasis: "50.00",
+      investmentGain: "90.00",
+      trackedCapital: "150.00",
+      trackedCapitalReturnPercent: "60.00",
+      openingBasisUnknownSymbols: ["ETH"],
+      coveredSymbols: ["BTC", "PHYSICAL_GOLD", "XAUT"],
+    }));
+    expect(analytics.performanceExclusions).toEqual([{ symbol: "ETH", reasons: ["UNKNOWN_OPENING_BASIS"] }]);
+  });
+
+  it("keeps a grouped trade neutral to net invested and charges its fee to economic gain", () => {
+    const group = { kind: TransactionGroupKind.TRADE };
+    const transactions: EngineTransaction[] = [
+      { assetId: "usdt", accountId: "exchange", type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.KNOWN_COST, quantity: "500", pricePerUnit: "1", currency: "EUR" },
+      { assetId: "usdt", accountId: "exchange", type: TransactionType.SELL, quantity: "500", pricePerUnit: "1", currency: "EUR", transactionGroupId: "trade", transactionGroup: group },
+      { assetId: "btc", accountId: "exchange", type: TransactionType.BUY, quantity: "0.01", pricePerUnit: "50000", fee: "5", currency: "EUR", transactionGroupId: "trade", transactionGroup: group },
+    ];
+    const portfolio = calculatePortfolio({ assets, transactions, marketPrices: { USDT: "1", BTC: "60000" } });
+    const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency: "EUR" });
+
+    expect(analytics).toEqual(expect.objectContaining({
+      netInvested: "0.00",
+      internalTradeFees: "5.00",
+      investmentGain: "95.00",
+      trackedCapital: "500.00",
+      trackedCapitalReturnPercent: "19.00",
+      coveredSymbols: ["BTC", "USDT"],
+    }));
   });
 
   it("marks an account partial while preserving its available value", () => {

@@ -18,10 +18,19 @@ export type PerformanceReadModel = {
     portfolioValue: string;
     netInvested: string;
     investmentGain: string | null;
-    simpleReturnPercent: string | null;
+    trackedCapital: string;
+    trackedCapitalReturnPercent: string | null;
     netContributed: string;
     externalContributions: string | null;
     externalWithdrawals: string | null;
+    openingBasis: string;
+    giftTrackingBasis: string;
+    internalTradeFees: string;
+    isNetInvestedPartial: boolean;
+    missingNetInvestedSymbols: string[];
+    coveredSymbols: string[];
+    openingBasisUnknownSymbols: string[];
+    performanceExclusions: PortfolioPerformancePoint["performanceExclusions"];
     isCostBasisPartial: boolean;
     missingCostBasisSymbols: string[];
     isExternalCashflowPartial: boolean;
@@ -100,10 +109,19 @@ export async function getPerformanceReadModel({
       portfolioValue: portfolio.totalValue,
       netInvested: analytics.netInvested ?? "0.00",
       investmentGain: analytics.investmentGain,
-      simpleReturnPercent: analytics.simpleReturnPercent,
+      trackedCapital: analytics.trackedCapital,
+      trackedCapitalReturnPercent: analytics.trackedCapitalReturnPercent,
       netContributed: analytics.netContributed,
       externalContributions: analytics.externalContributions,
       externalWithdrawals: analytics.externalWithdrawals,
+      openingBasis: analytics.openingBasis,
+      giftTrackingBasis: analytics.giftTrackingBasis,
+      internalTradeFees: analytics.internalTradeFees,
+      isNetInvestedPartial: analytics.isNetInvestedPartial,
+      missingNetInvestedSymbols: analytics.missingNetInvestedSymbols,
+      coveredSymbols: analytics.coveredSymbols,
+      openingBasisUnknownSymbols: analytics.openingBasisUnknownSymbols,
+      performanceExclusions: analytics.performanceExclusions,
       isCostBasisPartial: analytics.isCostBasisPartial,
       missingCostBasisSymbols: analytics.missingCostBasisSymbols,
       isExternalCashflowPartial: analytics.isExternalCashflowPartial,

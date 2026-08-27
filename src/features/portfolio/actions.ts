@@ -1,6 +1,6 @@
 "use server";
 
-import { AccountType, AssetClass, AssetType, TransactionType } from "@prisma/client";
+import { AccountType, AssetClass, AssetType, BasisMethod, TransactionType } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import {
   createAccountMutation,
@@ -58,6 +58,7 @@ export async function createTransactionAction(
     return await withPortfolioRevalidation(
       createTransactionMutation({
         type: transactionType,
+        basisMethod: nullableString(formData.get("basisMethod")) as BasisMethod | undefined,
         accountId: String(formData.get("accountId") ?? ""),
         assetMode: assetMode === "new" ? "new" : "existing",
         assetId: nullableString(formData.get("assetId")) ?? undefined,
@@ -157,6 +158,7 @@ export async function createPositionAction(
     return await withPortfolioRevalidation(
       createTransactionMutation({
         type: transactionType,
+        basisMethod: nullableString(formData.get("basisMethod")) as BasisMethod | undefined,
         accountId: String(formData.get("accountId") ?? ""),
         assetMode: existingAssetId ? "existing" : "new",
         assetId: existingAssetId ?? undefined,
@@ -210,6 +212,7 @@ export async function linkAssetQuoteAction(
 function parseImplementedTransactionType(value: string) {
   if (
     value === TransactionType.INITIAL_BALANCE ||
+    value === TransactionType.GIFT ||
     value === TransactionType.BUY ||
     value === TransactionType.SELL ||
     value === TransactionType.DEPOSIT ||
@@ -287,6 +290,7 @@ export async function updateTransactionAction(
   try {
     return await withPortfolioRevalidation(updateTransactionMutation({
       id: String(formData.get("id") ?? ""),
+      basisMethod: nullableString(formData.get("basisMethod")) as BasisMethod | undefined,
       quantity: nullableString(formData.get("quantity")) ?? undefined,
       physicalGoldWeightTroyOunces: nullableString(formData.get("physicalGoldWeightTroyOunces")) ?? undefined,
       pricePerUnit: nullableString(formData.get("pricePerUnit")) ?? undefined,

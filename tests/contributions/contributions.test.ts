@@ -1,4 +1,4 @@
-import { AccountType, AssetClass, AssetType, Prisma, TransactionType, type CachedMarketPrice } from "@prisma/client";
+import { AccountType, AssetClass, AssetType, BasisMethod, Prisma, TransactionType, type CachedMarketPrice } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
 import { getContributionPlannerModel, previewContribution } from "@/features/contributions/read-model";
@@ -37,7 +37,7 @@ beforeAll(async () => {
     [AssetClass.CASH]: eur.id,
     [AssetClass.OTHER]: eur.id,
   };
-  await testDb.prisma.transaction.create({ data: { accountId: account.id, assetId: asset.id, type: TransactionType.INITIAL_BALANCE, quantity: "100", pricePerUnit: "10", currency: "EUR", executedAt: new Date("2026-08-01") } });
+  await testDb.prisma.transaction.create({ data: { accountId: account.id, assetId: asset.id, type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.KNOWN_COST, quantity: "100", pricePerUnit: "10", currency: "EUR", executedAt: new Date("2026-08-01") } });
   const strategy = await testDb.prisma.strategy.create({
     data: {
       name: "Long-term growth",

@@ -1,4 +1,4 @@
-import { AccountType, AssetClass, AssetQuoteProvider, AssetType, PortfolioRuleType, TransactionGroupKind, TransactionType } from "@prisma/client";
+import { AccountType, AssetClass, AssetQuoteProvider, AssetType, BasisMethod, PortfolioRuleType, TransactionGroupKind, TransactionType } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { calculateHoldings } from "@/features/portfolio-engine";
 import {
@@ -64,6 +64,7 @@ describe("portfolio mutations", () => {
     await createTransactionMutation(
       {
         type: TransactionType.INITIAL_BALANCE,
+        basisMethod: BasisMethod.KNOWN_COST,
         accountId: account.id,
         assetMode: "existing",
         assetId: btc.id,
@@ -85,6 +86,7 @@ describe("portfolio mutations", () => {
 
     await createTransactionMutation({
       type: TransactionType.INITIAL_BALANCE,
+      basisMethod: BasisMethod.KNOWN_COST,
       accountId: account.id,
       assetMode: "existing",
       assetId: btc.id,
@@ -100,6 +102,87 @@ describe("portfolio mutations", () => {
     expect(transaction.pricePerUnit?.toString()).toBe("48000");
   });
 
+  it("creates zero-cost and fair-value gifts with explicit basis methods", async () => {
+    const account = await testDb.prisma.account.findFirstOrThrow({ where: { name: "Bybit" } });
+    const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
+    await createTransactionMutation({
+      type: TransactionType.GIFT,
+      basisMethod: BasisMethod.ZERO_COST,
+      accountId: account.id,
+      assetMode: "existing",
+      assetId: btc.id,
+      quantity: "0.5",
+      currency: "EUR",
+      executedAt: new Date("2026-02-01"),
+    }, testDb.prisma);
+    await createTransactionMutation({
+      type: TransactionType.GIFT,
+      basisMethod: BasisMethod.FAIR_VALUE,
+      accountId: account.id,
+      assetMode: "existing",
+      assetId: btc.id,
+      quantity: "2",
+      totalAmount: "300",
+      currency: "EUR",
+      executedAt: new Date("2026-02-02"),
+    }, testDb.prisma);
+
+    const gifts = await testDb.prisma.transaction.findMany({ where: { type: TransactionType.GIFT }, orderBy: { executedAt: "asc" } });
+    expect(gifts[0]).toEqual(expect.objectContaining({ basisMethod: BasisMethod.ZERO_COST }));
+    expect(gifts[0].pricePerUnit?.toString()).toBe("0");
+    expect(gifts[1]).toEqual(expect.objectContaining({ basisMethod: BasisMethod.FAIR_VALUE }));
+    expect(gifts[1].pricePerUnit?.toString()).toBe("150");
+  });
+
+  it("edits a gift basis method without changing transaction identity", async () => {
+    const gift = await testDb.prisma.transaction.findFirstOrThrow({ where: { type: TransactionType.GIFT, basisMethod: BasisMethod.ZERO_COST } });
+    await updateTransactionMutation({
+      id: gift.id,
+      basisMethod: BasisMethod.FAIR_VALUE,
+      quantity: gift.quantity.toString(),
+      totalAmount: "250",
+      executedAt: gift.executedAt,
+      note: "Basis documented",
+    }, testDb.prisma);
+
+    const updated = await testDb.prisma.transaction.findUniqueOrThrow({ where: { id: gift.id } });
+    expect(updated).toEqual(expect.objectContaining({ id: gift.id, basisMethod: BasisMethod.FAIR_VALUE, note: "Basis documented" }));
+    expect(updated.pricePerUnit?.toString()).toBe("500");
+  });
+
+  it("rejects missing or malformed opening and gift basis choices", async () => {
+    const account = await testDb.prisma.account.findFirstOrThrow({ where: { name: "Bybit" } });
+    const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
+    const common = { accountId: account.id, assetMode: "existing" as const, assetId: btc.id, quantity: "1", currency: "EUR", executedAt: new Date("2026-03-01") };
+    await expect(createTransactionMutation({ ...common, type: TransactionType.INITIAL_BALANCE, pricePerUnit: "10" }, testDb.prisma)).rejects.toThrow("Choose whether");
+    await expect(createTransactionMutation({ ...common, type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.UNKNOWN, pricePerUnit: "10" }, testDb.prisma)).rejects.toThrow("cannot include");
+    await expect(createTransactionMutation({ ...common, type: TransactionType.GIFT, basisMethod: BasisMethod.FAIR_VALUE }, testDb.prisma)).rejects.toThrow("fair value");
+  });
+
+  it("enforces basis shapes at the database boundary", async () => {
+    const account = await testDb.prisma.account.findFirstOrThrow({ where: { name: "Bybit" } });
+    const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
+    await expect(testDb.prisma.transaction.create({ data: {
+      accountId: account.id,
+      assetId: btc.id,
+      type: TransactionType.GIFT,
+      basisMethod: BasisMethod.ZERO_COST,
+      quantity: "1",
+      pricePerUnit: "5",
+      currency: "EUR",
+      executedAt: new Date("2026-03-02"),
+    } })).rejects.toThrow();
+    await expect(testDb.prisma.transaction.create({ data: {
+      accountId: account.id,
+      assetId: btc.id,
+      type: TransactionType.INITIAL_BALANCE,
+      quantity: "1",
+      pricePerUnit: "5",
+      currency: "EUR",
+      executedAt: new Date("2026-03-03"),
+    } })).rejects.toThrow();
+  });
+
   it("reuses an existing asset with the same external catalog id", async () => {
     const account = await testDb.prisma.account.findFirstOrThrow({ where: { name: "Bybit" } });
     const existing = await testDb.prisma.asset.create({
@@ -108,6 +191,7 @@ describe("portfolio mutations", () => {
 
     await createTransactionMutation({
       type: TransactionType.INITIAL_BALANCE,
+      basisMethod: BasisMethod.UNKNOWN,
       accountId: account.id,
       assetMode: "new",
       newAsset: { symbol: "SOLANA", name: "Untrusted duplicate name", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "SOL", externalId: "solana" },
@@ -125,6 +209,7 @@ describe("portfolio mutations", () => {
 
     await createTransactionMutation({
       type: TransactionType.INITIAL_BALANCE,
+      basisMethod: BasisMethod.KNOWN_COST,
       accountId: account.id,
       assetMode: "new",
       newAsset: {
@@ -156,6 +241,7 @@ describe("portfolio mutations", () => {
 
     await createTransactionMutation({
       type: TransactionType.INITIAL_BALANCE,
+      basisMethod: BasisMethod.KNOWN_COST,
       accountId: account.id,
       assetMode: "new",
       newAsset: {
@@ -455,7 +541,7 @@ describe("portfolio mutations", () => {
   it("keeps legacy ungrouped standalone transactions working", async () => {
     const account = await testDb.prisma.account.create({ data: { name: "Legacy Standalone", type: AccountType.WALLET } });
     const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
-    const row = await testDb.prisma.transaction.create({ data: { accountId: account.id, assetId: btc.id, type: TransactionType.INITIAL_BALANCE, quantity: "1", pricePerUnit: "10", currency: "USD", executedAt: new Date("2025-01-01") } });
+    const row = await testDb.prisma.transaction.create({ data: { accountId: account.id, assetId: btc.id, type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.KNOWN_COST, quantity: "1", pricePerUnit: "10", currency: "USD", executedAt: new Date("2025-01-01") } });
     expect(row.transactionGroupId).toBeNull();
     await updateTransactionMutation({ id: row.id, quantity: "2", pricePerUnit: "10", executedAt: new Date("2025-01-01") }, testDb.prisma);
     expect((await testDb.prisma.transaction.findUniqueOrThrow({ where: { id: row.id } })).quantity.toString()).toBe("2");
@@ -539,6 +625,7 @@ describe("portfolio mutations", () => {
         accountId: account.id,
         assetId: btc.id,
         type: TransactionType.INITIAL_BALANCE,
+        basisMethod: BasisMethod.UNKNOWN,
         quantity: "2",
         currency: "EUR",
         executedAt: new Date("2026-01-06"),
@@ -557,6 +644,7 @@ describe("portfolio mutations", () => {
     await createTransactionMutation(
       {
         type: TransactionType.INITIAL_BALANCE,
+        basisMethod: BasisMethod.KNOWN_COST,
         accountId: account.id,
         assetMode: "new",
         newAsset: {
@@ -587,6 +675,7 @@ describe("portfolio mutations", () => {
 
     await expect(createTransactionMutation({
       type: TransactionType.INITIAL_BALANCE,
+      basisMethod: BasisMethod.KNOWN_COST,
       accountId: account.id,
       assetMode: "new",
       newAsset: { symbol: "btc", name: "Wrong asset", assetClass: AssetClass.OTHER, assetType: AssetType.OTHER, currency: "EUR" },
@@ -603,6 +692,7 @@ describe("portfolio mutations", () => {
   it("rolls back a new asset when its transaction cannot be created", async () => {
     await expect(createTransactionMutation({
       type: TransactionType.INITIAL_BALANCE,
+      basisMethod: BasisMethod.KNOWN_COST,
       accountId: "missing-account",
       assetMode: "new",
       newAsset: { symbol: "ROLLBACK", name: "Rollback Asset", assetClass: AssetClass.OTHER, assetType: AssetType.OTHER, currency: "EUR" },
@@ -621,7 +711,7 @@ describe("portfolio mutations", () => {
       data: { symbol: "CONCURRENT", name: "Concurrent Asset", assetClass: AssetClass.OTHER, assetType: AssetType.OTHER, currency: "EUR" },
     });
     await testDb.prisma.transaction.create({
-      data: { accountId: account.id, assetId: asset.id, type: TransactionType.INITIAL_BALANCE, quantity: "1", pricePerUnit: "1", currency: "EUR", executedAt: new Date("2026-01-01") },
+      data: { accountId: account.id, assetId: asset.id, type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.KNOWN_COST, quantity: "1", pricePerUnit: "1", currency: "EUR", executedAt: new Date("2026-01-01") },
     });
     const sell = () => createTransactionMutation({
       type: TransactionType.SELL,
@@ -645,11 +735,12 @@ describe("portfolio mutations", () => {
       data: { symbol: "EDITABLE", name: "Editable Asset", assetClass: AssetClass.OTHER, assetType: AssetType.OTHER, currency: "EUR" },
     });
     const original = await testDb.prisma.transaction.create({
-      data: { accountId: account.id, assetId: asset.id, type: TransactionType.INITIAL_BALANCE, quantity: "1", pricePerUnit: null, currency: "EUR", executedAt: new Date("2026-01-01") },
+      data: { accountId: account.id, assetId: asset.id, type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.UNKNOWN, quantity: "1", pricePerUnit: null, currency: "EUR", executedAt: new Date("2026-01-01") },
     });
 
     await updateTransactionMutation({
       id: original.id,
+      basisMethod: BasisMethod.KNOWN_COST,
       quantity: "1.5",
       totalAmount: "300",
       fee: "2",

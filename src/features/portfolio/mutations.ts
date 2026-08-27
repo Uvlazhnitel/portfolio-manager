@@ -2,6 +2,7 @@ import {
   AssetClass,
   AssetQuoteProvider,
   AssetType,
+  BasisMethod,
   MarketPriceUnit,
   Prisma,
   TransactionGroupKind,
@@ -29,6 +30,7 @@ import {
 
 const implementedTransactionTypes = [
   TransactionType.INITIAL_BALANCE,
+  TransactionType.GIFT,
   TransactionType.BUY,
   TransactionType.SELL,
   TransactionType.DEPOSIT,
@@ -49,6 +51,7 @@ export class PortfolioMutationError extends Error {
 
 export const transactionMutationSchema = z.object({
   type: z.enum(implementedTransactionTypes),
+  basisMethod: z.enum(BasisMethod).optional(),
   accountId: z.string().min(1),
   assetMode: z.enum(["existing", "new"]).default("existing"),
   assetId: z.string().optional(),
@@ -67,6 +70,7 @@ export const transactionMutationSchema = z.object({
 export type TransactionMutationInput = z.input<typeof transactionMutationSchema>;
 
 export const updateTransactionSchema = transactionMutationSchema.pick({
+  basisMethod: true,
   quantity: true,
   physicalGoldWeightTroyOunces: true,
   pricePerUnit: true,
@@ -188,6 +192,7 @@ export async function createTransactionMutation(
       assetId: asset.id,
       accountId: parsed.accountId,
       type: parsed.type,
+      basisMethod: normalized.basisMethod,
       quantity: normalized.quantity,
       pricePerUnit: normalized.pricePerUnit,
       fee: normalized.fee,
@@ -506,6 +511,13 @@ export async function updateTransactionMutation(
 
     const normalized = normalizeTransaction({
       ...parsed,
+      basisMethod: parsed.basisMethod ?? target.basisMethod ?? (
+        target.type === TransactionType.INITIAL_BALANCE
+          ? target.pricePerUnit === null ? BasisMethod.UNKNOWN : BasisMethod.KNOWN_COST
+          : target.type === TransactionType.GIFT
+            ? target.pricePerUnit?.equals(0) ? BasisMethod.ZERO_COST : BasisMethod.FAIR_VALUE
+            : undefined
+      ),
       type: target.type,
       accountId: target.accountId,
       assetMode: "existing",
@@ -516,6 +528,7 @@ export async function updateTransactionMutation(
     await transaction.transaction.update({
       where: { id: target.id },
       data: {
+        basisMethod: normalized.basisMethod,
         quantity: normalized.quantity,
         pricePerUnit: normalized.pricePerUnit,
         fee: normalized.fee,
@@ -653,10 +666,43 @@ function normalizeTransaction(parsed: z.infer<typeof transactionMutationSchema>,
     pricePerUnit = "1";
   }
 
+  let basisMethod: BasisMethod | null = null;
+  if (parsed.type === TransactionType.INITIAL_BALANCE) {
+    if (parsed.basisMethod !== BasisMethod.KNOWN_COST && parsed.basisMethod !== BasisMethod.UNKNOWN) {
+      throw new PortfolioMutationError("Choose whether the opening acquisition basis is known or unknown.");
+    }
+    basisMethod = parsed.basisMethod;
+    if (basisMethod === BasisMethod.UNKNOWN) {
+      if (parsed.pricePerUnit !== undefined || totalAmount !== null || parsed.fee !== undefined) {
+        throw new PortfolioMutationError("Unknown opening basis cannot include a price, total cost, or fee.");
+      }
+      pricePerUnit = null;
+    } else if (!pricePerUnit) {
+      throw new PortfolioMutationError("Enter the known opening cost as a unit basis or total cost.");
+    }
+  } else if (parsed.type === TransactionType.GIFT) {
+    if (parsed.basisMethod !== BasisMethod.ZERO_COST && parsed.basisMethod !== BasisMethod.FAIR_VALUE) {
+      throw new PortfolioMutationError("Choose zero cost or fair value as the gift tracking basis.");
+    }
+    if (parsed.fee !== undefined) throw new PortfolioMutationError("Gifts cannot include a fee.");
+    basisMethod = parsed.basisMethod;
+    if (basisMethod === BasisMethod.ZERO_COST) {
+      if (parsed.pricePerUnit !== undefined || totalAmount !== null) {
+        throw new PortfolioMutationError("A zero-cost gift cannot include a price or total value.");
+      }
+      pricePerUnit = "0";
+    } else if (!pricePerUnit || !decimal(pricePerUnit).greaterThan(ZERO)) {
+      throw new PortfolioMutationError("Enter the fair value at the received date.");
+    }
+  } else if (parsed.basisMethod !== undefined) {
+    throw new PortfolioMutationError("Basis method is only available for opening balances and gifts.");
+  }
+
   return {
     quantity,
     pricePerUnit,
-    fee: parsed.fee ?? null,
+    fee: basisMethod === BasisMethod.UNKNOWN || parsed.type === TransactionType.GIFT ? null : parsed.fee ?? null,
+    basisMethod,
   };
 }
 
@@ -821,6 +867,7 @@ export function createPhysicalGoldInitialBalanceInput(input: {
 }): TransactionMutationInput {
   return {
     type: TransactionType.INITIAL_BALANCE,
+    basisMethod: input.totalPurchaseCost ? BasisMethod.KNOWN_COST : BasisMethod.UNKNOWN,
     accountId: input.accountId,
     assetMode: "existing",
     assetId: input.physicalGoldAssetId,

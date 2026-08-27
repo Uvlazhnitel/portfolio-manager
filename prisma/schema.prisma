@@ -35,12 +35,20 @@ enum AccountType {
 
 enum TransactionType {
   INITIAL_BALANCE
+  GIFT
   BUY
   SELL
   DEPOSIT
   WITHDRAWAL
   TRANSFER_IN
   TRANSFER_OUT
+}
+
+enum BasisMethod {
+  KNOWN_COST
+  UNKNOWN
+  ZERO_COST
+  FAIR_VALUE
 }
 
 enum TransactionGroupKind {
@@ -170,6 +178,7 @@ model Transaction {
   assetId            String
   accountId          String
   type               TransactionType
+  basisMethod        BasisMethod?
   quantity           Decimal         @db.Decimal(36, 18)
   pricePerUnit       Decimal?        @db.Decimal(28, 8)
   fee                Decimal?        @db.Decimal(28, 8)

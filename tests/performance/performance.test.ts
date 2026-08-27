@@ -43,9 +43,9 @@ describe("historical performance engine", () => {
       ],
     });
 
-    expect(history[0]).toEqual(expect.objectContaining({ portfolioValue: "1000.00", netInvested: "1000.00", investmentGain: "0.00", simpleReturnPercent: "0.00" }));
-    expect(history[1]).toEqual(expect.objectContaining({ portfolioValue: "1200.00", netInvested: "1000.00", investmentGain: "200.00", simpleReturnPercent: "20.00" }));
-    expect(history[2]).toEqual(expect.objectContaining({ portfolioValue: "1300.00", netInvested: "900.00", investmentGain: "400.00", simpleReturnPercent: "44.44" }));
+    expect(history[0]).toEqual(expect.objectContaining({ portfolioValue: "1000.00", netInvested: "0.00", investmentGain: "0.00", trackedCapitalReturnPercent: "0.00" }));
+    expect(history[1]).toEqual(expect.objectContaining({ portfolioValue: "1200.00", netInvested: "0.00", investmentGain: "200.00", trackedCapitalReturnPercent: "10.00" }));
+    expect(history[2]).toEqual(expect.objectContaining({ portfolioValue: "1300.00", netInvested: "100.00", investmentGain: "400.00", trackedCapitalReturnPercent: "17.39" }));
   });
 
   it("leaves incomplete valuations blank without losing the cashflow series", () => {
@@ -58,9 +58,9 @@ describe("historical performance engine", () => {
 
     expect(history[0]).toEqual(expect.objectContaining({
       portfolioValue: null,
-      netInvested: "1000.00",
-      investmentGain: null,
-      simpleReturnPercent: null,
+      netInvested: "0.00",
+      investmentGain: "0.00",
+      trackedCapitalReturnPercent: "0.00",
       isComplete: false,
       missingPriceSymbols: ["BTC"],
       hasStalePrices: true,
@@ -96,8 +96,8 @@ describe("historical performance engine", () => {
     expect(history[0]).toEqual(expect.objectContaining({
       portfolioValue: "1200.00",
       netInvested: "0.00",
-      investmentGain: "0.00",
-      simpleReturnPercent: null,
+      investmentGain: null,
+      trackedCapitalReturnPercent: null,
       isCostBasisPartial: true,
       missingCostBasisSymbols: ["BTC"],
     }));
@@ -119,13 +119,13 @@ describe("historical performance engine", () => {
       portfolioValue: "3500.00",
       netInvested: "1000.00",
       investmentGain: "500.00",
-      simpleReturnPercent: "50.00",
+      trackedCapitalReturnPercent: "50.00",
       isCostBasisPartial: true,
       missingCostBasisSymbols: ["ETH"],
     }));
   });
 
-  it("derives opening contributions from buys minus reused sale proceeds", () => {
+  it("keeps tracked capital gross while sales reduce net invested", () => {
     const openingTransactions = [
       assetTransaction("first-buy", TransactionType.BUY, "0.1", "2026-08-24T10:00:00Z"),
       assetTransaction("sale", TransactionType.SELL, "0.04", "2026-08-24T11:00:00Z"),
@@ -142,7 +142,8 @@ describe("historical performance engine", () => {
       portfolioValue: "1350.00",
       netInvested: "960.00",
       investmentGain: "390.00",
-      simpleReturnPercent: "40.63",
+      trackedCapital: "1360.00",
+      trackedCapitalReturnPercent: "28.68",
     }));
   });
 
@@ -160,7 +161,8 @@ describe("historical performance engine", () => {
       portfolioValue: "900.00",
       netInvested: "612.00",
       investmentGain: "288.00",
-      simpleReturnPercent: "47.06",
+      trackedCapital: "1010.00",
+      trackedCapitalReturnPercent: "28.51",
     }));
   });
 });
@@ -320,7 +322,7 @@ describe("performance read model", () => {
       dailyPriceStore: { listDailyPrices: async () => dailyRows, saveDailyPrices: vi.fn() },
     });
 
-    expect(model.summary).toEqual(expect.objectContaining({ portfolioValue: "1000.00", netInvested: "1000.00", netContributed: "1000.00", investmentGain: "0.00", simpleReturnPercent: "0.00", isPartial: false }));
+    expect(model.summary).toEqual(expect.objectContaining({ portfolioValue: "1000.00", netInvested: "0.00", netContributed: "1000.00", investmentGain: "0.00", trackedCapitalReturnPercent: "0.00", isPartial: false }));
     expect(model.history).toHaveLength(1);
     expect(model.trackingStartedAt).toBe("2026-08-26");
   });

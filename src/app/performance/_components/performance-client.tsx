@@ -37,9 +37,9 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryMetric icon={Landmark} label="Portfolio value" value={formatDecimalCurrency(summary.portfolioValue, currency)} />
-        <SummaryMetric icon={CircleDollarSign} label="Net invested" value={formatDecimalCurrency(summary.netInvested, currency)} isPartial={summary.isCostBasisPartial} />
+        <SummaryMetric icon={CircleDollarSign} label="Net invested" value={formatDecimalCurrency(summary.netInvested, currency)} isPartial={summary.isNetInvestedPartial} />
         <SummaryMetric icon={TrendingUp} label="Investment gain" value={signedMoneyOrUnavailable(summary.investmentGain, currency)} tone={gainTone(summary.investmentGain)} isPartial={summary.isCostBasisPartial} />
-        <SummaryMetric icon={ChartNoAxesCombined} label="Simple return" value={summary.simpleReturnPercent === null ? "Unavailable" : signedPercent(summary.simpleReturnPercent)} tone={gainTone(summary.simpleReturnPercent)} isPartial={summary.isCostBasisPartial} />
+        <SummaryMetric icon={ChartNoAxesCombined} label="Return on tracked capital" value={summary.trackedCapitalReturnPercent === null ? "Unavailable" : signedPercent(summary.trackedCapitalReturnPercent)} tone={gainTone(summary.trackedCapitalReturnPercent)} isPartial={summary.isCostBasisPartial} />
       </div>
 
       <Card className="min-w-0">
@@ -81,10 +81,13 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
         <DetailMetric label="External contributions" value={moneyOrUnavailable(summary.externalContributions, currency)} />
         <DetailMetric label="External withdrawals" value={moneyOrUnavailable(summary.externalWithdrawals, currency)} />
         <DetailMetric label="Net contributed" value={formatDecimalCurrency(summary.netContributed, currency)} />
+        <DetailMetric label="Opening basis (known)" value={formatDecimalCurrency(summary.openingBasis, currency)} />
+        <DetailMetric label="Gift tracking basis" value={formatDecimalCurrency(summary.giftTrackingBasis, currency)} />
+        <DetailMetric label="Tracked capital (covered)" value={formatDecimalCurrency(summary.trackedCapital, currency)} />
       </div>
       {summary.isExternalCashflowPartial ? <DataQualitySummary items={[{ message: `External cashflow totals are partial: ${summary.missingExternalCashflowSymbols.join(", ")} has missing acquisition data.` }]} label="Cashflow data" /> : null}
 
-      <p className="text-sm leading-6 text-muted">Net invested follows transaction cashflow: purchases add their cost, sales subtract net proceeds, and transfers have no effect. External contributions and withdrawals remain separate for cashflow-based performance metrics.</p>
+      <p className="text-sm leading-6 text-muted">Net invested is BUY cost plus fees minus SELL proceeds after fees. Internal trades and transfers, deposits, withdrawals, gifts, and opening balances do not change it. Deposits and withdrawals are external cashflows; opening and gift basis are tracked separately.</p>
     </div>
   );
 }
@@ -104,9 +107,11 @@ function TooltipValue({ label, value }: { label: string; value: string }) { retu
 function performanceDataQualityItems(performance: PerformanceReadModel): DataQualityItem[] {
   const { summary } = performance;
   const items: DataQualityItem[] = [];
-  if (summary.isPartial) items.push({ message: `Current performance is unavailable because prices are missing for: ${summary.missingPriceSymbols.join(", ")}.` });
+  if (summary.isPartial) items.push({ message: `Current valuation is partial because prices are missing for: ${summary.missingPriceSymbols.join(", ")}. Covered components still contribute to gain and return.` });
   if (performance.incompleteDates > 0) items.push({ message: `${performance.incompleteDates} historical ${performance.incompleteDates === 1 ? "day has" : "days have"} incomplete price coverage.` });
-  if (summary.isCostBasisPartial) items.push({ message: `Partial cost basis: net invested, gain, and return exclude ${summary.missingCostBasisSymbols.join(", ")}.` });
+  if (summary.isNetInvestedPartial) items.push({ message: `Net invested is partial because transaction values are missing for: ${summary.missingNetInvestedSymbols.join(", ")}.` });
+  if (summary.isCostBasisPartial) items.push({ message: `Gain and return are partial. Excluded components: ${summary.performanceExclusions.map((item) => `${item.symbol} (${item.reasons.join(", ")})`).join("; ")}.` });
+  if (summary.openingBasisUnknownSymbols.length > 0) items.push({ message: `Opening basis is unknown for: ${summary.openingBasisUnknownSymbols.join(", ")}. Valuation is retained, but those components are excluded from gain and return.` });
   if (performance.staleDates > 0 || summary.hasStalePrices) items.push({ message: "Some observations include stale prices." });
   return items;
 }
