@@ -103,7 +103,12 @@ describe("priced portfolio read models", () => {
       currentPrice: "50000.00",
       displayPriceUnit: "unit",
       currentValue: "50000.00",
+      averageAcquisitionPrice: "40000",
+      accountingAverageCost: "40000",
+      averageNetCost: "39998",
+      netCost: "39998.00",
       pnl: "10000.00",
+      netPnl: "10002.00",
       portfolioWeight: "98.04",
     }));
     expect(gold).toEqual(expect.objectContaining({
@@ -111,8 +116,12 @@ describe("priced portfolio read models", () => {
       currentPrice: "3110.35",
       displayPriceUnit: "troy oz",
       averageAcquisitionPrice: "2488.278144",
+      accountingAverageCost: "2488.278144",
+      averageNetCost: "2488.278144",
+      netCost: "800.00",
       currentValue: "1000.00",
       pnl: "200.00",
+      netPnl: "200.00",
       priceSource: "MANUAL",
     }));
     const goldTransaction = model.transactions.find((transaction) => transaction.symbol === "PHYSICAL_GOLD");

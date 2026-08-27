@@ -16,6 +16,7 @@ import type {
   CalculateHoldingCostBasisInput,
   CalculateHistoricalPerformanceInput,
   CalculateStrategyAlignmentInput,
+  AssetNetCostBasis,
   ContributionAllocation,
   ContributionAssetRecommendation,
   ContributionPlan,
@@ -876,6 +877,48 @@ export function calculateHoldingCostBasis(input: CalculateHoldingCostBasisInput)
       status: "AVAILABLE",
       totalCost: toDecimalString(pool.cost),
       averageAcquisitionPrice: toDecimalString(pool.cost.div(quantity)),
+      reason: null,
+    };
+  });
+}
+
+export function calculateAssetNetCostBasis(input: CalculateHoldingCostBasisInput): AssetNetCostBasis[] {
+  const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
+  const transactionsByAsset = new Map<string, EngineTransaction[]>();
+  for (const transaction of input.transactions) {
+    const transactions = transactionsByAsset.get(transaction.assetId) ?? [];
+    transactions.push(transaction);
+    transactionsByAsset.set(transaction.assetId, transactions);
+  }
+
+  const quantityByAsset = new Map<string, Prisma.Decimal>();
+  for (const holding of input.portfolio.holdings) {
+    quantityByAsset.set(
+      holding.assetId,
+      (quantityByAsset.get(holding.assetId) ?? ZERO).plus(decimal(holding.quantity)),
+    );
+  }
+
+  return [...quantityByAsset.entries()].map(([assetId, quantity]) => {
+    const unavailable = (reason: AssetNetCostBasis["reason"]): AssetNetCostBasis => ({
+      assetId,
+      status: "UNAVAILABLE",
+      netCost: null,
+      averageNetCost: null,
+      reason,
+    });
+    const asset = assetById.get(assetId);
+    if (!asset) return unavailable("INCONSISTENT_TRANSACTION_HISTORY");
+    if (!quantity.greaterThan(ZERO)) return unavailable("NON_POSITIVE_HOLDING");
+
+    const netCost = calculateAssetInvestmentFlow(transactionsByAsset.get(assetId) ?? [], asset, input.baseCurrency);
+    if (netCost === null) return unavailable("MISSING_ACQUISITION_PRICE");
+
+    return {
+      assetId,
+      status: "AVAILABLE",
+      netCost: toDecimalString(netCost),
+      averageNetCost: toDecimalString(netCost.div(quantity)),
       reason: null,
     };
   });

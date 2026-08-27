@@ -1,6 +1,7 @@
 import { AssetClass, AssetType, TransactionType } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import {
+  calculateAssetNetCostBasis,
   calculateHoldings,
   calculateHoldingCostBasis,
   calculatePortfolio,
@@ -753,6 +754,60 @@ describe("portfolio engine holding cost basis", () => {
     const portfolio = calculatePortfolio({ assets: engineAssets, transactions, marketPrices: prices });
     expect(calculateHoldingCostBasis({ portfolio, assets: engineAssets, transactions, baseCurrency: "EUR" })[0]).toEqual(
       expect.objectContaining({ status: "AVAILABLE", totalCost: "375.00", averageAcquisitionPrice: "1.00" }),
+    );
+  });
+});
+
+describe("portfolio engine asset net cost basis", () => {
+  it("reduces average net cost after a partial sell", () => {
+    const transactions: EngineTransaction[] = [
+      { assetId: "btc", accountId: "bybit", type: TransactionType.BUY, quantity: "2", pricePerUnit: "100", fee: "2", currency: "EUR", executedAt: "2026-01-01" },
+      { assetId: "btc", accountId: "bybit", type: TransactionType.SELL, quantity: "0.5", pricePerUnit: "150", currency: "EUR", executedAt: "2026-02-01" },
+    ];
+    const portfolio = calculatePortfolio({ assets, transactions, marketPrices: prices });
+
+    expect(calculateAssetNetCostBasis({ portfolio, assets, transactions, baseCurrency: "EUR" })).toContainEqual({
+      assetId: "btc",
+      status: "AVAILABLE",
+      netCost: "127.00",
+      averageNetCost: "84.67",
+      reason: null,
+    });
+    expect(calculateHoldingCostBasis({ portfolio, assets, transactions, baseCurrency: "EUR" })).toContainEqual(
+      expect.objectContaining({ assetId: "btc", averageAcquisitionPrice: "101.00" }),
+    );
+  });
+
+  it("handles reinvested proceeds and sell fees without double-counting new capital", () => {
+    const transactions: EngineTransaction[] = [
+      { assetId: "btc", accountId: "bybit", type: TransactionType.BUY, quantity: "1", pricePerUnit: "100", currency: "EUR" },
+      { assetId: "btc", accountId: "bybit", type: TransactionType.SELL, quantity: "0.5", pricePerUnit: "200", fee: "5", currency: "EUR" },
+      { assetId: "btc", accountId: "bybit", type: TransactionType.BUY, quantity: "0.5", pricePerUnit: "200", fee: "1", currency: "EUR" },
+    ];
+    const portfolio = calculatePortfolio({ assets, transactions, marketPrices: prices });
+
+    expect(calculateAssetNetCostBasis({ portfolio, assets, transactions, baseCurrency: "EUR" })).toContainEqual(
+      expect.objectContaining({ assetId: "btc", status: "AVAILABLE", netCost: "106.00", averageNetCost: "106.00" }),
+    );
+  });
+
+  it("keeps paired transfers neutral and rejects transfer-only assets", () => {
+    const transferred: EngineTransaction[] = [
+      { assetId: "btc", accountId: "bybit", type: TransactionType.BUY, quantity: "1", pricePerUnit: "100", currency: "EUR" },
+      { assetId: "btc", accountId: "bybit", type: TransactionType.TRANSFER_OUT, quantity: "0.4", currency: "EUR" },
+      { assetId: "btc", accountId: "ledger", type: TransactionType.TRANSFER_IN, quantity: "0.4", currency: "EUR" },
+    ];
+    const transferredPortfolio = calculatePortfolio({ assets, transactions: transferred, marketPrices: prices });
+    expect(calculateAssetNetCostBasis({ portfolio: transferredPortfolio, assets, transactions: transferred, baseCurrency: "EUR" })).toContainEqual(
+      expect.objectContaining({ assetId: "btc", status: "AVAILABLE", netCost: "100.00", averageNetCost: "100.00" }),
+    );
+
+    const transferOnly: EngineTransaction[] = [
+      { assetId: "btc", accountId: "ledger", type: TransactionType.TRANSFER_IN, quantity: "1", currency: "EUR" },
+    ];
+    const transferOnlyPortfolio = calculatePortfolio({ assets, transactions: transferOnly, marketPrices: prices });
+    expect(calculateAssetNetCostBasis({ portfolio: transferOnlyPortfolio, assets, transactions: transferOnly, baseCurrency: "EUR" })).toContainEqual(
+      expect.objectContaining({ assetId: "btc", status: "UNAVAILABLE", netCost: null, averageNetCost: null }),
     );
   });
 });

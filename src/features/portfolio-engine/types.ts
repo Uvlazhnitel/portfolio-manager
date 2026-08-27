@@ -179,6 +179,14 @@ export type HoldingCostBasis = {
   reason: HoldingCostBasisReason | null;
 };
 
+export type AssetNetCostBasis = {
+  assetId: string;
+  status: "AVAILABLE" | "UNAVAILABLE";
+  netCost: string | null;
+  averageNetCost: string | null;
+  reason: HoldingCostBasisReason | null;
+};
+
 export type CalculateHoldingCostBasisInput = {
   portfolio: PortfolioSnapshot;
   assets: EngineAsset[];

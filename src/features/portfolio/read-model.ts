@@ -1,5 +1,5 @@
 import { AssetType, type Prisma } from "@prisma/client";
-import { calculateHoldingCostBasis, calculatePortfolio, calculatePortfolioAnalytics, compareAllocationToStrategy } from "@/features/portfolio-engine";
+import { calculateAssetNetCostBasis, calculateHoldingCostBasis, calculatePortfolio, calculatePortfolioAnalytics, compareAllocationToStrategy } from "@/features/portfolio-engine";
 import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/service";
 import { PortfolioRepository } from "@/features/portfolio/repository";
@@ -29,8 +29,12 @@ export type PortfolioHoldingRow = {
   priceTimestamp: string | null;
   isPriceStale: boolean;
   averageAcquisitionPrice: string | null;
+  accountingAverageCost: string | null;
+  averageNetCost: string | null;
+  netCost: string | null;
   displayPriceUnit: "unit" | "troy oz";
   pnl: string | null;
+  netPnl: string | null;
   assetClass: string;
   assetType: string;
   portfolioWeight: string | null;
@@ -212,6 +216,12 @@ function buildHoldingRows(
       basis,
     ]),
   );
+  const netCostByAsset = new Map(
+    calculateAssetNetCostBasis({ portfolio, assets, transactions, baseCurrency }).map((basis) => [
+      basis.assetId,
+      basis,
+    ]),
+  );
   const valuedByHolding = new Map(
     portfolio.valuedHoldings.map((holding) => [holdingKey(holding.accountId, holding.assetId), holding]),
   );
@@ -221,12 +231,19 @@ function buildHoldingRows(
     const asset = assetsById.get(holding.assetId);
     const account = accountsById.get(holding.accountId);
     const costBasis = costBasisByHolding.get(holdingKey(holding.accountId, holding.assetId));
+    const netCostBasis = netCostByAsset.get(holding.assetId);
     const valuedHolding = valuedByHolding.get(holdingKey(holding.accountId, holding.assetId));
     const marketPrice = pricesByAsset.get(holding.assetId);
     const isPhysicalGold = asset?.assetType === AssetType.PHYSICAL_GOLD;
     const displayPriceUnit: PortfolioHoldingRow["displayPriceUnit"] = isPhysicalGold ? "troy oz" : "unit";
     const averageAcquisitionPrice = costBasis?.status === "AVAILABLE" && costBasis.averageAcquisitionPrice !== null
       ? displayUnitPrice(costBasis.averageAcquisitionPrice, isPhysicalGold).toString()
+      : null;
+    const averageNetCost = netCostBasis?.status === "AVAILABLE" && netCostBasis.averageNetCost !== null
+      ? displayUnitPrice(netCostBasis.averageNetCost, isPhysicalGold).toString()
+      : null;
+    const rowNetCost = netCostBasis?.status === "AVAILABLE" && netCostBasis.averageNetCost !== null
+      ? decimal(netCostBasis.averageNetCost).mul(holding.quantity)
       : null;
 
     return {
@@ -242,10 +259,17 @@ function buildHoldingRows(
       priceTimestamp: marketPrice?.timestamp.toISOString() ?? null,
       isPriceStale: marketPrice?.isStale ?? false,
       averageAcquisitionPrice,
+      accountingAverageCost: averageAcquisitionPrice,
+      averageNetCost,
+      netCost: rowNetCost ? rowNetCost.toFixed(2) : null,
       displayPriceUnit,
       pnl:
         marketPrice && valuedHolding && costBasis?.status === "AVAILABLE" && costBasis.totalCost !== null
           ? decimal(valuedHolding.value).minus(costBasis.totalCost).toFixed(2)
+          : null,
+      netPnl:
+        marketPrice && valuedHolding && rowNetCost
+          ? decimal(valuedHolding.value).minus(rowNetCost).toFixed(2)
           : null,
       assetClass: asset?.assetClass ?? "OTHER",
       assetType: asset?.assetType ?? "OTHER",

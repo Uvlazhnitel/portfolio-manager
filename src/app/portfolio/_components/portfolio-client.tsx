@@ -673,7 +673,7 @@ function HoldingsSection({ portfolio, onAddTransaction }: PortfolioClientProps &
               <th className="px-4 py-3 text-right font-medium">Quantity</th>
               <th className="px-4 py-3 text-right font-medium">Price</th>
               <th className="px-4 py-3 text-right font-medium">Value</th>
-              <th className="px-4 py-3 text-right font-medium">Avg cost</th>
+              <th className="px-4 py-3 text-right font-medium">Avg net cost</th>
               <th className="px-4 py-3 text-right font-medium">P&amp;L</th>
               <th className="px-4 py-3 text-right font-medium">Weight</th>
               <th className="px-4 py-3"><span className="sr-only">Actions</span></th>
@@ -698,8 +698,10 @@ function HoldingsSection({ portfolio, onAddTransaction }: PortfolioClientProps &
                   <p className={cn("mt-1 text-xs", holding.isPriceStale ? "text-warning" : "text-muted")}>{priceStatusText(holding)}</p>
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums">{formatMoneyOrUnavailable(holding.currentValue, portfolio.valuation.currency)}</td>
-                <td className="px-4 py-3 text-right tabular-nums">{formatUnitPriceOrDash(holding.averageAcquisitionPrice, portfolio.valuation.currency, holding.displayPriceUnit)}</td>
-                <td className="px-4 py-3 text-right tabular-nums">{formatMoneyOrUnavailable(holding.pnl, portfolio.valuation.currency)}</td>
+                <td className="px-4 py-3 text-right tabular-nums" title={holding.accountingAverageCost ? `Accounting avg cost: ${formatUnitPriceOrDashText(holding.accountingAverageCost, portfolio.valuation.currency, holding.displayPriceUnit)}` : undefined}>
+                  {formatUnitPriceOrDash(holding.averageNetCost, portfolio.valuation.currency, holding.displayPriceUnit)}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums">{formatMoneyOrUnavailable(holding.netPnl, portfolio.valuation.currency)}</td>
                 <td className="px-4 py-3 text-right tabular-nums">{holding.portfolioWeight ? `${holding.portfolioWeight}%` : "Unavailable"}</td>
                 <td className="px-4 py-3 text-right">
                   <button type="button" onClick={() => onAddTransaction(holding.assetId, holding.accountId)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary" title="Add transaction" aria-label={`Add transaction for ${holding.assetName}`}>
@@ -730,9 +732,9 @@ function HoldingsSection({ portfolio, onAddTransaction }: PortfolioClientProps &
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <Info label="Price" value={formatUnitPriceOrDashText(holding.currentPrice, portfolio.valuation.currency, holding.displayPriceUnit)} />
               <Info label="Value" value={formatMoneyOrUnavailableText(holding.currentValue, portfolio.valuation.currency)} />
-              <Info label="P&L" value={formatMoneyOrUnavailableText(holding.pnl, portfolio.valuation.currency)} />
+              <Info label="P&L" value={formatMoneyOrUnavailableText(holding.netPnl, portfolio.valuation.currency)} />
               <Info label="Weight" value={holding.portfolioWeight ? `${holding.portfolioWeight}%` : "Unavailable"} />
-              <Info label="Avg cost" value={formatUnitPriceOrDashText(holding.averageAcquisitionPrice, portfolio.valuation.currency, holding.displayPriceUnit)} />
+              <Info label="Avg net cost" value={formatUnitPriceOrDashText(holding.averageNetCost, portfolio.valuation.currency, holding.displayPriceUnit)} />
               <Info label="Price status" value={priceStatusText(holding)} />
             </dl>
           </div>
