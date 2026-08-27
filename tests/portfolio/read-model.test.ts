@@ -99,10 +99,17 @@ describe("priced portfolio read models", () => {
     expect(model.valuation.totalValue).toBe("51000.00");
     expect(model.valuation.isPartial).toBe(false);
     expect(model.strategyStatus?.totalCount).toBe(4);
-    expect(btc).toEqual(expect.objectContaining({ currentValue: "50000.00", pnl: "10000.00", portfolioWeight: "98.04" }));
+    expect(btc).toEqual(expect.objectContaining({
+      currentPrice: "50000.00",
+      displayPriceUnit: "unit",
+      currentValue: "50000.00",
+      pnl: "10000.00",
+      portfolioWeight: "98.04",
+    }));
     expect(gold).toEqual(expect.objectContaining({
       quantityLabel: "0.3215 oz",
       currentPrice: "3110.35",
+      displayPriceUnit: "troy oz",
       averageAcquisitionPrice: "2488.278144",
       currentValue: "1000.00",
       pnl: "200.00",
