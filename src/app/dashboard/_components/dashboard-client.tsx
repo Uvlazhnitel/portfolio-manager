@@ -283,7 +283,7 @@ function TrendTooltip({ active, row, currency }: { active?: boolean; row?: Trend
         <div className="mt-3 space-y-2 text-sm">
           <TooltipValue label="Portfolio value" value={formatCurrency(String(row.portfolioValue), currency)} />
           <TooltipValue label="Net invested" value={formatCurrency(String(row.netInvested), currency)} />
-          <TooltipValue label="Investment gain" value={<PnlIndicator value={decimalFromNumber(row.investmentGain)} format="currency" currency={currency} size="sm" />} />
+          <TooltipValue label="Investment gain" value={<PnlIndicator value={decimalFromNumber(row.investmentGain)} format="currency" currency={currency} size="sm" variant="text" />} />
         </div>
       ) : <p className="mt-2 text-sm text-warning">Missing: {row.missingPriceSymbols.join(", ")}</p>}
       {row.hasStalePrices ? <p className="mt-2 text-xs text-warning">Includes stale prices</p> : null}

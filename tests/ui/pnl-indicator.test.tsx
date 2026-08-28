@@ -7,7 +7,10 @@ describe("PnlIndicator", () => {
     const markup = renderToStaticMarkup(<PnlIndicator value="191.28" format="currency" currency="USD" />);
 
     expect(markup).toContain("data-tone=\"positive\"");
+    expect(markup).toContain("data-variant=\"pill\"");
     expect(markup).toContain("+$191.28");
+    expect(markup).toContain("border-success");
+    expect(markup).toContain("bg-success");
     expect(markup).toContain("text-success");
   });
 
@@ -29,5 +32,17 @@ describe("PnlIndicator", () => {
     expect(zeroMarkup).not.toContain("text-destructive");
     expect(unavailableMarkup).toContain("data-tone=\"neutral\"");
     expect(unavailableMarkup).toContain("Price unavailable");
+  });
+
+  it("can render as plain signed text without pill background or border", () => {
+    const markup = renderToStaticMarkup(<PnlIndicator value="191.28" format="currency" currency="USD" variant="text" />);
+
+    expect(markup).toContain("data-tone=\"positive\"");
+    expect(markup).toContain("data-variant=\"text\"");
+    expect(markup).toContain("+$191.28");
+    expect(markup).toContain("text-success");
+    expect(markup).not.toContain("border-success");
+    expect(markup).not.toContain("bg-success");
+    expect(markup).not.toContain("rounded-md");
   });
 });

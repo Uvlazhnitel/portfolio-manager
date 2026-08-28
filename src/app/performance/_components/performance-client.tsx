@@ -43,8 +43,8 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryMetric icon={Landmark} label="Portfolio value" value={formatDecimalCurrency(summary.portfolioValue, currency)} />
         <SummaryMetric icon={CircleDollarSign} label="Net invested" value={formatDecimalCurrency(summary.netInvested, currency)} isPartial={summary.isNetInvestedPartial} />
-        <SummaryMetric icon={TrendingUp} label="Investment gain" value={<PnlIndicator value={summary.investmentGain} format="currency" currency={currency} size="lg" />} isPartial={summary.isCostBasisPartial} />
-        <SummaryMetric icon={ChartNoAxesCombined} label="Return on tracked capital" value={<PnlIndicator value={summary.trackedCapitalReturnPercent} format="percent" size="lg" />} isPartial={summary.isCostBasisPartial} />
+        <SummaryMetric icon={TrendingUp} label="Investment gain" value={<PnlIndicator value={summary.investmentGain} format="currency" currency={currency} size="lg" variant="text" />} isPartial={summary.isCostBasisPartial} />
+        <SummaryMetric icon={ChartNoAxesCombined} label="Return on tracked capital" value={<PnlIndicator value={summary.trackedCapitalReturnPercent} format="percent" size="lg" variant="text" />} isPartial={summary.isCostBasisPartial} />
       </div>
 
       <Card className="min-w-0">
@@ -102,7 +102,7 @@ function SummaryMetric({ icon: Icon, label, value, isPartial = false }: { icon: 
 
 function PerformanceTooltip({ active, row, currency }: { active?: boolean; row?: ChartRow; currency: string }) {
   if (!active || !row) return null;
-  return <div className="max-w-64 rounded-lg border border-border bg-card p-3 shadow-xl"><p className="font-medium text-foreground">{formatDate(row.date)}</p>{row.isComplete ? <div className="mt-3 space-y-2 text-sm"><TooltipValue label="Portfolio value" value={moneyOrUnavailable(decimalFromNumber(row.portfolioValue), currency)} /><TooltipValue label="Net invested" value={moneyOrUnavailable(decimalFromNumber(row.netInvested), currency)} /><TooltipValue label="Investment gain" value={<PnlIndicator value={decimalFromNumber(row.investmentGain)} format="currency" currency={currency} size="sm" />} /></div> : <p className="mt-2 text-sm text-warning">Missing: {row.missingPriceSymbols.join(", ")}</p>}{row.hasStalePrices ? <p className="mt-2 text-xs text-warning">Includes stale observations</p> : null}</div>;
+  return <div className="max-w-64 rounded-lg border border-border bg-card p-3 shadow-xl"><p className="font-medium text-foreground">{formatDate(row.date)}</p>{row.isComplete ? <div className="mt-3 space-y-2 text-sm"><TooltipValue label="Portfolio value" value={moneyOrUnavailable(decimalFromNumber(row.portfolioValue), currency)} /><TooltipValue label="Net invested" value={moneyOrUnavailable(decimalFromNumber(row.netInvested), currency)} /><TooltipValue label="Investment gain" value={<PnlIndicator value={decimalFromNumber(row.investmentGain)} format="currency" currency={currency} size="sm" variant="text" />} /></div> : <p className="mt-2 text-sm text-warning">Missing: {row.missingPriceSymbols.join(", ")}</p>}{row.hasStalePrices ? <p className="mt-2 text-xs text-warning">Includes stale observations</p> : null}</div>;
 }
 
 function DetailMetric({ label, value }: { label: string; value: string }) { return <div><p className="text-xs uppercase text-muted">{label}</p><p className="mt-1 font-medium text-foreground">{value}</p></div>; }

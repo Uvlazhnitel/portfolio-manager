@@ -851,7 +851,7 @@ function HoldingsSection({ portfolio, onAddTransaction }: PortfolioClientProps &
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <Info label="Price" value={formatUnitPriceOrDashText(holding.currentPrice, portfolio.valuation.currency, holding.displayPriceUnit)} />
               <Info label="Value" value={formatMoneyOrUnavailableText(holding.currentValue, portfolio.valuation.currency)} />
-              <Info label="P&L" value={<PnlIndicator value={holding.netPnl} format="currency" currency={portfolio.valuation.currency} unavailableLabel="Price unavailable" size="sm" />} />
+              <Info label="P&L" value={<PnlIndicator value={holding.netPnl} format="currency" currency={portfolio.valuation.currency} unavailableLabel="Price unavailable" size="sm" variant="text" />} />
               <Info label="Weight" value={holding.portfolioWeight ? `${holding.portfolioWeight}%` : "Unavailable"} />
               <Info label="Avg net cost" value={formatUnitPriceOrDashText(holding.averageNetCost, portfolio.valuation.currency, holding.displayPriceUnit)} />
               <Info label="Price status" value={priceStatusText(holding)} />
