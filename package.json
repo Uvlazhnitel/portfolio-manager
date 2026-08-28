@@ -17,6 +17,8 @@
     "prisma:validate": "prisma validate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
+    "db:backup": "bash scripts/db-backup.sh",
+    "db:restore": "bash scripts/db-restore.sh",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio"
   },

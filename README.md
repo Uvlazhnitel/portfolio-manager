@@ -123,9 +123,32 @@ Never prefix API keys with `NEXT_PUBLIC_` and never commit `.env`.
 ```bash
 pnpm db:migrate   # create a development migration / apply local migrations
 pnpm db:deploy    # apply committed migrations in production
+pnpm db:backup    # full Docker PostgreSQL backup under backups/
+pnpm db:restore -- backups/file.dump --confirm portfolio_manager
 pnpm db:seed      # idempotent MVP seed
 pnpm db:studio    # Prisma Studio
 ```
+
+### Database backup and restore
+
+The backup command uses `pg_dump` from the running Docker Compose `postgres` service and writes a complete custom-format archive containing all application data, including transactions, strategy, price history, settings, and integration records:
+
+```bash
+pnpm db:backup
+pnpm db:backup -- backups/manual.dump
+```
+
+Backup files are stored under the git-ignored `backups/` directory by default. Existing files are never overwritten.
+
+Restore is destructive and only targets the Compose database named `portfolio_manager`. It requires both an explicit archive path and the exact database confirmation:
+
+```bash
+pnpm db:restore -- backups/portfolio_manager_20260829_120000.dump --confirm portfolio_manager
+```
+
+Before replacing the database, restore validates the archive and creates an additional `portfolio_manager_before_restore_*.dump` safety backup. It stops `app` and `history-worker`, recreates the application database, restores the complete archive, and starts the services again. If restore fails, the application remains stopped and the safety-backup path is printed.
+
+Back up `APP_ENCRYPTION_KEY` separately in a secure password manager or secrets store. It is not contained in PostgreSQL backups, and encrypted integration credentials restored from the database cannot be decrypted without the same key. Database dumps also do not include PostgreSQL cluster roles or other environment secrets.
 
 ### Verification
 
