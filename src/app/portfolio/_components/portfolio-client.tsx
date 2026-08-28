@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useActionState,
   useCallback,
@@ -50,7 +51,8 @@ type DialogState =
 type AssetSelection = AssetCatalogResult | { source: "CUSTOM" };
 type TransactionOperation = "INITIAL_BALANCE" | "GIFT" | "BUY" | "SELL" | "TRANSFER" | "TRADE" | "DEPOSIT" | "WITHDRAWAL";
 
-type PortfolioClientProps = { portfolio: PortfolioReadModel };
+type PortfolioInitialDialog = "asset" | null;
+type PortfolioClientProps = { portfolio: PortfolioReadModel; initialDialog?: PortfolioInitialDialog };
 
 const accountTypes = ["EXCHANGE", "BROKER", "WALLET", "PHYSICAL", "BANK", "OTHER"] as const;
 const assetClasses = ["ETF", "CRYPTO", "GOLD", "CASH", "OTHER"] as const;
@@ -66,10 +68,19 @@ const operationChoices: Array<[TransactionOperation, string]> = [
   ["WITHDRAWAL", "Withdrawal"],
 ];
 
-export function PortfolioClient({ portfolio }: PortfolioClientProps) {
+export function PortfolioClient({ portfolio, initialDialog = null }: PortfolioClientProps) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<PortfolioTab>("holdings");
-  const [dialog, setDialog] = useState<DialogState>(null);
+  const [dialog, setDialog] = useState<DialogState>(initialDialog ? { kind: initialDialog } : null);
+  const [dialogOpenedFromUrl, setDialogOpenedFromUrl] = useState(Boolean(initialDialog));
   const dataQualityItems = portfolioDataQualityItems(portfolio);
+  const closeDialog = useCallback(() => {
+    setDialog(null);
+    if (dialogOpenedFromUrl) {
+      setDialogOpenedFromUrl(false);
+      router.replace("/portfolio", { scroll: false });
+    }
+  }, [dialogOpenedFromUrl, router]);
 
   return (
     <div className="space-y-4">
@@ -103,13 +114,13 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
         <TransactionsSection portfolio={portfolio} onAddTransaction={() => setDialog({ kind: "transaction" })} onEditTransaction={(transactionId) => setDialog({ kind: "edit-transaction", transactionId })} />
       ) : null}
 
-      {dialog?.kind === "asset" ? <AddAssetDialog portfolio={portfolio} onClose={() => setDialog(null)} /> : null}
-      {dialog?.kind === "account" ? <AddAccountDialog onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === "asset" ? <AddAssetDialog portfolio={portfolio} onClose={closeDialog} /> : null}
+      {dialog?.kind === "account" ? <AddAccountDialog onClose={closeDialog} /> : null}
       {dialog?.kind === "transaction" ? (
-        <AddTransactionDialog portfolio={portfolio} initialAssetId={dialog.assetId} initialAccountId={dialog.accountId} onClose={() => setDialog(null)} />
+        <AddTransactionDialog portfolio={portfolio} initialAssetId={dialog.assetId} initialAccountId={dialog.accountId} onClose={closeDialog} />
       ) : null}
       {dialog?.kind === "edit-transaction" ? (
-        <EditTransactionDialog portfolio={portfolio} transactionId={dialog.transactionId} onClose={() => setDialog(null)} />
+        <EditTransactionDialog portfolio={portfolio} transactionId={dialog.transactionId} onClose={closeDialog} />
       ) : null}
     </div>
   );

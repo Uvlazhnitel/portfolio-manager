@@ -33,3 +33,5 @@ export const mobileNavigationItems = [
   { label: "Assistant", href: "/assistant", icon: Bot },
   { label: "More", href: "/more", icon: Settings },
 ] as const;
+
+export const mobileAddActionHref = "/portfolio?action=add-asset";

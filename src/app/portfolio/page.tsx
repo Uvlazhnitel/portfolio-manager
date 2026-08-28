@@ -7,7 +7,13 @@ import { getPortfolioReadModel } from "@/features/portfolio/read-model";
 
 export const dynamic = "force-dynamic";
 
-export default async function PortfolioPage() {
+export default async function PortfolioPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ action?: string | string[] }>;
+}) {
+  const params = await searchParams;
+  const initialDialog = params.action === "add-asset" ? "asset" : null;
   const portfolio = await getPortfolioReadModel();
 
   return (
@@ -25,7 +31,7 @@ export default async function PortfolioPage() {
           </>
         }
       />
-      <PortfolioClient portfolio={portfolio} />
+      <PortfolioClient key={initialDialog ?? "default"} portfolio={portfolio} initialDialog={initialDialog} />
     </>
   );
 }
