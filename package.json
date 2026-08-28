@@ -13,6 +13,7 @@
     "history:capture": "node --conditions=react-server --import tsx src/workers/history-capture.ts",
     "history:worker": "node --conditions=react-server --import tsx src/workers/history-worker.ts",
     "assets:backfill-logos": "node --conditions=react-server --import tsx src/scripts/backfill-asset-logos.ts",
+    "portfolio:reconcile-eth": "node --conditions=react-server --import tsx src/scripts/reconcile-eth-opening.ts",
     "prisma:validate": "prisma validate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
