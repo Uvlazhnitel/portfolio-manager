@@ -133,7 +133,7 @@ function PortfolioOverview({ portfolio, dataQualityItems }: PortfolioClientProps
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-muted">Portfolio value</p>
-          <p className="mt-5 break-words text-4xl font-semibold text-foreground sm:text-5xl">
+          <p className="mt-5 break-words text-5xl font-semibold text-foreground sm:text-6xl">
             {formatCurrency(valuation.totalValue, valuation.currency)}
           </p>
         </div>
@@ -150,10 +150,10 @@ function PortfolioOverview({ portfolio, dataQualityItems }: PortfolioClientProps
           </div>
         </div>
       </div>
-      <dl className="grid gap-x-5 gap-y-4 border-t border-border pt-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <SummaryMetric label="Net invested" value={formatCurrency(valuation.netInvested, valuation.currency)} />
-        <SummaryMetric label="Investment gain" value={valuation.investmentGain ? formatMoneyWithSign(valuation.investmentGain, valuation.currency) : "Unavailable"} tone={moneyTone(valuation.investmentGain)} />
-        <SummaryMetric label="Return on tracked capital" value={valuation.trackedCapitalReturnPercent ? formatPercentWithSign(valuation.trackedCapitalReturnPercent) : "Unavailable"} tone={moneyTone(valuation.trackedCapitalReturnPercent)} />
+      <dl className="grid gap-x-6 gap-y-5 border-t border-border pt-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <SummaryMetric label="Net invested" value={formatCurrency(valuation.netInvested, valuation.currency)} emphasis="primary" />
+        <SummaryMetric label="Investment gain" value={valuation.investmentGain ? formatMoneyWithSign(valuation.investmentGain, valuation.currency) : "Unavailable"} tone={moneyTone(valuation.investmentGain)} emphasis="primary" />
+        <SummaryMetric label="Return on tracked capital" value={valuation.trackedCapitalReturnPercent ? formatPercentWithSign(valuation.trackedCapitalReturnPercent) : "Unavailable"} tone={moneyTone(valuation.trackedCapitalReturnPercent)} emphasis="primary" />
         <SummaryMetric label="Tracked capital" value={formatCurrency(valuation.trackedCapital, valuation.currency)} />
         <SummaryMetric label="Opening basis (known)" value={formatCurrency(valuation.openingBasis, valuation.currency)} />
         <SummaryMetric label="Gift tracking basis" value={formatCurrency(valuation.giftTrackingBasis, valuation.currency)} />
@@ -162,11 +162,17 @@ function PortfolioOverview({ portfolio, dataQualityItems }: PortfolioClientProps
   );
 }
 
-function SummaryMetric({ label, value, tone = "default", muted = false }: { label: string; value: ReactNode; tone?: "default" | "positive" | "negative"; muted?: boolean }) {
+function SummaryMetric({ label, value, tone = "default", muted = false, emphasis = "secondary" }: { label: string; value: ReactNode; tone?: "default" | "positive" | "negative"; muted?: boolean; emphasis?: "primary" | "secondary" }) {
   return (
     <div className="min-w-0">
-      <dt className="text-xs text-muted">{label}</dt>
-      <dd className={cn("mt-1 break-words text-sm font-semibold tabular-nums text-foreground", muted && "text-muted", tone === "positive" && "text-success", tone === "negative" && "text-destructive")}>
+      <dt className="text-sm leading-5 text-muted">{label}</dt>
+      <dd className={cn(
+        "mt-2 break-words font-semibold tabular-nums text-foreground",
+        emphasis === "primary" ? "text-2xl" : "text-xl",
+        muted && "text-muted",
+        tone === "positive" && "text-success",
+        tone === "negative" && "text-destructive",
+      )}>
         {value}
       </dd>
     </div>
