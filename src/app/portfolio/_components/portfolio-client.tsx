@@ -118,41 +118,42 @@ export function PortfolioClient({ portfolio }: PortfolioClientProps) {
 function PortfolioOverview({ portfolio, dataQualityItems }: PortfolioClientProps & { dataQualityItems: DataQualityItem[] }) {
   const { valuation } = portfolio;
   return (
-    <Card className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-xs uppercase tracking-wide text-muted">Portfolio value</p>
-        <DataQualitySummary items={dataQualityItems} />
-      </div>
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,2fr)] lg:items-start">
+    <Card className="space-y-6">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="min-w-0">
-          <p className="break-words text-4xl font-semibold text-foreground sm:text-5xl">
+          <p className="text-xs uppercase tracking-wide text-muted">Portfolio value</p>
+          <p className="mt-5 break-words text-4xl font-semibold text-foreground sm:text-5xl">
             {formatCurrency(valuation.totalValue, valuation.currency)}
           </p>
         </div>
-        <dl className="grid gap-0 overflow-hidden rounded-lg border border-border sm:grid-cols-4 sm:divide-x sm:divide-border">
-          <SummaryMetric label="Net invested" value={formatCurrency(valuation.netInvested, valuation.currency)} />
-          <SummaryMetric label="Investment gain" value={valuation.investmentGain ? formatMoneyWithSign(valuation.investmentGain, valuation.currency) : "Unavailable"} tone={moneyTone(valuation.investmentGain)} />
-          <SummaryMetric label="Return on tracked capital" value={valuation.trackedCapitalReturnPercent ? formatPercentWithSign(valuation.trackedCapitalReturnPercent) : "Unavailable"} tone={moneyTone(valuation.trackedCapitalReturnPercent)} />
-          <SummaryMetric label="Last updated" value={formatTimestamp(valuation.lastUpdated)} muted />
-        </dl>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between lg:min-w-64 lg:flex-col lg:items-end">
+          <div className="min-w-0 lg:text-right">
+            <p className="text-xs uppercase tracking-wide text-muted">Last updated</p>
+            <p className="mt-1 text-sm font-semibold leading-5 text-muted">{formatTimestamp(valuation.lastUpdated)}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <DataQualitySummary items={dataQualityItems} className="[&_summary]:min-h-10" />
+            <Link href="/performance" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border px-3 text-sm font-medium text-muted transition hover:border-primary/50 hover:text-foreground">
+              Performance <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          </div>
+        </div>
       </div>
-      <dl className="grid gap-3 text-sm sm:grid-cols-3">
-        <Info label="Tracked capital" value={formatCurrency(valuation.trackedCapital, valuation.currency)} />
-        <Info label="Opening basis (known)" value={formatCurrency(valuation.openingBasis, valuation.currency)} />
-        <Info label="Gift tracking basis" value={formatCurrency(valuation.giftTrackingBasis, valuation.currency)} />
+      <dl className="grid gap-x-5 gap-y-4 border-t border-border pt-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <SummaryMetric label="Net invested" value={formatCurrency(valuation.netInvested, valuation.currency)} />
+        <SummaryMetric label="Investment gain" value={valuation.investmentGain ? formatMoneyWithSign(valuation.investmentGain, valuation.currency) : "Unavailable"} tone={moneyTone(valuation.investmentGain)} />
+        <SummaryMetric label="Return on tracked capital" value={valuation.trackedCapitalReturnPercent ? formatPercentWithSign(valuation.trackedCapitalReturnPercent) : "Unavailable"} tone={moneyTone(valuation.trackedCapitalReturnPercent)} />
+        <SummaryMetric label="Tracked capital" value={formatCurrency(valuation.trackedCapital, valuation.currency)} />
+        <SummaryMetric label="Opening basis (known)" value={formatCurrency(valuation.openingBasis, valuation.currency)} />
+        <SummaryMetric label="Gift tracking basis" value={formatCurrency(valuation.giftTrackingBasis, valuation.currency)} />
       </dl>
-      <div className="flex justify-end">
-        <Link href="/performance" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border px-3 text-sm font-medium text-muted transition hover:border-primary/50 hover:text-foreground">
-          Performance <ArrowRight className="h-4 w-4" aria-hidden="true" />
-        </Link>
-      </div>
     </Card>
   );
 }
 
 function SummaryMetric({ label, value, tone = "default", muted = false }: { label: string; value: ReactNode; tone?: "default" | "positive" | "negative"; muted?: boolean }) {
   return (
-    <div className="min-w-0 bg-surface px-4 py-3">
+    <div className="min-w-0">
       <dt className="text-xs text-muted">{label}</dt>
       <dd className={cn("mt-1 break-words text-sm font-semibold tabular-nums text-foreground", muted && "text-muted", tone === "positive" && "text-success", tone === "negative" && "text-destructive")}>
         {value}
