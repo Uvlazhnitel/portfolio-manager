@@ -123,7 +123,7 @@ function PortfolioOverview({ portfolio, dataQualityItems }: PortfolioClientProps
         <p className="text-xs uppercase tracking-wide text-muted">Portfolio value</p>
         <DataQualitySummary items={dataQualityItems} />
       </div>
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,2fr)] lg:items-end">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,2fr)] lg:items-start">
         <div className="min-w-0">
           <p className="break-words text-4xl font-semibold text-foreground sm:text-5xl">
             {formatCurrency(valuation.totalValue, valuation.currency)}
@@ -131,8 +131,8 @@ function PortfolioOverview({ portfolio, dataQualityItems }: PortfolioClientProps
         </div>
         <dl className="grid gap-0 overflow-hidden rounded-lg border border-border sm:grid-cols-4 sm:divide-x sm:divide-border">
           <SummaryMetric label="Net invested" value={formatCurrency(valuation.netInvested, valuation.currency)} />
-          <SummaryMetric label="Investment gain" value={<PnlIndicator value={valuation.investmentGain} format="currency" currency={valuation.currency} size="sm" />} />
-          <SummaryMetric label="Return on tracked capital" value={<PnlIndicator value={valuation.trackedCapitalReturnPercent} format="percent" size="sm" />} />
+          <SummaryMetric label="Investment gain" value={valuation.investmentGain ? formatMoneyWithSign(valuation.investmentGain, valuation.currency) : "Unavailable"} tone={moneyTone(valuation.investmentGain)} />
+          <SummaryMetric label="Return on tracked capital" value={valuation.trackedCapitalReturnPercent ? formatPercentWithSign(valuation.trackedCapitalReturnPercent) : "Unavailable"} tone={moneyTone(valuation.trackedCapitalReturnPercent)} />
           <SummaryMetric label="Last updated" value={formatTimestamp(valuation.lastUpdated)} muted />
         </dl>
       </div>
@@ -150,11 +150,11 @@ function PortfolioOverview({ portfolio, dataQualityItems }: PortfolioClientProps
   );
 }
 
-function SummaryMetric({ label, value, muted = false }: { label: string; value: ReactNode; muted?: boolean }) {
+function SummaryMetric({ label, value, tone = "default", muted = false }: { label: string; value: ReactNode; tone?: "default" | "positive" | "negative"; muted?: boolean }) {
   return (
     <div className="min-w-0 bg-surface px-4 py-3">
       <dt className="text-xs text-muted">{label}</dt>
-      <dd className={cn("mt-1 break-words text-sm font-semibold tabular-nums text-foreground", muted && "text-muted")}>
+      <dd className={cn("mt-1 break-words text-sm font-semibold tabular-nums text-foreground", muted && "text-muted", tone === "positive" && "text-success", tone === "negative" && "text-destructive")}>
         {value}
       </dd>
     </div>
@@ -1016,6 +1016,19 @@ function priceStatusText(holding: PortfolioReadModel["holdings"][number]) {
   if (!holding.currentPrice) return "Price unavailable";
   const source = holding.priceSource ? formatType(holding.priceSource) : "Market price";
   return holding.isPriceStale ? `${source} - stale` : source;
+}
+
+function moneyTone(value: string | null): "default" | "positive" | "negative" {
+  if (!value) return "default";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric === 0) return "default";
+  return numeric > 0 ? "positive" : "negative";
+}
+
+function formatMoneyWithSign(value: string, currency: string) {
+  const numeric = Number(value);
+  const sign = Number.isFinite(numeric) && numeric < 0 ? "−" : "+";
+  return `${sign}${formatCurrency(value.replace(/^-/, ""), currency)}`;
 }
 
 function today() { return new Date().toISOString().slice(0, 10); }
