@@ -201,6 +201,94 @@ export type CalculateHistoricalPerformanceInput = {
   snapshots: HistoricalMarketSnapshot[];
 };
 
+export type DailyBriefStatus = "ACTION" | "MONITOR" | "NO_ACTION";
+
+export type DailyBriefReasonCode =
+  | "NEW_STRATEGY_VIOLATION"
+  | "MINIMUM_REBALANCE_DRIFT_EXCEEDED"
+  | "BELOW_MINIMUM_REBALANCE_DRIFT"
+  | "EXISTING_VIOLATION_WORSENED"
+  | "STRATEGY_VIOLATION_RESOLVED"
+  | "CONTRIBUTION_FIRST_REVIEW"
+  | "STRATEGY_CHALLENGE_DISABLED"
+  | "STALE_PRICE_DATA"
+  | "INSUFFICIENT_DAILY_DATA"
+  | "NO_MEANINGFUL_STRATEGY_CHANGE";
+
+export type DailyBriefUnavailableReason =
+  | "NO_PREVIOUS_OBSERVATION"
+  | "PREVIOUS_VALUATION_INCOMPLETE"
+  | "CURRENT_VALUATION_INCOMPLETE"
+  | "INCOMPLETE_EXTERNAL_CASHFLOWS"
+  | "INVALID_PREVIOUS_VALUE";
+
+export type DailyBriefStrategyRules = {
+  preferContributionsOverSelling: boolean;
+  challengeStrategyViolations: boolean;
+  preferNoActionWhenEvidenceWeak: boolean;
+  minimumRebalanceDrift: DecimalLike;
+};
+
+export type DailyBriefContributor = {
+  assetId: string;
+  symbol: string;
+  contribution: string;
+  priceChangePercent: string;
+};
+
+export type DailyBriefAllocationChange = AllocationComparison & {
+  previousPercent: string;
+  previousDriftFromTarget: string;
+  driftChange: string;
+  previousStatus: AllocationStatus;
+};
+
+export type DailyBriefRiskSignal = {
+  code: "LARGEST_ASSET" | "LARGEST_CUSTODY_ACCOUNT" | "CRYPTO_ALLOCATION";
+  label: string;
+  value: string;
+  detail: string;
+  tone: "NEUTRAL" | "WARNING";
+};
+
+export type DailyBriefResult = {
+  status: DailyBriefStatus;
+  summary: string;
+  reasonCodes: DailyBriefReasonCode[];
+  currentDate: string;
+  previousDate: string | null;
+  currentValue: string | null;
+  previousValue: string | null;
+  portfolioValueChange: string | null;
+  dailyGain: string | null;
+  dailyReturnPercent: string | null;
+  externalContributions: string | null;
+  externalWithdrawals: string | null;
+  unavailableReason: DailyBriefUnavailableReason | null;
+  isStale: boolean;
+  missingPriceSymbols: string[];
+  positiveContributors: DailyBriefContributor[];
+  negativeContributors: DailyBriefContributor[];
+  allocationChanges: DailyBriefAllocationChange[];
+  newViolations: StrategyWarning[];
+  resolvedViolations: StrategyWarning[];
+  currentViolations: StrategyWarning[];
+  riskSignals: DailyBriefRiskSignal[];
+};
+
+export type CalculateDailyBriefInput = {
+  assets: EngineAsset[];
+  accounts: Array<{ id: string; name: string; type: string }>;
+  transactions: EngineTransaction[];
+  baseCurrency: string;
+  currentMarketPrices: MarketPrices;
+  currentHasStalePrices: boolean;
+  history: HistoricalMarketSnapshot[];
+  strategy: EngineStrategyAllocation[] | null;
+  rules: DailyBriefStrategyRules;
+  asOf: Date | string;
+};
+
 export const performanceRanges = ["7D", "1M", "3M", "1Y", "ALL"] as const;
 
 export type PerformanceRange = (typeof performanceRanges)[number];
