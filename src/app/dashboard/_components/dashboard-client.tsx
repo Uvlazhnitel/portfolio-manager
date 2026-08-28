@@ -9,6 +9,7 @@ import type { DashboardReadModel } from "@/features/dashboard/read-model";
 import {
   formatDashboardCurrency as formatCurrency,
   formatDashboardPercent as formatPercent,
+  formatDashboardSignedCurrency as formatSignedCurrency,
 } from "@/features/dashboard/presentation";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -40,29 +41,37 @@ export function DashboardClient({ dashboard }: { dashboard: DashboardReadModel }
 
 function OverviewPanel({ dashboard }: { dashboard: DashboardReadModel }) {
   const { valuation } = dashboard;
+  const gainTone = moneyTone(valuation.investmentGain);
+  const returnTone = moneyTone(valuation.trackedCapitalReturnPercent);
 
   return (
-    <Card className="order-1 min-w-0 xl:col-start-1 xl:row-start-1">
-      <SectionHeading eyebrow="Portfolio" title="Current position" icon={<CircleDollarSign className="h-5 w-5" />}>
-        <div className="flex items-center gap-2">
-          <DataQualitySummary items={dashboardDataQualityItems(dashboard)} />
-          <Link href="/performance" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:text-primary/80">
+    <Card className="order-1 min-w-0 space-y-6 xl:col-start-1 xl:row-start-1">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+        <div className="min-w-0">
+          <div className="flex items-center gap-3">
+            <p className="truncate text-xs text-muted">Portfolio</p>
+            <span className="text-primary"><CircleDollarSign className="h-5 w-5" aria-hidden="true" /></span>
+          </div>
+          <h2 className="mt-1 text-lg font-semibold text-foreground">Current position</h2>
+          <p className="mt-7 text-sm text-muted">Portfolio value</p>
+          <p className="mt-2 break-words text-5xl font-semibold tracking-normal text-foreground sm:text-6xl">
+            {formatCurrency(valuation.totalValue, valuation.currency)}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end lg:pt-8">
+          <DataQualitySummary items={dashboardDataQualityItems(dashboard)} className="[&_summary]:min-h-10" />
+          <Link href="/performance" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border px-3 text-sm font-medium text-muted transition hover:border-primary/50 hover:text-foreground">
             Performance <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </Link>
         </div>
-      </SectionHeading>
+      </div>
 
-      <p className="mt-7 text-sm text-muted">Portfolio value</p>
-      <p className="mt-2 break-words text-4xl font-semibold text-foreground sm:text-5xl">
-        {formatCurrency(valuation.totalValue, valuation.currency)}
-      </p>
-
-      <dl className="mt-7 grid grid-cols-1 border-y border-border sm:grid-cols-3 sm:divide-x sm:divide-border">
-        <OverviewMetric label="Net invested" value={formatCurrency(valuation.netInvested, valuation.currency)} />
-        <OverviewMetric label="Investment gain" value={<PnlIndicator value={valuation.investmentGain} format="currency" currency={valuation.currency} size="md" />} />
-        <OverviewMetric label="Return on tracked capital" value={<PnlIndicator value={valuation.trackedCapitalReturnPercent} format="percent" size="md" />} />
+      <dl className="grid gap-x-6 gap-y-5 border-y border-border py-5 sm:grid-cols-3">
+        <OverviewMetric label="Net invested" value={formatCurrency(valuation.netInvested, valuation.currency)} emphasis="primary" />
+        <OverviewMetric label="Investment gain" value={valuation.investmentGain === null ? "Unavailable" : formatSignedCurrency(valuation.investmentGain, valuation.currency)} tone={gainTone} emphasis="primary" />
+        <OverviewMetric label="Return on tracked capital" value={valuation.trackedCapitalReturnPercent === null ? "Unavailable" : signedPercent(valuation.trackedCapitalReturnPercent)} tone={returnTone} emphasis="primary" />
       </dl>
-      <dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-4 text-sm sm:grid-cols-3">
         <OverviewMetric label="Tracked capital" value={formatCurrency(valuation.trackedCapital, valuation.currency)} />
         <OverviewMetric label="Opening basis (known)" value={formatCurrency(valuation.openingBasis, valuation.currency)} />
         <OverviewMetric label="Gift tracking basis" value={formatCurrency(valuation.giftTrackingBasis, valuation.currency)} />
@@ -71,11 +80,16 @@ function OverviewPanel({ dashboard }: { dashboard: DashboardReadModel }) {
   );
 }
 
-function OverviewMetric({ label, value }: { label: string; value: ReactNode }) {
+function OverviewMetric({ label, value, tone = "default", emphasis = "secondary" }: { label: string; value: ReactNode; tone?: "default" | "positive" | "negative"; emphasis?: "primary" | "secondary" }) {
   return (
-    <div className="min-w-0 py-4 sm:px-5 sm:first:pl-0 sm:last:pr-0">
+    <div className="min-w-0">
       <dt className="text-xs text-muted">{label}</dt>
-      <dd className="mt-2 break-words text-lg font-semibold">{value}</dd>
+      <dd className={cn(
+        "mt-2 break-words font-semibold tabular-nums text-foreground",
+        emphasis === "primary" ? "text-2xl" : "text-lg",
+        tone === "positive" && "text-success",
+        tone === "negative" && "text-destructive",
+      )}>{value}</dd>
     </div>
   );
 }
@@ -294,6 +308,16 @@ function dashboardDataQualityItems(dashboard: DashboardReadModel): DataQualityIt
   if (dashboard.valuation.hasStalePrices) items.push({ message: "Stale prices included" });
   if (dashboard.valuation.warning) items.push({ message: dashboard.valuation.warning });
   return items;
+}
+
+function moneyTone(value: string | null): "default" | "positive" | "negative" {
+  const sign = value === null ? null : decimalSign(value);
+  return sign === null || sign === 0 ? "default" : sign > 0 ? "positive" : "negative";
+}
+
+function signedPercent(value: string) {
+  const sign = decimalSign(value) ?? 0;
+  return `${sign >= 0 ? "+" : "−"}${formatPercent(value.replace(/^-/, ""))}`;
 }
 
 function clampPercent(value: string) {
