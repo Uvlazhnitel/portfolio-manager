@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ArrowRight, CircleDollarSign, Clock3, Target, TrendingUp } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { contributionClassLabels } from "@/features/contributions/presentation";
@@ -13,6 +13,7 @@ import {
 } from "@/features/dashboard/presentation";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { ChartRangeSelector, chartRangeLabel, defaultChartRange, filterChartRowsByRange, type ChartRange } from "@/components/ui/chart-range-selector";
 import { DataQualitySummary, type DataQualityItem } from "@/components/ui/data-quality-summary";
 import { PnlIndicator } from "@/components/ui/pnl-indicator";
 import { decimalSign } from "@/lib/format/decimal";
@@ -95,6 +96,7 @@ function OverviewMetric({ label, value, tone = "default", emphasis = "secondary"
 }
 
 function TrendPanel({ dashboard }: { dashboard: DashboardReadModel }) {
+  const [range, setRange] = useState<ChartRange>(defaultChartRange);
   const rows = dashboard.history.points.map<TrendRow>((point) => ({
     date: point.date,
     portfolioValue: point.portfolioValue === null ? null : Number(point.portfolioValue),
@@ -104,18 +106,20 @@ function TrendPanel({ dashboard }: { dashboard: DashboardReadModel }) {
     hasStalePrices: point.hasStalePrices,
     missingPriceSymbols: point.missingPriceSymbols,
   }));
-  const completeRows = rows.filter((row) => row.portfolioValue !== null);
+  const visibleRows = filterChartRowsByRange(rows, range);
+  const completeRows = visibleRows.filter((row) => row.portfolioValue !== null);
 
   return (
     <Card className="order-4 min-w-0 xl:col-start-2 xl:row-start-1">
       <SectionHeading eyebrow="History" title="Portfolio trend" icon={<TrendingUp className="h-5 w-5" />}>
-        {dashboard.history.trackingStartedAt ? <span className="text-xs text-muted">Since {shortDate(dashboard.history.trackingStartedAt)}</span> : null}
+        <span className="text-xs text-muted">{chartRangeLabel(range, dashboard.history.trackingStartedAt, shortDate)}</span>
       </SectionHeading>
+      <ChartRangeSelector value={range} onChange={setRange} className="mt-4" />
 
       {completeRows.length > 1 ? (
         <div className="mt-6 h-[220px] min-w-0">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={rows} margin={{ top: 8, right: 4, bottom: 0, left: -18 }}>
+            <LineChart data={visibleRows} margin={{ top: 8, right: 4, bottom: 0, left: -18 }}>
               <CartesianGrid stroke="#282d3d" strokeDasharray="3 4" vertical={false} />
               <XAxis dataKey="date" tickFormatter={shortDate} stroke="#8e96ad" tickLine={false} axisLine={false} minTickGap={30} fontSize={11} />
               <YAxis tickFormatter={(value) => compactMoney(Number(value), dashboard.valuation.currency)} stroke="#8e96ad" tickLine={false} axisLine={false} width={62} fontSize={11} />

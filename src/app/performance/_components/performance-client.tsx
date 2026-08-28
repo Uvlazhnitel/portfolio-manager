@@ -1,10 +1,11 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { CalendarDays, ChartNoAxesCombined, CircleDollarSign, Landmark, TrendingUp } from "lucide-react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { ChartRangeSelector, chartRangeLabel, defaultChartRange, filterChartRowsByRange, type ChartRange } from "@/components/ui/chart-range-selector";
 import { DataQualitySummary, type DataQualityItem } from "@/components/ui/data-quality-summary";
 import { PnlIndicator } from "@/components/ui/pnl-indicator";
 import type { PerformanceReadModel } from "@/features/performance/read-model";
@@ -22,6 +23,7 @@ type ChartRow = {
 
 export function PerformanceClient({ performance }: { performance: PerformanceReadModel }) {
   const { summary, currency } = performance;
+  const [range, setRange] = useState<ChartRange>(defaultChartRange);
   const dataQualityItems = performanceDataQualityItems(performance);
   const chartRows = performance.history.map<ChartRow>((point) => ({
     date: point.date,
@@ -32,6 +34,7 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
     hasStalePrices: point.hasStalePrices,
     missingPriceSymbols: point.missingPriceSymbols,
   }));
+  const visibleChartRows = filterChartRowsByRange(chartRows, range);
 
   return (
     <div className="space-y-4">
@@ -50,16 +53,17 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
             <h2 className="text-lg font-semibold text-foreground">Value and net invested</h2>
             <p className="mt-1 text-sm text-muted">Daily observations at UTC day-end from the moment tracking was enabled.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {performance.trackingStartedAt ? <Badge tone="primary"><CalendarDays className="mr-1 h-3.5 w-3.5" />Since {formatDate(performance.trackingStartedAt)}</Badge> : null}
+          <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
+            <ChartRangeSelector value={range} onChange={setRange} />
+            <Badge tone="primary"><CalendarDays className="mr-1 h-3.5 w-3.5" />{chartRangeLabel(range, performance.trackingStartedAt, formatDate)}</Badge>
             {performance.staleDates > 0 || summary.hasStalePrices ? <Badge tone="warning">Stale prices present</Badge> : null}
           </div>
         </div>
 
-        {chartRows.length > 0 ? (
+        {visibleChartRows.length > 0 ? (
           <div className="mt-6 h-[340px] w-full min-w-0 sm:h-[420px]">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartRows} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+              <LineChart data={visibleChartRows} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
                 <CartesianGrid stroke="#282d3d" strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="date" tickFormatter={formatShortDate} stroke="#8d93a7" tickLine={false} axisLine={false} minTickGap={28} />
                 <YAxis tickFormatter={(value) => compactMoney(Number(value), currency)} stroke="#8d93a7" tickLine={false} axisLine={false} width={72} />
