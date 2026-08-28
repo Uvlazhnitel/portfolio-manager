@@ -35,6 +35,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DataQualitySummary, type DataQualityItem } from "@/components/ui/data-quality-summary";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PnlIndicator } from "@/components/ui/pnl-indicator";
 import { cn } from "@/lib/utils";
 import { formatDecimalCurrency } from "@/lib/format/decimal";
 import { formatUtcDate, formatUtcTimestamp } from "@/lib/format/date";
@@ -118,20 +119,20 @@ function PortfolioOverview({ portfolio, dataQualityItems }: PortfolioClientProps
   const { valuation } = portfolio;
   return (
     <Card className="space-y-5">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-xs uppercase tracking-wide text-muted">Portfolio value</p>
+        <DataQualitySummary items={dataQualityItems} />
+      </div>
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,2fr)] lg:items-end">
         <div className="min-w-0">
-          <div className="flex items-start justify-between gap-3">
-            <p className="pt-2 text-xs uppercase tracking-wide text-muted">Portfolio value</p>
-            <DataQualitySummary items={dataQualityItems} />
-          </div>
-          <p className="mt-2 break-words text-4xl font-semibold text-foreground sm:text-5xl">
+          <p className="break-words text-4xl font-semibold text-foreground sm:text-5xl">
             {formatCurrency(valuation.totalValue, valuation.currency)}
           </p>
         </div>
         <dl className="grid gap-0 overflow-hidden rounded-lg border border-border sm:grid-cols-4 sm:divide-x sm:divide-border">
           <SummaryMetric label="Net invested" value={formatCurrency(valuation.netInvested, valuation.currency)} />
-          <SummaryMetric label="Investment gain" value={valuation.investmentGain ? formatMoneyWithSign(valuation.investmentGain, valuation.currency) : "Unavailable"} tone={moneyTone(valuation.investmentGain)} />
-          <SummaryMetric label="Return on tracked capital" value={valuation.trackedCapitalReturnPercent ? formatPercentWithSign(valuation.trackedCapitalReturnPercent) : "Unavailable"} tone={moneyTone(valuation.trackedCapitalReturnPercent)} />
+          <SummaryMetric label="Investment gain" value={<PnlIndicator value={valuation.investmentGain} format="currency" currency={valuation.currency} size="sm" />} />
+          <SummaryMetric label="Return on tracked capital" value={<PnlIndicator value={valuation.trackedCapitalReturnPercent} format="percent" size="sm" />} />
           <SummaryMetric label="Last updated" value={formatTimestamp(valuation.lastUpdated)} muted />
         </dl>
       </div>
@@ -149,11 +150,11 @@ function PortfolioOverview({ portfolio, dataQualityItems }: PortfolioClientProps
   );
 }
 
-function SummaryMetric({ label, value, tone = "default", muted = false }: { label: string; value: string; tone?: "default" | "positive" | "negative"; muted?: boolean }) {
+function SummaryMetric({ label, value, muted = false }: { label: string; value: ReactNode; muted?: boolean }) {
   return (
     <div className="min-w-0 bg-surface px-4 py-3">
       <dt className="text-xs text-muted">{label}</dt>
-      <dd className={cn("mt-1 break-words text-sm font-semibold tabular-nums text-foreground", muted && "text-muted", tone === "positive" && "text-success", tone === "negative" && "text-destructive")}>
+      <dd className={cn("mt-1 break-words text-sm font-semibold tabular-nums text-foreground", muted && "text-muted")}>
         {value}
       </dd>
     </div>
@@ -807,7 +808,7 @@ function HoldingsSection({ portfolio, onAddTransaction }: PortfolioClientProps &
                 <td className="px-4 py-3 text-right tabular-nums" title={holding.accountingAverageCost ? `Accounting avg cost: ${formatUnitPriceOrDashText(holding.accountingAverageCost, portfolio.valuation.currency, holding.displayPriceUnit)}` : undefined}>
                   {formatUnitPriceOrDash(holding.averageNetCost, portfolio.valuation.currency, holding.displayPriceUnit)}
                 </td>
-                <td className="px-4 py-3 text-right tabular-nums">{formatMoneyOrUnavailable(holding.netPnl, portfolio.valuation.currency)}</td>
+                <td className="px-4 py-3 text-right tabular-nums"><PnlIndicator value={holding.netPnl} format="currency" currency={portfolio.valuation.currency} unavailableLabel="Price unavailable" size="sm" /></td>
                 <td className="px-4 py-3 text-right tabular-nums">{holding.portfolioWeight ? `${holding.portfolioWeight}%` : "Unavailable"}</td>
                 <td className="px-4 py-3 text-right">
                   <button type="button" onClick={() => onAddTransaction(holding.assetId, holding.accountId)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary" title="Add transaction" aria-label={`Add transaction for ${holding.assetName}`}>
@@ -838,7 +839,7 @@ function HoldingsSection({ portfolio, onAddTransaction }: PortfolioClientProps &
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <Info label="Price" value={formatUnitPriceOrDashText(holding.currentPrice, portfolio.valuation.currency, holding.displayPriceUnit)} />
               <Info label="Value" value={formatMoneyOrUnavailableText(holding.currentValue, portfolio.valuation.currency)} />
-              <Info label="P&L" value={formatMoneyOrUnavailableText(holding.netPnl, portfolio.valuation.currency)} />
+              <Info label="P&L" value={<PnlIndicator value={holding.netPnl} format="currency" currency={portfolio.valuation.currency} unavailableLabel="Price unavailable" size="sm" />} />
               <Info label="Weight" value={holding.portfolioWeight ? `${holding.portfolioWeight}%` : "Unavailable"} />
               <Info label="Avg net cost" value={formatUnitPriceOrDashText(holding.averageNetCost, portfolio.valuation.currency, holding.displayPriceUnit)} />
               <Info label="Price status" value={priceStatusText(holding)} />
@@ -1017,29 +1018,11 @@ function priceStatusText(holding: PortfolioReadModel["holdings"][number]) {
   return holding.isPriceStale ? `${source} - stale` : source;
 }
 
-function moneyTone(value: string | null): "default" | "positive" | "negative" {
-  if (!value) return "default";
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric === 0) return "default";
-  return numeric > 0 ? "positive" : "negative";
-}
-
-function formatMoneyWithSign(value: string, currency: string) {
-  const numeric = Number(value);
-  const sign = Number.isFinite(numeric) && numeric < 0 ? "-" : "+";
-  return `${sign}${formatCurrency(value.replace(/^-/, ""), currency)}`;
-}
-
-function formatPercentWithSign(value: string) {
-  const numeric = Number(value);
-  const sign = Number.isFinite(numeric) && numeric < 0 ? "-" : "+";
-  return `${sign}${value.replace(/^-/, "")}%`;
-}
-
 function today() { return new Date().toISOString().slice(0, 10); }
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block text-sm"><span className="mb-2 block font-medium text-muted">{label}</span>{children}</label>; }
-function Info({ label, value }: { label: string; value: string }) { return <div><dt className="text-xs text-muted">{label}</dt><dd className="mt-1 break-words text-foreground">{value}</dd></div>; }
+function Info({ label, value }: { label: string; value: ReactNode }) { return <div><dt className="text-xs text-muted">{label}</dt><dd className="mt-1 break-words text-foreground">{value}</dd></div>; }
 function ActionMessage({ state }: { state: { ok: boolean; message: string } }) { return state.message ? <p className={cn("rounded-lg border p-3 text-sm", state.ok ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/10 text-destructive")}>{state.message}</p> : null; }
+function formatPercentWithSign(value: string) { const numeric = Number(value); const sign = Number.isFinite(numeric) && numeric < 0 ? "−" : "+"; return `${sign}${value.replace(/^-/, "")}%`; }
 function formatType(type: string) {
   if (type === "TRANSFER_OUT") return "Transfer out";
   if (type === "TRANSFER_IN") return "Transfer in";

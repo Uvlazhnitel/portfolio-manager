@@ -1,13 +1,14 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { CalendarDays, ChartNoAxesCombined, CircleDollarSign, Landmark, TrendingUp } from "lucide-react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { DataQualitySummary, type DataQualityItem } from "@/components/ui/data-quality-summary";
+import { PnlIndicator } from "@/components/ui/pnl-indicator";
 import type { PerformanceReadModel } from "@/features/performance/read-model";
-import { decimalSign, formatDecimalCurrency, formatDecimalPercent } from "@/lib/format/decimal";
-import { cn } from "@/lib/utils";
+import { formatDecimalCurrency } from "@/lib/format/decimal";
 
 type ChartRow = {
   date: string;
@@ -39,8 +40,8 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryMetric icon={Landmark} label="Portfolio value" value={formatDecimalCurrency(summary.portfolioValue, currency)} />
         <SummaryMetric icon={CircleDollarSign} label="Net invested" value={formatDecimalCurrency(summary.netInvested, currency)} isPartial={summary.isNetInvestedPartial} />
-        <SummaryMetric icon={TrendingUp} label="Investment gain" value={signedMoneyOrUnavailable(summary.investmentGain, currency)} tone={gainTone(summary.investmentGain)} isPartial={summary.isCostBasisPartial} />
-        <SummaryMetric icon={ChartNoAxesCombined} label="Return on tracked capital" value={summary.trackedCapitalReturnPercent === null ? "Unavailable" : signedPercent(summary.trackedCapitalReturnPercent)} tone={gainTone(summary.trackedCapitalReturnPercent)} isPartial={summary.isCostBasisPartial} />
+        <SummaryMetric icon={TrendingUp} label="Investment gain" value={<PnlIndicator value={summary.investmentGain} format="currency" currency={currency} size="lg" />} isPartial={summary.isCostBasisPartial} />
+        <SummaryMetric icon={ChartNoAxesCombined} label="Return on tracked capital" value={<PnlIndicator value={summary.trackedCapitalReturnPercent} format="percent" size="lg" />} isPartial={summary.isCostBasisPartial} />
       </div>
 
       <Card className="min-w-0">
@@ -91,18 +92,18 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
   );
 }
 
-function SummaryMetric({ icon: Icon, label, value, tone = "default", isPartial = false }: { icon: typeof Landmark; label: string; value: string; tone?: "default" | "positive" | "negative"; isPartial?: boolean }) {
-  return <Card className="min-w-0"><div className="flex items-center justify-between gap-3"><div className="flex min-w-0 items-center gap-2"><p className="text-xs uppercase text-muted">{label}</p>{isPartial ? <Badge>Partial</Badge> : null}</div><Icon className="h-5 w-5 shrink-0 text-primary" /></div><p className={cn("mt-5 break-words text-2xl font-semibold", tone === "positive" && "text-success", tone === "negative" && "text-destructive")}>{value}</p></Card>;
+function SummaryMetric({ icon: Icon, label, value, isPartial = false }: { icon: typeof Landmark; label: string; value: ReactNode; isPartial?: boolean }) {
+  return <Card className="min-w-0"><div className="flex items-center justify-between gap-3"><div className="flex min-w-0 items-center gap-2"><p className="text-xs uppercase text-muted">{label}</p>{isPartial ? <Badge>Partial</Badge> : null}</div><Icon className="h-5 w-5 shrink-0 text-primary" /></div><p className="mt-5 break-words text-2xl font-semibold">{value}</p></Card>;
 }
 
 function PerformanceTooltip({ active, row, currency }: { active?: boolean; row?: ChartRow; currency: string }) {
   if (!active || !row) return null;
-  return <div className="max-w-64 rounded-lg border border-border bg-card p-3 shadow-xl"><p className="font-medium text-foreground">{formatDate(row.date)}</p>{row.isComplete ? <div className="mt-3 space-y-2 text-sm"><TooltipValue label="Portfolio value" value={moneyOrUnavailable(decimalFromNumber(row.portfolioValue), currency)} /><TooltipValue label="Net invested" value={moneyOrUnavailable(decimalFromNumber(row.netInvested), currency)} /><TooltipValue label="Investment gain" value={signedMoneyOrUnavailable(decimalFromNumber(row.investmentGain), currency)} /></div> : <p className="mt-2 text-sm text-warning">Missing: {row.missingPriceSymbols.join(", ")}</p>}{row.hasStalePrices ? <p className="mt-2 text-xs text-warning">Includes stale observations</p> : null}</div>;
+  return <div className="max-w-64 rounded-lg border border-border bg-card p-3 shadow-xl"><p className="font-medium text-foreground">{formatDate(row.date)}</p>{row.isComplete ? <div className="mt-3 space-y-2 text-sm"><TooltipValue label="Portfolio value" value={moneyOrUnavailable(decimalFromNumber(row.portfolioValue), currency)} /><TooltipValue label="Net invested" value={moneyOrUnavailable(decimalFromNumber(row.netInvested), currency)} /><TooltipValue label="Investment gain" value={<PnlIndicator value={decimalFromNumber(row.investmentGain)} format="currency" currency={currency} size="sm" />} /></div> : <p className="mt-2 text-sm text-warning">Missing: {row.missingPriceSymbols.join(", ")}</p>}{row.hasStalePrices ? <p className="mt-2 text-xs text-warning">Includes stale observations</p> : null}</div>;
 }
 
 function DetailMetric({ label, value }: { label: string; value: string }) { return <div><p className="text-xs uppercase text-muted">{label}</p><p className="mt-1 font-medium text-foreground">{value}</p></div>; }
 
-function TooltipValue({ label, value }: { label: string; value: string }) { return <div className="flex items-center justify-between gap-5"><span className="text-muted">{label}</span><span className="font-medium text-foreground">{value}</span></div>; }
+function TooltipValue({ label, value }: { label: string; value: ReactNode }) { return <div className="flex items-center justify-between gap-5"><span className="text-muted">{label}</span><span className="font-medium text-foreground">{value}</span></div>; }
 function performanceDataQualityItems(performance: PerformanceReadModel): DataQualityItem[] {
   const { summary } = performance;
   const items: DataQualityItem[] = [];
@@ -119,7 +120,4 @@ function formatDate(value: string) { return new Intl.DateTimeFormat("en-GB", { d
 function formatShortDate(value: string) { return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`)); }
 function compactMoney(value: number, currency: string) { return new Intl.NumberFormat("en", { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 }).format(value); }
 function moneyOrUnavailable(value: string | null, currency: string) { return value === null ? "Unavailable" : formatDecimalCurrency(value, currency); }
-function signedMoneyOrUnavailable(value: string | null, currency: string) { if (value === null) return "Unavailable"; const formatted = formatDecimalCurrency(value.replace(/^-/, ""), currency); return `${(decimalSign(value) ?? 0) >= 0 ? "+" : "−"}${formatted}`; }
-function signedPercent(value: string) { return `${(decimalSign(value) ?? 0) >= 0 ? "+" : "−"}${formatDecimalPercent(value.replace(/^-/, ""), 1)}`; }
-function gainTone(value: string | null): "default" | "positive" | "negative" { const sign = value === null ? null : decimalSign(value); return sign === null || sign === 0 ? "default" : sign > 0 ? "positive" : "negative"; }
 function decimalFromNumber(value: number | null) { return value === null ? null : String(value); }

@@ -9,11 +9,11 @@ import type { DashboardReadModel } from "@/features/dashboard/read-model";
 import {
   formatDashboardCurrency as formatCurrency,
   formatDashboardPercent as formatPercent,
-  formatDashboardSignedCurrency as formatSignedCurrency,
 } from "@/features/dashboard/presentation";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { DataQualitySummary, type DataQualityItem } from "@/components/ui/data-quality-summary";
+import { PnlIndicator } from "@/components/ui/pnl-indicator";
 import { decimalSign } from "@/lib/format/decimal";
 import { cn } from "@/lib/utils";
 
@@ -40,7 +40,6 @@ export function DashboardClient({ dashboard }: { dashboard: DashboardReadModel }
 
 function OverviewPanel({ dashboard }: { dashboard: DashboardReadModel }) {
   const { valuation } = dashboard;
-  const gainSign = valuation.investmentGain === null ? null : decimalSign(valuation.investmentGain);
 
   return (
     <Card className="order-1 min-w-0 xl:col-start-1 xl:row-start-1">
@@ -60,16 +59,8 @@ function OverviewPanel({ dashboard }: { dashboard: DashboardReadModel }) {
 
       <dl className="mt-7 grid grid-cols-1 border-y border-border sm:grid-cols-3 sm:divide-x sm:divide-border">
         <OverviewMetric label="Net invested" value={formatCurrency(valuation.netInvested, valuation.currency)} />
-        <OverviewMetric
-          label="Investment gain"
-          value={valuation.investmentGain === null ? "Unavailable" : formatSignedCurrency(valuation.investmentGain, valuation.currency)}
-          tone={gainSign === null || gainSign === 0 ? "default" : gainSign > 0 ? "positive" : "negative"}
-        />
-        <OverviewMetric
-          label="Return on tracked capital"
-          value={valuation.trackedCapitalReturnPercent === null ? "Unavailable" : signedPercent(valuation.trackedCapitalReturnPercent)}
-          tone={gainSign === null || gainSign === 0 ? "default" : gainSign > 0 ? "positive" : "negative"}
-        />
+        <OverviewMetric label="Investment gain" value={<PnlIndicator value={valuation.investmentGain} format="currency" currency={valuation.currency} size="md" />} />
+        <OverviewMetric label="Return on tracked capital" value={<PnlIndicator value={valuation.trackedCapitalReturnPercent} format="percent" size="md" />} />
       </dl>
       <dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
         <OverviewMetric label="Tracked capital" value={formatCurrency(valuation.trackedCapital, valuation.currency)} />
@@ -80,11 +71,11 @@ function OverviewPanel({ dashboard }: { dashboard: DashboardReadModel }) {
   );
 }
 
-function OverviewMetric({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "positive" | "negative" }) {
+function OverviewMetric({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="min-w-0 py-4 sm:px-5 sm:first:pl-0 sm:last:pr-0">
       <dt className="text-xs text-muted">{label}</dt>
-      <dd className={cn("mt-2 break-words text-lg font-semibold", tone === "positive" && "text-success", tone === "negative" && "text-destructive")}>{value}</dd>
+      <dd className="mt-2 break-words text-lg font-semibold">{value}</dd>
     </div>
   );
 }
@@ -274,7 +265,7 @@ function TrendTooltip({ active, row, currency }: { active?: boolean; row?: Trend
         <div className="mt-3 space-y-2 text-sm">
           <TooltipValue label="Portfolio value" value={formatCurrency(String(row.portfolioValue), currency)} />
           <TooltipValue label="Net invested" value={formatCurrency(String(row.netInvested), currency)} />
-          <TooltipValue label="Investment gain" value={row.investmentGain === null ? "Unavailable" : formatSignedCurrency(String(row.investmentGain), currency)} />
+          <TooltipValue label="Investment gain" value={<PnlIndicator value={decimalFromNumber(row.investmentGain)} format="currency" currency={currency} size="sm" />} />
         </div>
       ) : <p className="mt-2 text-sm text-warning">Missing: {row.missingPriceSymbols.join(", ")}</p>}
       {row.hasStalePrices ? <p className="mt-2 text-xs text-warning">Includes stale prices</p> : null}
@@ -282,7 +273,7 @@ function TrendTooltip({ active, row, currency }: { active?: boolean; row?: Trend
   );
 }
 
-function TooltipValue({ label, value }: { label: string; value: string }) {
+function TooltipValue({ label, value }: { label: string; value: ReactNode }) {
   return <div className="flex items-center justify-between gap-5"><span className="text-muted">{label}</span><span className="font-medium">{value}</span></div>;
 }
 
@@ -305,17 +296,16 @@ function dashboardDataQualityItems(dashboard: DashboardReadModel): DataQualityIt
   return items;
 }
 
-function signedPercent(value: string) {
-  const sign = decimalSign(value) ?? 0;
-  return `${sign >= 0 ? "+" : "−"}${formatPercent(value.replace(/^-/, ""))}`;
-}
-
 function clampPercent(value: string) {
   return Math.min(100, Math.max(0, Number(value) || 0));
 }
 
 function compactMoney(value: number, currency: string) {
   return new Intl.NumberFormat("en", { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
+function decimalFromNumber(value: number | null) {
+  return value === null ? null : String(value);
 }
 
 function shortDate(value: string) {
