@@ -11,7 +11,7 @@ Single-user investment portfolio manager and decision-support copilot. The MVP f
 - CoinGecko pricing for crypto and XAUT-referenced physical gold, plus Alpha Vantage ETF search and automatic daily ETF quotes with USD conversion.
 - Encrypted in-app API-key management for OpenAI, CoinGecko, Alpha Vantage, and Twelve Data with environment fallbacks.
 - Portfolio, Dashboard, Strategy, Contribution Planner, Settings, and read-only AI Assistant screens.
-- Historical Performance with daily portfolio value, net contributed capital, investment gain, and simple return.
+- Historical Performance with daily portfolio value, deterministic TWR/XIRR, YTD and 1Y returns, observed max drawdown, and configurable benchmark comparison.
 - OpenAI Responses API assistant with compact trusted portfolio context and deterministic read-only tools.
 - Responsive dark UI and installable PWA shell with conservative offline behavior.
 
@@ -24,7 +24,6 @@ Single-user investment portfolio manager and decision-support copilot. The MVP f
 - Bybit account sync
 - automated trades
 - tax calculations
-- advanced performance metrics (TWR, XIRR, YTD/1Y, max drawdown, and benchmarks)
 - push alerts
 
 ## Architecture
@@ -39,7 +38,11 @@ ETF assets can be searched through Alpha Vantage global listings. The selected p
 
 The Portfolio screen supports chronological current balances, trades, transfers, and external cashflows. Enter older transactions first. A sale, withdrawal, or transfer is checked against the selected account balance as of its historical date.
 
-The Performance screen uses CoinGecko-style transaction cashflow. `BUY`, `INITIAL_BALANCE`, and `DEPOSIT` add their cost to net invested; `SELL` and `WITHDRAWAL` subtract net proceeds; paired transfers have no effect. Investment gain and simple return use only assets with complete acquisition data, while external contributions and withdrawals remain visible separately for future cashflow-based metrics. Existing non-transfer transactions can be edited to restore missing acquisition prices. A dedicated Docker worker stores one price observation per asset and UTC day from activation onward; earlier market prices are not estimated or backfilled.
+The Performance screen keeps trading capital, external cashflows, opening basis, and gift basis separate. Net invested is standalone `BUY` cost plus fees minus `SELL` proceeds after fees; internal Trades and Transfers are neutral. Only `DEPOSIT` and `WITHDRAWAL` are external cashflows. Gain and return on tracked capital use reliable cost-basis components, while TWR, XIRR, YTD/1Y, and observed max drawdown use complete valuations and deterministically valued external cashflows without depending on acquisition basis.
+
+TWR chains UTC daily subperiod returns and removes contributions and withdrawals from each interval. XIRR uses Actual/365 dated cashflows, the first complete daily valuation as its opening boundary, and the current portfolio value as its terminal value. YTD uses the latest observation on or before the prior 31 December; 1Y uses the latest observation on or before the clamped one-year UTC boundary. Metrics return an explicit unavailable reason when history, valuation, cashflow, or numerical coverage is insufficient.
+
+The active strategy may reference one benchmark asset. The default strategy uses VWCE, but Performance can select any existing asset. Portfolio and benchmark comparison is normalized to 100 over their common observations; benchmark prices continue through the provider-independent market-data cache and daily history. A dedicated Docker worker stores one price observation per asset and UTC day from activation onward. Earlier portfolio or benchmark prices are never estimated or backfilled.
 
 ## Development setup
 

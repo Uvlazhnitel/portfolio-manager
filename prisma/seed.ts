@@ -164,6 +164,7 @@ async function main() {
       name: "Long-term capital growth",
       objective: "Grow long-term capital while keeping allocations close to configurable target ranges.",
       baseCurrency: "USD",
+      benchmarkAssetId: requireAssetId("VWCE"),
     },
   });
 

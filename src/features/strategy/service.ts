@@ -43,6 +43,11 @@ export class StrategyService {
     const parsed = validateUpdateStrategyInput(input);
     return await this.repository.updateStrategy(parsed);
   }
+
+  updateBenchmark(strategyId: string, benchmarkAssetId: string | null) {
+    if (!strategyId.trim()) throw new Error("Strategy is required.");
+    return this.repository.updateBenchmark(strategyId, benchmarkAssetId?.trim() || null);
+  }
 }
 
 export function serializeStrategyAllocation(allocation: {

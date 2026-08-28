@@ -1294,7 +1294,7 @@ function calculatePerformanceSummary(
       continue;
     }
 
-    const value = transactionCashValue(transaction, asset, input.baseCurrency);
+    const value = calculateTransactionCashValue(transaction, asset, input.baseCurrency);
     if (transaction.type === TransactionType.BUY || transaction.type === TransactionType.SELL) {
       if (!value) {
         missingNetInvestedSymbols.add(asset.symbol);
@@ -1457,7 +1457,7 @@ function calculateAssetInvestmentFlow(
       continue;
     }
 
-    const value = transactionCashValue(transaction, asset, baseCurrency);
+    const value = calculateTransactionCashValue(transaction, asset, baseCurrency);
     if (!value) return null;
     if (transaction.type === TransactionType.SELL || transaction.type === TransactionType.WITHDRAWAL) {
       netInvested = netInvested.minus(value.gross.minus(value.fee));
@@ -1469,7 +1469,7 @@ function calculateAssetInvestmentFlow(
   return transferQuantity.equals(ZERO) ? netInvested : null;
 }
 
-function transactionCashValue(
+export function calculateTransactionCashValue(
   transaction: EngineTransaction,
   asset: EngineAsset,
   baseCurrency: string,

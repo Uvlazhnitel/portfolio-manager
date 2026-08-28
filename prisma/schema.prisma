@@ -106,6 +106,7 @@ model Asset {
   dailyPrices              DailyMarketPrice[]
   manualPrices             ManualMarketPrice[]
   strategyAssetAllocations StrategyAssetAllocation[]
+  benchmarkStrategies      Strategy[]                  @relation("StrategyBenchmark")
 
   @@index([quoteProvider, quoteSymbol, quoteMicCode])
 }
@@ -212,11 +213,15 @@ model Strategy {
   name             String
   objective        String
   baseCurrency     String
+  benchmarkAssetId String?
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
   allocations      StrategyAllocation[]
   portfolioRules   PortfolioRule[]
   contributionPlan ContributionPlan?
+  benchmarkAsset   Asset?               @relation("StrategyBenchmark", fields: [benchmarkAssetId], references: [id], onDelete: SetNull)
+
+  @@index([benchmarkAssetId])
 }
 
 model ContributionPlan {

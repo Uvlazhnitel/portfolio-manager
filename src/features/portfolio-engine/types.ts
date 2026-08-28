@@ -201,6 +201,84 @@ export type CalculateHistoricalPerformanceInput = {
   snapshots: HistoricalMarketSnapshot[];
 };
 
+export const performanceRanges = ["7D", "1M", "3M", "1Y", "ALL"] as const;
+
+export type PerformanceRange = (typeof performanceRanges)[number];
+
+export type AdvancedMetricUnavailableReason =
+  | "INSUFFICIENT_HISTORY"
+  | "INCOMPLETE_VALUATION"
+  | "INCOMPLETE_EXTERNAL_CASHFLOWS"
+  | "INVALID_START_VALUE"
+  | "XIRR_NO_SOLUTION"
+  | "XIRR_AMBIGUOUS_SOLUTION"
+  | "BENCHMARK_NOT_CONFIGURED"
+  | "MISSING_BENCHMARK_PRICES";
+
+export type AdvancedPerformanceMetric = {
+  value: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  isStale: boolean;
+  unavailableReason: AdvancedMetricUnavailableReason | null;
+};
+
+export type AdvancedPerformanceObservation = {
+  date: string;
+  portfolioValue: string | null;
+  externalContributions: string | null;
+  externalWithdrawals: string | null;
+  isComplete: boolean;
+  hasStalePrices: boolean;
+};
+
+export type BenchmarkPerformanceObservation = {
+  date: string;
+  price: string;
+  hasStalePrices: boolean;
+};
+
+export type BenchmarkComparisonPoint = {
+  date: string;
+  portfolioIndex: string;
+  benchmarkIndex: string;
+  portfolioReturnPercent: string;
+  benchmarkReturnPercent: string;
+  hasStalePrices: boolean;
+};
+
+export type BenchmarkComparison = {
+  points: BenchmarkComparisonPoint[];
+  startDate: string | null;
+  endDate: string | null;
+  isPartial: boolean;
+  isStale: boolean;
+  unavailableReason: AdvancedMetricUnavailableReason | null;
+};
+
+export type AdvancedPerformance = {
+  twr: AdvancedPerformanceMetric;
+  xirr: AdvancedPerformanceMetric;
+  ytdReturn: AdvancedPerformanceMetric;
+  oneYearReturn: AdvancedPerformanceMetric;
+  maxDrawdown: AdvancedPerformanceMetric;
+  comparisons: Record<PerformanceRange, BenchmarkComparison>;
+};
+
+export type CalculateAdvancedPerformanceInput = {
+  assets: EngineAsset[];
+  transactions: EngineTransaction[];
+  baseCurrency: string;
+  history: AdvancedPerformanceObservation[];
+  current: AdvancedPerformanceObservation;
+  asOf: Date | string;
+  benchmark: {
+    assetId: string;
+    observations: BenchmarkPerformanceObservation[];
+    current: BenchmarkPerformanceObservation | null;
+  } | null;
+};
+
 export type HoldingCostBasisReason =
   | "NON_POSITIVE_HOLDING"
   | "MISSING_ACQUISITION_PRICE"

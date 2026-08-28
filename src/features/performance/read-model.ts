@@ -1,7 +1,9 @@
 import {
+  calculateAdvancedPerformance,
   calculateHistoricalPerformance,
   calculatePortfolio,
   calculatePortfolioAnalytics,
+  type AdvancedPerformance,
   type HistoricalMarketSnapshot,
   type PortfolioPerformancePoint,
 } from "@/features/portfolio-engine";
@@ -40,6 +42,14 @@ export type PerformanceReadModel = {
     hasStalePrices: boolean;
   };
   history: PortfolioPerformancePoint[];
+  advanced: AdvancedPerformance;
+  benchmark: {
+    strategyId: string | null;
+    selectedAssetId: string | null;
+    selectedSymbol: string | null;
+    selectedName: string | null;
+    options: Array<{ id: string; symbol: string; name: string }>;
+  };
   trackingStartedAt: string | null;
   incompleteDates: number;
   staleDates: number;
@@ -52,11 +62,13 @@ export async function getPerformanceReadModel({
   strategyRepository = new StrategyRepository(),
   marketDataService = new MarketDataService(),
   dailyPriceStore = new DailyMarketPriceRepository(),
+  now = new Date(),
 }: {
   portfolioRepository?: PortfolioRepository;
   strategyRepository?: StrategyRepository;
   marketDataService?: MarketDataService;
   dailyPriceStore?: DailyMarketPriceStore;
+  now?: Date;
 } = {}): Promise<PerformanceReadModel> {
   const [assets, transactions, strategy] = await Promise.all([
     portfolioRepository.listAssets(),
@@ -96,6 +108,51 @@ export async function getPerformanceReadModel({
     baseCurrency: currency,
     snapshots,
   });
+  const currentDate = now.toISOString().slice(0, 10);
+  const benchmarkAsset = strategy?.benchmarkAsset ?? null;
+  const benchmarkDailyPrices = benchmarkAsset
+    ? dailyPrices
+      .filter((price) => price.assetId === benchmarkAsset.id)
+      .map((price) => ({
+        date: price.date.toISOString().slice(0, 10),
+        price: serializeDecimal(price.price),
+        hasStalePrices: price.isStaleAtCapture,
+      }))
+    : [];
+  const currentBenchmarkPrice = benchmarkAsset
+    ? marketData.prices.find((price) => price.assetId === benchmarkAsset.id)
+    : null;
+  const advanced = calculateAdvancedPerformance({
+    assets,
+    transactions,
+    baseCurrency: currency,
+    history: history.map((point) => ({
+      date: point.date,
+      portfolioValue: point.portfolioValue,
+      externalContributions: point.externalContributions,
+      externalWithdrawals: point.externalWithdrawals,
+      isComplete: point.isComplete,
+      hasStalePrices: point.hasStalePrices,
+    })),
+    current: {
+      date: currentDate,
+      portfolioValue: portfolio.missingPriceSymbols.length === 0 ? portfolio.totalValue : null,
+      externalContributions: analytics.externalContributions,
+      externalWithdrawals: analytics.externalWithdrawals,
+      isComplete: portfolio.missingPriceSymbols.length === 0,
+      hasStalePrices: marketData.hasStalePrices,
+    },
+    asOf: now,
+    benchmark: benchmarkAsset ? {
+      assetId: benchmarkAsset.id,
+      observations: benchmarkDailyPrices,
+      current: currentBenchmarkPrice ? {
+        date: currentDate,
+        price: currentBenchmarkPrice.price,
+        hasStalePrices: currentBenchmarkPrice.isStale,
+      } : null,
+    } : null,
+  });
   const historicalMissingPriceSymbols = [...new Set(
     history.flatMap((point) => point.missingPriceSymbols),
   )].sort();
@@ -131,6 +188,14 @@ export async function getPerformanceReadModel({
       hasStalePrices: marketData.hasStalePrices,
     },
     history,
+    advanced,
+    benchmark: {
+      strategyId: strategy?.id ?? null,
+      selectedAssetId: benchmarkAsset?.id ?? null,
+      selectedSymbol: benchmarkAsset?.symbol ?? null,
+      selectedName: benchmarkAsset?.name ?? null,
+      options: assets.map((asset) => ({ id: asset.id, symbol: asset.symbol, name: asset.name })),
+    },
     trackingStartedAt: history[0]?.date ?? null,
     incompleteDates: history.filter((point) => !point.isComplete).length,
     staleDates: history.filter((point) => point.hasStalePrices).length,

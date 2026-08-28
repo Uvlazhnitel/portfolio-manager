@@ -11,6 +11,7 @@ const strategyInclude = {
     },
   },
   portfolioRules: true,
+  benchmarkAsset: true,
 } as const;
 
 export class StrategyRepository {
@@ -27,6 +28,21 @@ export class StrategyRepository {
     return this.db.strategy.create({
       data,
       include: strategyInclude,
+    });
+  }
+
+  async updateBenchmark(strategyId: string, benchmarkAssetId: string | null) {
+    return this.db.$transaction(async (transaction) => {
+      if (benchmarkAssetId) {
+        const asset = await transaction.asset.findUnique({ where: { id: benchmarkAssetId }, select: { id: true } });
+        if (!asset) throw new Error("Benchmark asset does not exist.");
+      }
+
+      return transaction.strategy.update({
+        where: { id: strategyId },
+        data: { benchmarkAssetId },
+        include: strategyInclude,
+      });
     });
   }
 

@@ -11,7 +11,7 @@ import {
   type EngineTransaction,
 } from "@/features/portfolio-engine";
 import type { PortfolioRepository } from "@/features/portfolio/repository";
-import type { StrategyRepository } from "@/features/strategy/repository";
+import { StrategyRepository } from "@/features/strategy/repository";
 import { createTestDatabase, type TestDatabase } from "../helpers/test-db";
 
 const assets: EngineAsset[] = [
@@ -308,6 +308,35 @@ describe("daily price repository", () => {
   });
 });
 
+describe("performance benchmark persistence", () => {
+  let testDb: TestDatabase;
+
+  beforeAll(async () => {
+    testDb = await createTestDatabase();
+  });
+
+  afterAll(async () => {
+    await testDb.cleanup();
+  });
+
+  it("persists one strategy benchmark and clears it when the asset is deleted", async () => {
+    const benchmark = await testDb.prisma.asset.create({
+      data: { symbol: "BENCH", name: "Benchmark", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "USD" },
+    });
+    const strategy = await testDb.prisma.strategy.create({
+      data: { name: "Test", objective: "Test", baseCurrency: "USD" },
+    });
+    const repository = new StrategyRepository(testDb.prisma);
+
+    const updated = await repository.updateBenchmark(strategy.id, benchmark.id);
+    expect(updated.benchmarkAsset?.symbol).toBe("BENCH");
+
+    await testDb.prisma.asset.delete({ where: { id: benchmark.id } });
+    const afterDelete = await testDb.prisma.strategy.findUniqueOrThrow({ where: { id: strategy.id } });
+    expect(afterDelete.benchmarkAssetId).toBeNull();
+  });
+});
+
 describe("performance read model", () => {
   it("exposes summary and historical coverage states", async () => {
     const now = new Date("2026-08-26T20:00:00Z");
@@ -317,14 +346,17 @@ describe("performance read model", () => {
     const dailyRows = [dailyPrice("btc", "10000", now), dailyPrice("usd", "1", now)];
     const model = await getPerformanceReadModel({
       portfolioRepository: { listAssets: async () => assetRows, listTransactions: async () => transactionRows } as unknown as PortfolioRepository,
-      strategyRepository: { findActiveStrategy: async () => ({ baseCurrency: "USD" }) } as unknown as StrategyRepository,
+      strategyRepository: { findActiveStrategy: async () => ({ id: "strategy", baseCurrency: "USD", benchmarkAsset: assetRows[0] }) } as unknown as StrategyRepository,
       marketDataService: { getCurrentPrices: async () => ({ prices: dailyRows.map((price) => ({ assetId: price.assetId, symbol: assetRows.find((asset) => asset.id === price.assetId)!.symbol, price: price.price.toString(), currency: "USD", timestamp: now, fetchedAt: now, source: "TEST", isStale: false })), unavailableAssetIds: [], lastUpdated: now.toISOString(), hasStalePrices: false, wasRefreshed: false, refreshBlockedUntil: null, warning: null }) } as unknown as MarketDataService,
       dailyPriceStore: { listDailyPrices: async () => dailyRows, saveDailyPrices: vi.fn() },
+      now,
     });
 
     expect(model.summary).toEqual(expect.objectContaining({ portfolioValue: "1000.00", netInvested: "0.00", netContributed: "1000.00", investmentGain: "0.00", trackedCapitalReturnPercent: "0.00", isPartial: false }));
     expect(model.history).toHaveLength(1);
     expect(model.trackingStartedAt).toBe("2026-08-26");
+    expect(model.benchmark).toEqual(expect.objectContaining({ strategyId: "strategy", selectedAssetId: assetRows[0].id }));
+    expect(model.advanced.twr.unavailableReason).toBe("INSUFFICIENT_HISTORY");
   });
 });
 
