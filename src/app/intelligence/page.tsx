@@ -70,7 +70,7 @@ export default async function IntelligencePage() {
         </Card>
 
         <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
-          <Card>
+          <Card className="min-w-0">
             <SectionTitle icon={Landmark} title="Daily performance" description={brief.previousDate ? `Compared with ${formatUtcDate(`${brief.previousDate}T00:00:00Z`)}` : "Previous complete observation unavailable"} />
             {brief.unavailableReason ? (
               <Unavailable reason={brief.unavailableReason} />
@@ -83,7 +83,7 @@ export default async function IntelligencePage() {
             <p className="mt-4 text-xs leading-5 text-muted">Daily gain removes external deposits and withdrawals from the change in portfolio value.</p>
           </Card>
 
-          <Card>
+          <Card className="min-w-0">
             <SectionTitle icon={Scale} title="Market contributors" description="Price movement on holdings carried from the previous observation." />
             {brief.unavailableReason ? (
               <p className="mt-5 text-sm text-muted">Contributor ranking is unavailable until both valuation points are complete.</p>
@@ -99,7 +99,7 @@ export default async function IntelligencePage() {
         </div>
 
         <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
-          <Card>
+          <Card className="min-w-0">
             <SectionTitle icon={ShieldCheck} title="Strategy changes" description="Changes in configured allocation ranges since the previous observation." />
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <ViolationList title="New violations" warnings={brief.newViolations} empty="No newly triggered violations." tone="warning" />
@@ -127,7 +127,7 @@ export default async function IntelligencePage() {
             ) : <p className="mt-5 text-sm text-muted">Allocation comparison is unavailable for this daily interval.</p>}
           </Card>
 
-          <Card>
+          <Card className="min-w-0">
             <SectionTitle icon={TriangleAlert} title="Risk signals" description="Current deterministic concentration and custody facts." />
             <div className="mt-5 space-y-3">
               {brief.riskSignals.length > 0 ? brief.riskSignals.map((signal) => (
