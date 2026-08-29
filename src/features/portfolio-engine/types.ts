@@ -213,6 +213,9 @@ export type DailyBriefReasonCode =
   | "STRATEGY_CHALLENGE_DISABLED"
   | "STALE_PRICE_DATA"
   | "INSUFFICIENT_DAILY_DATA"
+  | "NEW_RISK_LIMIT_VIOLATION"
+  | "RISK_LIMIT_VIOLATION_RESOLVED"
+  | "EXISTING_RISK_LIMIT_WORSENED"
   | "NO_MEANINGFUL_STRATEGY_CHANGE";
 
 export type DailyBriefUnavailableReason =
@@ -243,14 +246,6 @@ export type DailyBriefAllocationChange = AllocationComparison & {
   previousStatus: AllocationStatus;
 };
 
-export type DailyBriefRiskSignal = {
-  code: "LARGEST_ASSET" | "LARGEST_CUSTODY_ACCOUNT" | "CRYPTO_ALLOCATION";
-  label: string;
-  value: string;
-  detail: string;
-  tone: "NEUTRAL" | "WARNING";
-};
-
 export type DailyBriefResult = {
   status: DailyBriefStatus;
   summary: string;
@@ -273,12 +268,12 @@ export type DailyBriefResult = {
   newViolations: StrategyWarning[];
   resolvedViolations: StrategyWarning[];
   currentViolations: StrategyWarning[];
-  riskSignals: DailyBriefRiskSignal[];
+  risk: PortfolioRiskSnapshot;
 };
 
 export type CalculateDailyBriefInput = {
   assets: EngineAsset[];
-  accounts: Array<{ id: string; name: string; type: string }>;
+  accounts: CalculatePortfolioRiskInput["accounts"];
   transactions: EngineTransaction[];
   baseCurrency: string;
   currentMarketPrices: MarketPrices;
@@ -286,7 +281,55 @@ export type CalculateDailyBriefInput = {
   history: HistoricalMarketSnapshot[];
   strategy: EngineStrategyAllocation[] | null;
   rules: DailyBriefStrategyRules;
+  riskThresholds: CalculatePortfolioRiskInput["thresholds"];
   asOf: Date | string;
+};
+
+export type EngineCustodianCategory = "EXCHANGE" | "BROKER" | "SELF_CUSTODY" | "PHYSICAL" | "BANK" | "OTHER";
+export type RiskState = "OK" | "WARNING" | "PARTIAL" | "UNAVAILABLE";
+export type RiskReasonCode =
+  | "INCOMPLETE_VALUATION" | "MISSING_MARKET_PRICE" | "NO_VALUED_HOLDINGS"
+  | "UNASSIGNED_CUSTODIAN" | "STALE_PRICE_DATA" | "SINGLE_ASSET_LIMIT_EXCEEDED"
+  | "CUSTODIAN_LIMIT_EXCEEDED" | "CRYPTO_LIMIT_EXCEEDED" | ViolationCode;
+
+export type RiskMetric = {
+  valuePercent: string | null;
+  state: RiskState;
+  subjectId: string | null;
+  subjectName: string | null;
+  limitPercent: string | null;
+  reasonCodes: RiskReasonCode[];
+};
+
+export type RiskExposure = { category: string; valuePercent: string | null; state: RiskState; reasonCodes: RiskReasonCode[] };
+export type RiskViolation = { code: RiskReasonCode; metric: string; currentPercent: string; limitPercent: string; excessPercent: string };
+export type PortfolioRiskSnapshot = {
+  state: RiskState;
+  isStale: boolean;
+  missingPriceSymbols: string[];
+  unassignedCustodianAccountIds: string[];
+  largestAsset: RiskMetric;
+  topThreeAssets: RiskMetric;
+  largestAccount: RiskMetric;
+  largestCustodian: RiskMetric;
+  cryptoAllocation: RiskMetric;
+  accountTypeExposure: RiskExposure[];
+  custodyCategoryExposure: RiskExposure[];
+  exchangeExposure: RiskMetric;
+  brokerExposure: RiskMetric;
+  selfCustodyExposure: RiskMetric;
+  physicalCustodyExposure: RiskMetric;
+  violations: RiskViolation[];
+  strategyViolations: StrategyWarning[];
+};
+
+export type CalculatePortfolioRiskInput = {
+  portfolio: PortfolioSnapshot;
+  assets: EngineAsset[];
+  accounts: Array<{ id: string; name: string; type: string; custodian: { id: string; name: string; category: EngineCustodianCategory } | null }>;
+  strategy: EngineStrategyAllocation[] | null;
+  thresholds: { singleAssetMaxPercent: DecimalLike | null; custodianMaxPercent: DecimalLike | null };
+  hasStalePrices: boolean;
 };
 
 export const performanceRanges = ["7D", "1M", "3M", "1Y", "ALL"] as const;

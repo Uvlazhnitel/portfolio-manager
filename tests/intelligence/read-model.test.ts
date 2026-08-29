@@ -61,6 +61,7 @@ describe("intelligence read model", () => {
       dailyReturnPercent: "10.00",
     }));
     expect(model.brief.positiveContributors[0]).toEqual(expect.objectContaining({ symbol: "ETF", contribution: "10.00" }));
-    expect(model.brief.riskSignals.map((signal) => signal.code)).toEqual(expect.arrayContaining(["LARGEST_ASSET", "LARGEST_CUSTODY_ACCOUNT"]));
+    expect(model.brief.risk.largestAsset.subjectName).toBe("ETF");
+    expect(model.brief.risk.largestCustodian.state).toBe("PARTIAL");
   });
 });

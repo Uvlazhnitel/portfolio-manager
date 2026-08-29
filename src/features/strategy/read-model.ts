@@ -35,6 +35,10 @@ export type StrategyEditorModel = {
     challengeStrategyViolations: boolean;
     preferNoActionWhenEvidenceWeak: boolean;
     minimumRebalanceDrift: string;
+    singleAssetLimitEnabled: boolean;
+    singleAssetMaxPercent: string;
+    custodianLimitEnabled: boolean;
+    custodianMaxPercent: string;
   };
 };
 
@@ -99,6 +103,10 @@ export function toStrategyEditorModel(
       preferNoActionWhenEvidenceWeak:
         rulesByType.get(PortfolioRuleType.PREFER_NO_ACTION_WHEN_EVIDENCE_WEAK)?.enabled ?? true,
       minimumRebalanceDrift: readConfigString(driftRule?.config, "minDriftPercent") ?? "2",
+      singleAssetLimitEnabled: rulesByType.get(PortfolioRuleType.SINGLE_ASSET_MAX_ALLOCATION)?.enabled ?? false,
+      singleAssetMaxPercent: readConfigString(rulesByType.get(PortfolioRuleType.SINGLE_ASSET_MAX_ALLOCATION)?.config, "maxPercent") ?? "100",
+      custodianLimitEnabled: rulesByType.get(PortfolioRuleType.CUSTODIAN_MAX_ALLOCATION)?.enabled ?? false,
+      custodianMaxPercent: readConfigString(rulesByType.get(PortfolioRuleType.CUSTODIAN_MAX_ALLOCATION)?.config, "maxPercent") ?? "100",
     },
   };
 }

@@ -82,6 +82,10 @@ describe("strategy update", () => {
         challengeStrategyViolations: false,
         preferNoActionWhenEvidenceWeak: true,
         minimumRebalanceDrift: "2.25",
+        singleAssetLimitEnabled: true,
+        singleAssetMaxPercent: "35",
+        custodianLimitEnabled: true,
+        custodianMaxPercent: "50",
       },
     });
 
@@ -91,6 +95,8 @@ describe("strategy update", () => {
     expect(updated.portfolioRules.find((rule) => rule.type === PortfolioRuleType.CHALLENGE_STRATEGY_VIOLATIONS)?.enabled).toBe(false);
     expect(updated.portfolioRules.find((rule) => rule.type === PortfolioRuleType.PREFER_NO_ACTION_WHEN_EVIDENCE_WEAK)?.enabled).toBe(true);
     expect(updated.portfolioRules.find((rule) => rule.type === PortfolioRuleType.MIN_REBALANCE_DRIFT)?.config).toEqual({ minDriftPercent: "2.25" });
+    expect(updated.portfolioRules.find((rule) => rule.type === PortfolioRuleType.SINGLE_ASSET_MAX_ALLOCATION)).toEqual(expect.objectContaining({ enabled: true, config: { maxPercent: "35" } }));
+    expect(updated.portfolioRules.find((rule) => rule.type === PortfolioRuleType.CUSTODIAN_MAX_ALLOCATION)).toEqual(expect.objectContaining({ enabled: true, config: { maxPercent: "50" } }));
   });
 
   it("rejects invalid input without partially updating the strategy", async () => {

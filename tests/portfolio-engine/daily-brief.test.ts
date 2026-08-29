@@ -124,6 +124,13 @@ describe("daily brief engine", () => {
 
     expect(result.positiveContributors[0]).toEqual(expect.objectContaining({ symbol: "ETF", contribution: "10.00" }));
   });
+
+  it("consumes shared Risk Engine violations for the daily decision", () => {
+    const result = calculateDailyBrief(makeInput({ assets: [etf, crypto], transactions: [buy("etf", "10", "10"), buy("btc", "10", "10")], previousPrices: { ETF: "10", BTC: "10" }, currentPrices: { ETF: "20", BTC: "10" }, strategy: null, riskThresholds: { singleAssetMaxPercent: "60", custodianMaxPercent: null } }));
+    expect(result.risk.violations.map((item) => item.code)).toContain("SINGLE_ASSET_LIMIT_EXCEEDED");
+    expect(result.status).toBe("ACTION");
+    expect(result.reasonCodes).toContain("NEW_RISK_LIMIT_VIOLATION");
+  });
 });
 
 function makeInput(overrides: {
@@ -133,10 +140,11 @@ function makeInput(overrides: {
   currentPrices?: Record<string, string>;
   strategy?: EngineStrategyAllocation[] | null;
   previousStale?: boolean;
+  riskThresholds?: CalculateDailyBriefInput["riskThresholds"];
 } = {}): CalculateDailyBriefInput {
   return {
     assets: overrides.assets ?? [etf],
-    accounts: [{ id: "account", name: "Broker", type: "BROKER" }],
+    accounts: [{ id: "account", name: "Broker", type: "BROKER", custodian: null }],
     transactions: overrides.transactions ?? [buy("etf", "10", "10")],
     baseCurrency: "USD",
     currentMarketPrices: overrides.currentPrices ?? { ETF: "10" },
@@ -149,6 +157,7 @@ function makeInput(overrides: {
       preferNoActionWhenEvidenceWeak: true,
       minimumRebalanceDrift: "2",
     },
+    riskThresholds: overrides.riskThresholds ?? { singleAssetMaxPercent: null, custodianMaxPercent: null },
     asOf: "2026-08-29T12:00:00Z",
   };
 }

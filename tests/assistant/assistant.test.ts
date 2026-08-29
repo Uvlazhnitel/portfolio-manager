@@ -93,6 +93,7 @@ describe("assistant portfolio context and tools", () => {
     expect(runtime.context.valuation).toEqual(expect.objectContaining({ totalPortfolioValue: "1000.00", isPartial: false, priceCoveragePercent: "100.00" }));
     expect(runtime.context.holdings).toEqual(expect.arrayContaining([expect.objectContaining({ symbol: "BTC", quantity: "1", currentValue: "100.00" })]));
     expect(runtime.context.latestContributionRecommendation?.contributionAmount).toBe("1000.00");
+    expect(runtime.context.risk).toEqual(expect.objectContaining({ state: "PARTIAL", largestAsset: expect.objectContaining({ subjectName: "VWCE", valuePercent: "80.00" }), largestCustodian: expect.objectContaining({ state: "PARTIAL", valuePercent: null }) }));
     expect(JSON.stringify(runtime.context)).not.toContain("DO_NOT_SEND_THIS_NOTE");
   });
 

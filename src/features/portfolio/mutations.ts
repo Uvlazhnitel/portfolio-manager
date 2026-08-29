@@ -124,10 +124,14 @@ export async function createAccountMutation(
   const repository = new PortfolioRepository(db);
 
   try {
+    if (parsed.custodianId && !await db.custodian.findUnique({ where: { id: parsed.custodianId }, select: { id: true } })) {
+      throw new PortfolioMutationError("Selected custodian does not exist.");
+    }
     await repository.createAccount({
       name: parsed.name,
       type: parsed.type,
       description: parsed.description || null,
+      custodian: parsed.custodianId ? { connect: { id: parsed.custodianId } } : undefined,
     });
   } catch (error) {
     if (isPrismaError(error, "P2002")) throw new PortfolioMutationError("Account name already exists.");

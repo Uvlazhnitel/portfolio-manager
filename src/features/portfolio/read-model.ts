@@ -80,6 +80,7 @@ export type PortfolioOperationLeg = {
 };
 
 export type PortfolioReadModel = {
+  custodians: Array<{ id: string; name: string; category: string }>;
   assets: Array<{
     id: string;
     symbol: string;
@@ -97,6 +98,8 @@ export type PortfolioReadModel = {
     name: string;
     type: string;
     description: string | null;
+    custodianId: string | null;
+    custodianName: string | null;
   }>;
   holdings: PortfolioHoldingRow[];
   transactions: PortfolioTransactionRow[];
@@ -145,9 +148,10 @@ export async function getPortfolioReadModel({
   marketDataService?: MarketDataService;
   baseCurrency?: string;
 } = {}): Promise<PortfolioReadModel> {
-  const [assets, accounts, transactions, strategy] = await Promise.all([
+  const [assets, accounts, custodians, transactions, strategy] = await Promise.all([
     repository.listAssets(),
     repository.listAccounts(),
+    repository.listCustodians(),
     repository.listTransactions(),
     strategyRepository.findActiveStrategy(),
   ]);
@@ -165,6 +169,7 @@ export async function getPortfolioReadModel({
     : [];
 
   return {
+    custodians: custodians.map((custodian) => ({ id: custodian.id, name: custodian.name, category: custodian.category })),
     assets: assets.map((asset) => ({
       id: asset.id,
       symbol: asset.symbol,
@@ -182,6 +187,8 @@ export async function getPortfolioReadModel({
       name: account.name,
       type: account.type,
       description: account.description,
+      custodianId: account.custodianId,
+      custodianName: account.custodian?.name ?? null,
     })),
     holdings,
     transactions: buildTransactionRows(transactions),

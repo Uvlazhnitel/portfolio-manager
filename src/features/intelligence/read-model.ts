@@ -11,6 +11,7 @@ import { PortfolioRepository } from "@/features/portfolio/repository";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { serializeDecimal } from "@/lib/db/decimal";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
+import { riskThresholdsFromRules } from "@/features/risk/config";
 
 export type IntelligenceReadModel = {
   currency: string;
@@ -66,7 +67,7 @@ export async function getIntelligenceReadModel({
     marketDataWarning: marketData.warning,
     brief: calculateDailyBrief({
       assets,
-      accounts,
+      accounts: accounts.map((account) => ({ id: account.id, name: account.name, type: account.type, custodian: account.custodian ? { id: account.custodian.id, name: account.custodian.name, category: account.custodian.category } : null })),
       transactions,
       baseCurrency: currency,
       currentMarketPrices: toEngineMarketPrices(marketData),
@@ -74,6 +75,7 @@ export async function getIntelligenceReadModel({
       history,
       strategy: strategy?.allocations ?? null,
       rules: parseRules(strategy?.portfolioRules ?? []),
+      riskThresholds: riskThresholdsFromRules(strategy?.portfolioRules ?? []),
       asOf: now,
     }),
   };

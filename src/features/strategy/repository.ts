@@ -64,6 +64,10 @@ export class StrategyRepository {
       challengeStrategyViolations: boolean;
       preferNoActionWhenEvidenceWeak: boolean;
       minimumRebalanceDrift: string;
+      singleAssetLimitEnabled?: boolean;
+      singleAssetMaxPercent?: string;
+      custodianLimitEnabled?: boolean;
+      custodianMaxPercent?: string;
     };
   }) {
     return this.db.$transaction(async (transaction) => {
@@ -181,6 +185,17 @@ export class StrategyRepository {
           config: { minDriftPercent: input.rules.minimumRebalanceDrift },
         },
       });
+
+      for (const rule of [
+        { type: PortfolioRuleType.SINGLE_ASSET_MAX_ALLOCATION, enabled: input.rules.singleAssetLimitEnabled ?? false, maxPercent: input.rules.singleAssetMaxPercent ?? "100" },
+        { type: PortfolioRuleType.CUSTODIAN_MAX_ALLOCATION, enabled: input.rules.custodianLimitEnabled ?? false, maxPercent: input.rules.custodianMaxPercent ?? "100" },
+      ]) {
+        await transaction.portfolioRule.upsert({
+          where: { strategyId_type: { strategyId: strategy.id, type: rule.type } },
+          update: { enabled: rule.enabled, config: { maxPercent: rule.maxPercent } },
+          create: { strategyId: strategy.id, type: rule.type, enabled: rule.enabled, config: { maxPercent: rule.maxPercent } },
+        });
+      }
 
       await transaction.portfolioRule.deleteMany({
         where: { strategyId: strategy.id, type: PortfolioRuleType.CRYPTO_MAX_ALLOCATION },

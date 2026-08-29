@@ -35,6 +35,7 @@ export async function createAccountAction(
         name: String(formData.get("name") ?? ""),
         type: String(formData.get("type") ?? AccountType.OTHER) as AccountType,
         description: nullableString(formData.get("description")),
+        custodianId: nullableString(formData.get("custodianId")),
       }),
     );
   } catch (error) {

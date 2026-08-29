@@ -4,9 +4,11 @@ import {
   buildContributionProjection,
   calculatePortfolio,
   calculatePortfolioAnalytics,
+  calculatePortfolioRisk,
   compareAllocationToStrategy,
   evaluateStrategyCompliance,
   type MarketPrices,
+  type PortfolioRiskSnapshot,
 } from "@/features/portfolio-engine";
 import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/service";
@@ -15,6 +17,7 @@ import { StrategyRepository } from "@/features/strategy/repository";
 import { serializeDecimal } from "@/lib/db/decimal";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 import { formatTroyOunces, gramsToTroyOunces } from "@/features/market-data/gold";
+import { riskThresholdsFromRules } from "@/features/risk/config";
 
 type Assets = Awaited<ReturnType<PortfolioRepository["listAssets"]>>;
 type Accounts = Awaited<ReturnType<PortfolioRepository["listAccounts"]>>;
@@ -92,6 +95,7 @@ export type PortfolioAssistantContext = {
     warnings: Array<{ code: string; assetClass: string; currentPercent: string; limitPercent: string }>;
   } | null;
   marketData: { timestamp: string | null; hasStalePrices: boolean };
+  risk: PortfolioRiskSnapshot;
 };
 
 export type AssistantPortfolioRuntime = {
@@ -137,6 +141,14 @@ export async function loadAssistantPortfolioRuntime({
   const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency });
   const comparisons = strategy ? compareAllocationToStrategy(portfolio, strategy.allocations) : [];
   const warnings = strategy ? evaluateStrategyCompliance(portfolio, strategy.allocations) : [];
+  const risk = calculatePortfolioRisk({
+    portfolio,
+    assets,
+    accounts: accounts.map((account) => ({ id: account.id, name: account.name, type: account.type, custodian: account.custodian ? { id: account.custodian.id, name: account.custodian.name, category: account.custodian.category } : null })),
+    strategy: strategy?.allocations ?? null,
+    thresholds: riskThresholdsFromRules(strategy?.portfolioRules ?? []),
+    hasStalePrices: marketData.hasStalePrices,
+  });
   const allocationValues = new Map(portfolio.allocation.map((allocation) => [allocation.assetClass, allocation.value]));
   const accountAnalytics = new Map(analytics.accounts.map((account) => [account.accountId, account]));
   const missingSymbols = new Set(portfolio.missingPriceSymbols);
@@ -256,6 +268,7 @@ export async function loadAssistantPortfolioRuntime({
         }
       : null,
     marketData: { timestamp: marketData.lastUpdated, hasStalePrices: marketData.hasStalePrices },
+    risk,
   };
 
   return { assets, accounts, transactions, strategy, marketPrices, portfolio, context };

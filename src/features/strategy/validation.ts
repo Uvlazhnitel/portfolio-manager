@@ -36,6 +36,10 @@ export const strategyRulesInputSchema = z.object({
   challengeStrategyViolations: z.boolean(),
   preferNoActionWhenEvidenceWeak: z.boolean(),
   minimumRebalanceDrift: decimalLikeSchema,
+  singleAssetLimitEnabled: z.boolean().default(false),
+  singleAssetMaxPercent: decimalLikeSchema.default("100"),
+  custodianLimitEnabled: z.boolean().default(false),
+  custodianMaxPercent: decimalLikeSchema.default("100"),
 });
 
 export const updateStrategyInputSchema = z.object({
@@ -97,6 +101,8 @@ export function analyzeStrategyDraft(input: {
   name: string;
   allocations: StrategyAllocationInput[];
   minimumRebalanceDrift: string | number;
+  singleAssetMaxPercent?: string | number;
+  custodianMaxPercent?: string | number;
 }): StrategyDraftAnalysis {
   const errors: string[] = [];
   const classCounts = new Map<AssetClass, number>();
@@ -175,6 +181,11 @@ export function analyzeStrategyDraft(input: {
   } catch (error) {
     errors.push(error instanceof Error ? error.message : "Minimum rebalance drift is invalid.");
   }
+  for (const [label, value] of [["Single asset maximum", input.singleAssetMaxPercent], ["Custodian maximum", input.custodianMaxPercent]] as const) {
+    if (value === undefined) continue;
+    try { const points = parsePercentToBasisPoints(value); if (points < 0 || points > 10_000) errors.push(`${label} must be between 0 and 100.`); }
+    catch { errors.push(`${label} must be a valid percentage.`); }
+  }
 
   return {
     isValid: errors.length === 0,
@@ -205,6 +216,8 @@ export function validateUpdateStrategyInput(input: UpdateStrategyInput) {
     name: parsed.name,
     allocations: parsed.allocations,
     minimumRebalanceDrift: parsed.rules.minimumRebalanceDrift,
+    singleAssetMaxPercent: parsed.rules.singleAssetMaxPercent,
+    custodianMaxPercent: parsed.rules.custodianMaxPercent,
   });
 
   if (!analysis.isValid) {
@@ -217,7 +230,7 @@ export function validateUpdateStrategyInput(input: UpdateStrategyInput) {
 export function strategyDraftFingerprint(input: {
   name: string;
   allocations: StrategyAllocationInput[];
-  rules: z.infer<typeof strategyRulesInputSchema>;
+  rules: z.input<typeof strategyRulesInputSchema>;
 }) {
   return JSON.stringify({
     name: input.name,

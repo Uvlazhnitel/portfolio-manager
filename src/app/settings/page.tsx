@@ -6,15 +6,18 @@ import { getIntegrationSettingsReadModel } from "@/features/integrations/read-mo
 import { getMarketDataSettingsReadModel } from "@/features/market-data/settings-read-model";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
+import { CustodySettings } from "@/app/settings/_components/custody-settings";
+import { getCustodySettingsReadModel } from "@/features/custody/read-model";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const strategy = await new StrategyRepository().findActiveStrategy();
   const currency = strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
-  const [assets, integrations] = await Promise.all([
+  const [assets, integrations, custody] = await Promise.all([
     getMarketDataSettingsReadModel(undefined, currency),
     getIntegrationSettingsReadModel(),
+    getCustodySettingsReadModel(),
   ]);
 
   return (
@@ -25,6 +28,7 @@ export default async function SettingsPage() {
         action={<PriceRefresh />}
       />
       <div className="space-y-6">
+        <CustodySettings model={custody} />
         <IntegrationSettings model={integrations} />
         <ManualPrices assets={assets} currency={currency} />
       </div>

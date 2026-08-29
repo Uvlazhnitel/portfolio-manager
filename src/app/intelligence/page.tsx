@@ -18,6 +18,7 @@ import type {
   DailyBriefResult,
   DailyBriefStatus,
   StrategyWarning,
+  RiskMetric,
 } from "@/features/portfolio-engine";
 import { getIntelligenceReadModel } from "@/features/intelligence/read-model";
 import { formatUtcDate, formatUtcTimestamp } from "@/lib/format/date";
@@ -130,12 +131,12 @@ export default async function IntelligencePage() {
           <Card className="min-w-0">
             <SectionTitle icon={TriangleAlert} title="Risk signals" description="Current deterministic concentration and custody facts." />
             <div className="mt-5 space-y-3">
-              {brief.riskSignals.length > 0 ? brief.riskSignals.map((signal) => (
-                <div key={signal.code} className={cn("flex items-center justify-between gap-4 rounded-lg border border-border bg-surface px-4 py-3", signal.tone === "WARNING" && "border-warning/30")}>
-                  <div className="min-w-0"><p className="text-sm text-muted">{signal.label}</p><p className="mt-1 truncate text-sm font-medium text-foreground">{signal.detail}</p></div>
-                  <p className={cn("shrink-0 text-lg font-semibold tabular-nums text-foreground", signal.tone === "WARNING" && "text-warning")}>{signal.value}</p>
+              {riskMetrics(brief.risk).map(({ key, label, metric }) => (
+                <div key={key} className={cn("flex items-center justify-between gap-4 rounded-lg border border-border bg-surface px-4 py-3", metric.state === "WARNING" && "border-warning/30")}>
+                  <div className="min-w-0"><p className="text-sm text-muted">{label}</p><p className="mt-1 truncate text-sm font-medium text-foreground">{metric.subjectName ?? humanize(metric.state)}</p></div>
+                  <div className="text-right"><p className={cn("shrink-0 text-lg font-semibold tabular-nums text-foreground", metric.state === "WARNING" && "text-warning")}>{metric.valuePercent === null ? humanize(metric.state) : formatDecimalPercent(metric.valuePercent)}</p>{metric.limitPercent ? <p className="text-xs text-muted">max {formatDecimalPercent(metric.limitPercent)}</p> : null}</div>
                 </div>
-              )) : <p className="text-sm text-muted">No valued holdings are available for concentration signals.</p>}
+              ))}
             </div>
             <p className="mt-4 text-xs leading-5 text-muted">These are portfolio facts, not automatic instructions to trade.</p>
           </Card>
@@ -191,6 +192,7 @@ function buildDataQualityItems(brief: DailyBriefResult, marketWarning: string | 
   if (brief.unavailableReason) items.push({ message: `Daily comparison unavailable: ${humanize(brief.unavailableReason).toLowerCase()}.` });
   if (brief.isStale) items.push({ message: "At least one current or previous daily price is stale." });
   if (brief.missingPriceSymbols.length > 0) items.push({ message: `Missing valuation prices: ${brief.missingPriceSymbols.join(", ")}.`, tone: "destructive" });
+  if (brief.risk.unassignedCustodianAccountIds.length > 0) items.push({ message: `${brief.risk.unassignedCustodianAccountIds.length} valued account(s) have no custodian; custodian concentration is partial.` });
   if (marketWarning) items.push({ message: marketWarning });
   return items;
 }
@@ -201,3 +203,13 @@ function signedPercentOrUnavailable(value: string | null) { if (value === null) 
 function toneFor(value: string | null): "positive" | "negative" | "neutral" { const sign = value === null ? null : decimalSign(value); return sign === 1 ? "positive" : sign === -1 ? "negative" : "neutral"; }
 function toneClass(tone: "positive" | "negative" | "neutral") { return tone === "positive" ? "text-success" : tone === "negative" ? "text-destructive" : "text-foreground"; }
 function humanize(value: string) { return value.toLowerCase().replaceAll("_", " ").replace(/(^|\s)\S/g, (letter) => letter.toUpperCase()); }
+function riskMetrics(risk: DailyBriefResult["risk"]): Array<{ key: string; label: string; metric: RiskMetric }> { return [
+  { key: "largest-asset", label: "Largest asset", metric: risk.largestAsset },
+  { key: "top-three", label: "Top 3 assets", metric: risk.topThreeAssets },
+  { key: "largest-account", label: "Largest account", metric: risk.largestAccount },
+  { key: "largest-custodian", label: "Largest custodian", metric: risk.largestCustodian },
+  { key: "exchange", label: "Exchange exposure", metric: risk.exchangeExposure },
+  { key: "self-custody", label: "Self custody", metric: risk.selfCustodyExposure },
+  { key: "physical", label: "Physical custody", metric: risk.physicalCustodyExposure },
+  { key: "crypto", label: "Crypto allocation", metric: risk.cryptoAllocation },
+]; }

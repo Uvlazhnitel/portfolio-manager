@@ -209,6 +209,8 @@ async function main() {
     { type: PortfolioRuleType.CHALLENGE_STRATEGY_VIOLATIONS, config: { severity: "medium" } },
     { type: PortfolioRuleType.PREFER_NO_ACTION_WHEN_EVIDENCE_WEAK, config: {} },
     { type: PortfolioRuleType.MIN_REBALANCE_DRIFT, config: { minDriftPercent: "2" } },
+    { type: PortfolioRuleType.SINGLE_ASSET_MAX_ALLOCATION, config: { maxPercent: "100" }, enabled: false },
+    { type: PortfolioRuleType.CUSTODIAN_MAX_ALLOCATION, config: { maxPercent: "100" }, enabled: false },
   ];
 
   for (const rule of rules) {
@@ -222,7 +224,7 @@ async function main() {
       update: {},
       create: {
         strategyId: strategy.id,
-        enabled: true,
+        enabled: "enabled" in rule ? rule.enabled : true,
         ...rule,
       },
     });

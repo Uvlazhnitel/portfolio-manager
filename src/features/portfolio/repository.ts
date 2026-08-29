@@ -9,7 +9,11 @@ export class PortfolioRepository {
   }
 
   listAccounts() {
-    return this.db.account.findMany({ orderBy: { name: "asc" } });
+    return this.db.account.findMany({ include: { custodian: true }, orderBy: { name: "asc" } });
+  }
+
+  listCustodians() {
+    return this.db.custodian.findMany({ include: { accounts: { orderBy: { name: "asc" } } }, orderBy: { name: "asc" } });
   }
 
   listTransactions() {
@@ -55,6 +59,6 @@ export class PortfolioRepository {
   }
 
   findAccount(id: string) {
-    return this.db.account.findUnique({ where: { id } });
+    return this.db.account.findUnique({ where: { id }, include: { custodian: true } });
   }
 }

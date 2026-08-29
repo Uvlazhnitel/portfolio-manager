@@ -58,6 +58,7 @@ export const accountInputSchema = z.object({
   name: z.string().trim().min(1),
   type: z.enum(AccountType),
   description: z.string().trim().nullable().optional(),
+  custodianId: z.string().trim().min(1).nullable().optional(),
 });
 
 export const transactionInputSchema = z.object({

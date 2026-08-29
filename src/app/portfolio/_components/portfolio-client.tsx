@@ -115,7 +115,7 @@ export function PortfolioClient({ portfolio, initialDialog = null }: PortfolioCl
       ) : null}
 
       {dialog?.kind === "asset" ? <AddAssetDialog portfolio={portfolio} onClose={closeDialog} /> : null}
-      {dialog?.kind === "account" ? <AddAccountDialog onClose={closeDialog} /> : null}
+      {dialog?.kind === "account" ? <AddAccountDialog custodians={portfolio.custodians} onClose={closeDialog} /> : null}
       {dialog?.kind === "transaction" ? (
         <AddTransactionDialog portfolio={portfolio} initialAssetId={dialog.assetId} initialAccountId={dialog.accountId} onClose={closeDialog} />
       ) : null}
@@ -558,7 +558,7 @@ function PositionForm({
   );
 }
 
-function AddAccountDialog({ onClose }: { onClose: () => void }) {
+function AddAccountDialog({ custodians, onClose }: { custodians: PortfolioReadModel["custodians"]; onClose: () => void }) {
   const [state, action, isPending] = useActionState(createAccountAction, { ok: false, message: "" });
   return (
     <DialogShell title="Add account" description="Create a place where assets are held." onClose={onClose}>
@@ -568,6 +568,7 @@ function AddAccountDialog({ onClose }: { onClose: () => void }) {
         <form action={action} className="space-y-4">
           <Field label="Name"><input name="name" required className={inputClassName} placeholder="Ledger, bank, wallet…" /></Field>
           <Field label="Type"><select name="type" className={inputClassName} defaultValue="OTHER">{accountTypes.map((type) => <option key={type} value={type}>{formatType(type)}</option>)}</select></Field>
+          <Field label="Custodian (optional)"><select name="custodianId" className={inputClassName} defaultValue=""><option value="">Unassigned</option>{custodians.map((custodian) => <option key={custodian.id} value={custodian.id}>{custodian.name} · {formatType(custodian.category)}</option>)}</select></Field>
           <Field label="Description (optional)"><textarea name="description" className={textareaClassName} rows={3} /></Field>
           <ActionMessage state={state} />
           <Button type="submit" disabled={isPending} className="w-full sm:w-auto">{isPending ? "Saving…" : "Create account"}</Button>
@@ -884,7 +885,7 @@ function AccountsSection({ portfolio, onAddAccount }: PortfolioClientProps & { o
           <div key={account.id} className="grid gap-2 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_9rem_minmax(0,1.2fr)] sm:items-center sm:px-5">
             <p className="font-medium text-foreground">{account.name}</p>
             <p className="text-sm text-muted">{formatType(account.type)}</p>
-            <p className="text-sm text-muted">{account.description ?? "No description"}</p>
+            <p className="text-sm text-muted">{account.custodianName ?? "Unassigned custodian"}{account.description ? ` · ${account.description}` : ""}</p>
           </div>
         ))}
       </div>

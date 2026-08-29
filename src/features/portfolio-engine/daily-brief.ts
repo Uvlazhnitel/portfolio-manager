@@ -1,5 +1,5 @@
-import { AssetClass } from "@prisma/client";
 import { decimal, ONE_HUNDRED, toDecimalString, ZERO } from "@/features/portfolio-engine/decimal";
+import { calculatePortfolioRisk } from "@/features/portfolio-engine/risk";
 import {
   calculatePortfolio,
   calculatePortfolioAnalytics,
@@ -13,9 +13,9 @@ import type {
   DailyBriefContributor,
   DailyBriefReasonCode,
   DailyBriefResult,
-  DailyBriefRiskSignal,
   EngineTransaction,
   PortfolioSnapshot,
+  PortfolioRiskSnapshot,
   StrategyWarning,
 } from "@/features/portfolio-engine/types";
 
@@ -57,6 +57,10 @@ export function calculateDailyBrief(input: CalculateDailyBriefInput): DailyBrief
       transactions: previousTransactions,
       baseCurrency: input.baseCurrency,
     })
+    : null;
+  const currentRisk = calculatePortfolioRisk({ portfolio: currentPortfolio, assets: input.assets, accounts: input.accounts, strategy: input.strategy, thresholds: input.riskThresholds, hasStalePrices: input.currentHasStalePrices });
+  const previousRisk = previousPortfolio && previousObservation
+    ? calculatePortfolioRisk({ portfolio: previousPortfolio, assets: input.assets, accounts: input.accounts, strategy: input.strategy, thresholds: input.riskThresholds, hasStalePrices: previousObservation.hasStalePrices })
     : null;
 
   const missingPriceSymbols = [...new Set([
@@ -113,6 +117,8 @@ export function calculateDailyBrief(input: CalculateDailyBriefInput): DailyBrief
     newViolations,
     resolvedViolations,
     allocationChanges,
+    currentRisk,
+    previousRisk,
   });
 
   return {
@@ -141,7 +147,7 @@ export function calculateDailyBrief(input: CalculateDailyBriefInput): DailyBrief
     newViolations,
     resolvedViolations,
     currentViolations,
-    riskSignals: buildRiskSignals(input, currentPortfolio, currentComparisons, currentAnalytics.accounts),
+    risk: currentRisk,
   };
 }
 
@@ -248,6 +254,8 @@ function determineStatus(input: {
   newViolations: StrategyWarning[];
   resolvedViolations: StrategyWarning[];
   allocationChanges: DailyBriefAllocationChange[];
+  currentRisk: PortfolioRiskSnapshot;
+  previousRisk: PortfolioRiskSnapshot | null;
 }): Pick<DailyBriefResult, "status" | "summary" | "reasonCodes"> {
   const threshold = decimal(input.input.rules.minimumRebalanceDrift).abs();
   const comparisonByClass = new Map(input.allocationChanges.map((comparison) => [comparison.assetClass, comparison]));
@@ -278,6 +286,23 @@ function determineStatus(input: {
       ],
     };
   }
+  const previousRiskCodes = new Set(input.previousRisk?.violations.map((item) => item.code) ?? []);
+  const newRisk = input.currentRisk.violations.filter((item) => !previousRiskCodes.has(item.code));
+  if (newRisk.length > 0) {
+    const actionable = newRisk.some((item) => decimal(item.excessPercent).greaterThanOrEqualTo(threshold));
+    if (actionable && input.input.rules.challengeStrategyViolations) {
+      return { status: "ACTION", summary: input.input.rules.preferContributionsOverSelling ? "A new risk limit was exceeded. Review the next contribution before changing holdings." : "A new configured risk limit was exceeded.", reasonCodes: ["NEW_RISK_LIMIT_VIOLATION", "MINIMUM_REBALANCE_DRIFT_EXCEEDED", ...(input.input.rules.preferContributionsOverSelling ? ["CONTRIBUTION_FIRST_REVIEW" as const] : [])] };
+    }
+    return { status: "MONITOR", summary: "A configured risk limit needs monitoring, but no immediate portfolio change is required.", reasonCodes: ["NEW_RISK_LIMIT_VIOLATION"] };
+  }
+  const currentRiskCodes = new Set(input.currentRisk.violations.map((item) => item.code));
+  const priorRiskByCode = new Map(input.previousRisk?.violations.map((item) => [item.code, item]) ?? []);
+  if (input.currentRisk.violations.some((item) => { const prior = priorRiskByCode.get(item.code); return prior && decimal(item.excessPercent).minus(prior.excessPercent).greaterThanOrEqualTo(threshold); })) {
+    return { status: "MONITOR", summary: "An existing risk limit violation moved farther beyond its configured limit.", reasonCodes: ["EXISTING_RISK_LIMIT_WORSENED"] };
+  }
+  if (input.resolvedViolations.length === 0 && input.previousRisk?.violations.some((item) => !currentRiskCodes.has(item.code))) {
+    return { status: "NO_ACTION", summary: "A previous risk limit violation has cleared.", reasonCodes: ["RISK_LIMIT_VIOLATION_RESOLVED"] };
+  }
   const worsened = input.allocationChanges.some((comparison) =>
     comparison.status !== "IN_RANGE" &&
     decimal(comparison.driftFromTarget).abs().minus(decimal(comparison.previousDriftFromTarget).abs()).greaterThanOrEqualTo(threshold),
@@ -299,38 +324,6 @@ function determineStatus(input: {
     return { status: "NO_ACTION", summary: "A previous strategy violation has cleared; no rebalance action is required.", reasonCodes: ["STRATEGY_VIOLATION_RESOLVED"] };
   }
   return { status: "NO_ACTION", summary: "No meaningful strategy or risk change was detected.", reasonCodes: ["NO_MEANINGFUL_STRATEGY_CHANGE"] };
-}
-
-function buildRiskSignals(
-  input: CalculateDailyBriefInput,
-  portfolio: PortfolioSnapshot,
-  comparisons: AllocationComparison[],
-  accounts: Array<{ accountId: string; value: string; isPartial: boolean }>,
-): DailyBriefRiskSignal[] {
-  const totalValue = decimal(portfolio.totalValue);
-  const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
-  const accountById = new Map(input.accounts.map((account) => [account.id, account]));
-  const valueByAsset = new Map<string, ReturnType<typeof decimal>>();
-  for (const holding of portfolio.valuedHoldings) {
-    valueByAsset.set(holding.assetId, (valueByAsset.get(holding.assetId) ?? ZERO).plus(holding.value));
-  }
-  const largestAsset = [...valueByAsset.entries()].sort((left, right) => right[1].comparedTo(left[1]))[0];
-  const largestAccount = [...accounts].sort((left, right) => decimal(right.value).comparedTo(left.value))[0];
-  const crypto = portfolio.allocation.find((allocation) => allocation.assetClass === AssetClass.CRYPTO);
-  const cryptoComparison = comparisons.find((comparison) => comparison.assetClass === AssetClass.CRYPTO);
-  const result: DailyBriefRiskSignal[] = [];
-  if (largestAsset && totalValue.greaterThan(ZERO)) {
-    const asset = assetById.get(largestAsset[0]);
-    result.push({ code: "LARGEST_ASSET", label: "Largest asset", value: `${toDecimalString(largestAsset[1].div(totalValue).mul(ONE_HUNDRED))}%`, detail: asset?.symbol ?? largestAsset[0], tone: "NEUTRAL" });
-  }
-  if (largestAccount && totalValue.greaterThan(ZERO)) {
-    const account = accountById.get(largestAccount.accountId);
-    result.push({ code: "LARGEST_CUSTODY_ACCOUNT", label: "Largest custody", value: `${toDecimalString(decimal(largestAccount.value).div(totalValue).mul(ONE_HUNDRED))}%`, detail: account ? `${account.name} · ${account.type}` : largestAccount.accountId, tone: "NEUTRAL" });
-  }
-  if (crypto) {
-    result.push({ code: "CRYPTO_ALLOCATION", label: "Crypto allocation", value: `${crypto.percentage}%`, detail: cryptoComparison ? cryptoComparison.status.replace("_", " ").toLowerCase() : "No strategy comparison", tone: cryptoComparison && cryptoComparison.status !== "IN_RANGE" ? "WARNING" : "NEUTRAL" });
-  }
-  return result;
 }
 
 function transactionsThrough(transactions: EngineTransaction[], timestamp: number) {

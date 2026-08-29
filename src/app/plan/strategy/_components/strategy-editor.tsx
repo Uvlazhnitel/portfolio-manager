@@ -40,6 +40,8 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
     name: draft.name,
     allocations: draft.allocations,
     minimumRebalanceDrift: draft.rules.minimumRebalanceDrift,
+    singleAssetMaxPercent: draft.rules.singleAssetMaxPercent,
+    custodianMaxPercent: draft.rules.custodianMaxPercent,
   });
   const isDirty = strategyDraftFingerprint(draft) !== strategyDraftFingerprint(initialDraft);
   const cryptoAllocation = draft.allocations.find((allocation) => allocation.assetClass === AssetClass.CRYPTO);
@@ -228,6 +230,18 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
             onChange={(checked) => updateRule("preferContributionsOverSelling", checked)}
           />
           <RuleToggle
+            label="Single asset concentration limit"
+            description="Warn when one asset exceeds the configured portfolio share."
+            checked={draft.rules.singleAssetLimitEnabled}
+            onChange={(checked) => updateRule("singleAssetLimitEnabled", checked)}
+          />
+          <RuleToggle
+            label="Custodian concentration limit"
+            description="Warn when accounts at one counterparty exceed the configured share."
+            checked={draft.rules.custodianLimitEnabled}
+            onChange={(checked) => updateRule("custodianLimitEnabled", checked)}
+          />
+          <RuleToggle
             label="Challenge decisions that violate strategy"
             description="Flag actions that move the portfolio outside configured ranges."
             checked={draft.rules.challengeStrategyViolations}
@@ -256,6 +270,8 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
               onChange={(value) => updateAllocation(AssetClass.CRYPTO, "maxPercent", value)}
             />
           ) : null}
+          {draft.rules.singleAssetLimitEnabled ? <NumberRule label="Maximum single asset allocation" description="Maximum percentage held in one asset." value={draft.rules.singleAssetMaxPercent} onChange={(value) => updateRule("singleAssetMaxPercent", value)} /> : null}
+          {draft.rules.custodianLimitEnabled ? <NumberRule label="Maximum custodian allocation" description="Maximum percentage held with one custodian." value={draft.rules.custodianMaxPercent} onChange={(value) => updateRule("custodianMaxPercent", value)} /> : null}
         </div>
       </Card>
 
