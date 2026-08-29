@@ -130,6 +130,24 @@ describe("advanced performance engine", () => {
     expect(Number(result.xirr.value)).toBeCloseTo(10, 2);
   });
 
+  it("does not annualize XIRR over less than 30 days", () => {
+    const tooShort = calculateAdvancedPerformance(input(
+      [point("2026-08-01", "100")],
+      point("2026-08-30", "110"),
+      "2026-08-30T12:00:00Z",
+    ));
+    const minimumPeriod = calculateAdvancedPerformance(input(
+      [point("2026-08-01", "100")],
+      point("2026-08-31", "110"),
+      "2026-08-31T12:00:00Z",
+    ));
+
+    expect(tooShort.xirr.value).toBeNull();
+    expect(tooShort.xirr.unavailableReason).toBe("XIRR_PERIOD_TOO_SHORT");
+    expect(minimumPeriod.xirr.value).not.toBeNull();
+    expect(minimumPeriod.xirr.unavailableReason).toBeNull();
+  });
+
   it("uses dated external cashflows in XIRR and rejects unvalued flows", () => {
     const deposit: EngineTransaction = {
       assetId: "usd",

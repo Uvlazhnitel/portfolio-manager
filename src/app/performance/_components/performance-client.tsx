@@ -261,6 +261,7 @@ function performanceDataQualityItems(performance: PerformanceReadModel): DataQua
 
 function advancedMetricReason(reason: AdvancedMetricUnavailableReason) {
   if (reason === "INSUFFICIENT_HISTORY") return "Not enough historical observations for this period.";
+  if (reason === "XIRR_PERIOD_TOO_SHORT") return "XIRR requires at least 30 days of history for meaningful annualization.";
   if (reason === "INCOMPLETE_VALUATION") return "Portfolio valuation is incomplete during this period.";
   if (reason === "INCOMPLETE_EXTERNAL_CASHFLOWS") return "One or more external cashflows cannot be valued deterministically.";
   if (reason === "INVALID_START_VALUE") return "The period does not have a positive, valid starting value.";

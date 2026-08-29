@@ -13,6 +13,8 @@ import type {
 } from "@/features/portfolio-engine/types";
 
 const ONE = decimal(1);
+const MIN_XIRR_PERIOD_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const XIRR_SCAN_MIN = -20;
 const XIRR_SCAN_MAX = 20;
 const XIRR_SCAN_STEPS = 1600;
@@ -97,6 +99,10 @@ function calculateXirr(input: CalculateAdvancedPerformanceInput): AdvancedPerfor
   const firstDayEnd = Date.parse(`${first.date}T23:59:59.999Z`);
   if (!firstValue.greaterThan(ZERO)) return unavailable("INVALID_START_VALUE", [first, input.current]);
   if (asOf.getTime() <= firstDayEnd) return unavailable("INSUFFICIENT_HISTORY", [first, input.current]);
+  const coveredDays = (startOfUtcDay(asOf).getTime() - parseDate(first.date).getTime()) / DAY_MS;
+  if (coveredDays < MIN_XIRR_PERIOD_DAYS) {
+    return unavailable("XIRR_PERIOD_TOO_SHORT", [first, input.current]);
+  }
 
   const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
   const cashflows: DatedCashflow[] = [{ date: parseDate(first.date), amount: -firstValue.toNumber() }];

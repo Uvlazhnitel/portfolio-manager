@@ -338,6 +338,7 @@ export type PerformanceRange = (typeof performanceRanges)[number];
 
 export type AdvancedMetricUnavailableReason =
   | "INSUFFICIENT_HISTORY"
+  | "XIRR_PERIOD_TOO_SHORT"
   | "INCOMPLETE_VALUATION"
   | "INCOMPLETE_EXTERNAL_CASHFLOWS"
   | "INVALID_START_VALUE"
