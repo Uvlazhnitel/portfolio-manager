@@ -4,7 +4,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AssistantRepository } from "@/features/assistant/repository";
 import { AssistantConversationService, buildConversationTitle } from "@/features/assistant/service";
 import { loadAssistantPortfolioRuntime } from "@/features/assistant/context";
+import { ASSISTANT_SYSTEM_INSTRUCTIONS } from "@/features/assistant/instructions";
 import { assistantToolDefinitions, executeAssistantTool } from "@/features/assistant/tools";
+import type { AssistantToolServices } from "@/features/assistant/tool-services";
 import { streamAssistantResponse } from "@/features/assistant/stream";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
 import { MarketDataService } from "@/features/market-data/service";
@@ -89,6 +91,21 @@ describe("assistant persistence", () => {
 });
 
 describe("assistant portfolio context and tools", () => {
+  it("exposes authoritative v2 tools and retires duplicate calculation tools", () => {
+    const names = assistantToolDefinitions.flatMap((tool) => "name" in tool ? [tool.name] : []);
+    expect(names).toEqual(expect.arrayContaining([
+      "get_daily_brief",
+      "get_risk_snapshot",
+      "simulate_scenario",
+      "get_performance_summary",
+      "explain_contribution_plan",
+    ]));
+    expect(names).not.toEqual(expect.arrayContaining(["simulate_transaction", "plan_contribution"]));
+    expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain("For what changed since the previous observation, call get_daily_brief");
+    expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain("Never calculate allocation, value, drift, P&L, TWR, XIRR, risk");
+    expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain("Never execute trades, create transactions, persist scenarios");
+  });
+
   it("builds compact Decimal-safe context without transaction notes", () => {
     expect(runtime.context.valuation).toEqual(expect.objectContaining({ totalPortfolioValue: "1000.00", isPartial: false, priceCoveragePercent: "100.00" }));
     expect(runtime.context.holdings).toEqual(expect.arrayContaining([expect.objectContaining({ symbol: "BTC", quantity: "1", currentValue: "100.00" })]));
@@ -97,30 +114,81 @@ describe("assistant portfolio context and tools", () => {
     expect(JSON.stringify(runtime.context)).not.toContain("DO_NOT_SEND_THIS_NOTE");
   });
 
-  it("returns deterministic summary, strategy, contribution plan, and BTC simulation", async () => {
+  it("returns deterministic summary, strategy, contribution plan, and BTC scenario", async () => {
     const transactionCount = await testDb.prisma.transaction.count();
     const summary = await executeAssistantTool("get_portfolio_summary", "{}", runtime) as { valuation: { totalPortfolioValue: string } };
     const savedStrategy = await executeAssistantTool("get_strategy", "{}", runtime) as { allocations: unknown[] };
-    const plan = await executeAssistantTool("plan_contribution", JSON.stringify({ amount: "1000" }), runtime) as { currency: string; allocations: Array<{ amount: string }>; assetRecommendations: Array<{ symbol: string }> };
-    const simulation = await executeAssistantTool("simulate_transaction", JSON.stringify({ symbol: "btc", type: "BUY", amount: "500" }), runtime) as { projectedAssetClassPercent: string; strategyMaximum: string; violations: Array<{ code: string }> };
+    const plan = await executeAssistantTool("explain_contribution_plan", JSON.stringify({ amount: "1000" }), runtime) as { currency: string; allocations: Array<{ amount: string }>; assetRecommendations: Array<{ symbol: string }> };
+    const simulation = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "btc", kind: "BUY", amount: "500", accountName: null }), runtime) as unknown as { allocationAfter: Array<{ assetClass: string; currentPercent: string }>; newWarnings: Array<{ code: string }>; alternatives: { maximumAmountForRequestedAsset: string } };
 
     expect(summary.valuation.totalPortfolioValue).toBe("1000.00");
     expect(savedStrategy.allocations).toHaveLength(4);
     expect(plan.allocations.reduce((sum, allocation) => sum + Number(allocation.amount), 0)).toBe(1000);
     expect(plan.assetRecommendations.map((item) => item.symbol)).toContain("BTC");
     expect(plan.currency).toBe(runtime.strategy?.baseCurrency);
-    expect(JSON.stringify(assistantToolDefinitions.find((tool) => "name" in tool && tool.name === "plan_contribution"))).not.toContain('"currency"');
-    expect(simulation).toEqual(expect.objectContaining({ projectedAssetClassPercent: "40.00", strategyMaximum: "20.00" }));
-    expect(simulation.violations).toContainEqual(expect.objectContaining({ code: "CRYPTO_ABOVE_MAX" }));
+    expect(JSON.stringify(assistantToolDefinitions.find((tool) => "name" in tool && tool.name === "explain_contribution_plan"))).not.toContain('"currency"');
+    expect(simulation.allocationAfter).toContainEqual(expect.objectContaining({ assetClass: "CRYPTO", currentPercent: "40.00" }));
+    expect(simulation.newWarnings).toContainEqual(expect.objectContaining({ code: "CRYPTO_ABOVE_MAX" }));
+    expect(simulation.alternatives.maximumAmountForRequestedAsset).toBe("125.00");
     expect(await testDb.prisma.transaction.count()).toBe(transactionCount);
   });
 
-  it("rejects unknown assets, invalid amounts, and oversells", async () => {
-    await expect(executeAssistantTool("simulate_transaction", JSON.stringify({ symbol: "DOGE", type: "BUY", amount: "10" }), runtime)).rejects.toThrow("not found");
-    await expect(executeAssistantTool("simulate_transaction", JSON.stringify({ symbol: "BTC", type: "BUY", amount: "NaN" }), runtime)).rejects.toThrow();
-    await expect(executeAssistantTool("simulate_transaction", JSON.stringify({ symbol: "BTC", type: "SELL", amount: "100.01" }), runtime)).rejects.toThrow("exceeds");
+  it("returns structured unavailable states and rejects invalid amounts and account oversells", async () => {
+    const unknown = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "DOGE", kind: "BUY", amount: "10", accountName: null }), runtime) as { status: string; reasonCodes: string[] };
+    expect(unknown).toEqual(expect.objectContaining({ status: "UNAVAILABLE", reasonCodes: ["ASSET_NOT_FOUND"] }));
+    await expect(executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "BTC", kind: "BUY", amount: "NaN", accountName: null }), runtime)).rejects.toThrow();
+    const oversell = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "BTC", kind: "SELL", amount: "100.01", accountName: "Main broker" }), runtime) as { status: string; reasonCodes: string[] };
+    expect(oversell).toEqual(expect.objectContaining({ status: "UNAVAILABLE", reasonCodes: ["INSUFFICIENT_ACCOUNT_HOLDING"] }));
     const partialPrices = Object.fromEntries(Object.entries(runtime.marketPrices).filter(([symbol]) => symbol !== "BTC"));
-    await expect(executeAssistantTool("simulate_transaction", JSON.stringify({ symbol: "BTC", type: "BUY", amount: "10" }), { ...runtime, marketPrices: partialPrices })).rejects.toThrow("price is unavailable");
+    const missingPrice = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "BTC", kind: "BUY", amount: "10", accountName: null }), { ...runtime, marketPrices: partialPrices }) as { status: string; reasonCodes: string[] };
+    expect(missingPrice).toEqual(expect.objectContaining({ status: "UNAVAILABLE", reasonCodes: ["MISSING_MARKET_PRICE"] }));
+  });
+
+  it("returns account candidates instead of guessing and supports safe scenarios", async () => {
+    const ambiguousRuntime = {
+      ...runtime,
+      accounts: [...runtime.accounts, { ...runtime.accounts[0], id: "other-account", name: "Other broker" }],
+    };
+    const ambiguous = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "XAUT", kind: "CONTRIBUTION", amount: "10", accountName: null }), ambiguousRuntime) as { status: string; reasonCodes: string[]; accounts: Array<{ name: string }> };
+    const safe = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "BTC", kind: "BUY", amount: "10", accountName: null }), runtime) as unknown as { newWarnings: unknown[]; alternatives: unknown };
+
+    expect(ambiguous.status).toBe("UNAVAILABLE");
+    expect(ambiguous.reasonCodes).toContain("ACCOUNT_REQUIRED");
+    expect(ambiguous.accounts.map((account) => account.name)).toEqual(["Main broker", "Other broker"]);
+    expect(safe.newWarnings).toEqual([]);
+    expect(safe.alternatives).toBeNull();
+  });
+
+  it("explains saved and class-only contribution plans without inventing asset targets", async () => {
+    const saved = await executeAssistantTool("explain_contribution_plan", JSON.stringify({ amount: null }), runtime) as { status: string; contributionAmount: string };
+    const noSaved = await executeAssistantTool("explain_contribution_plan", JSON.stringify({ amount: null }), { ...runtime, context: { ...runtime.context, latestContributionRecommendation: null } }) as { status: string; reasonCodes: string[] };
+    const classOnlyRuntime = {
+      ...runtime,
+      strategy: runtime.strategy ? {
+        ...runtime.strategy,
+        allocations: runtime.strategy.allocations.map((allocation) => ({ ...allocation, assetAllocations: [] })),
+      } : null,
+    };
+    const classOnly = await executeAssistantTool("explain_contribution_plan", JSON.stringify({ amount: "100" }), classOnlyRuntime) as unknown as { allocations: unknown[]; assetRecommendations: unknown[] };
+
+    expect(saved).toEqual(expect.objectContaining({ status: "AVAILABLE", contributionAmount: "1000.00" }));
+    expect(noSaved).toEqual(expect.objectContaining({ status: "UNAVAILABLE", reasonCodes: ["CONTRIBUTION_PLAN_NOT_CONFIGURED"] }));
+    expect(classOnly.allocations.length).toBeGreaterThan(0);
+    expect(classOnly.assetRecommendations).toEqual([]);
+  });
+
+  it("passes Daily Brief, Risk, Performance, partial, and stale states through authoritative tools", async () => {
+    const services = deterministicToolServices();
+    const daily = await executeAssistantTool("get_daily_brief", "{}", runtime, services) as unknown as { status: string; dailyGain: string; reasonCodes: string[]; dataQuality: { isStale: boolean } };
+    const risk = await executeAssistantTool("get_risk_snapshot", "{}", runtime, services) as unknown as { risk: { state: string }; dataQuality: { state: string } };
+    const performance = await executeAssistantTool("get_performance_summary", "{}", runtime, services) as unknown as { metrics: { xirr: { unavailableReason: string } }; dataQuality: { isPartial: boolean; staleDates: number } };
+
+    expect(daily).toEqual(expect.objectContaining({ status: "NO_ACTION", dailyGain: "12.34", reasonCodes: ["NO_MEANINGFUL_STRATEGY_CHANGE"] }));
+    expect(daily.dataQuality.isStale).toBe(true);
+    expect(risk.risk).toBe(runtime.context.risk);
+    expect(risk.dataQuality.state).toBe("PARTIAL");
+    expect(performance.metrics.xirr.unavailableReason).toBe("XIRR_PERIOD_TOO_SHORT");
+    expect(performance.dataQuality).toEqual(expect.objectContaining({ isPartial: true, staleDates: 1 }));
   });
 });
 
@@ -150,8 +218,9 @@ describe("assistant OpenAI orchestration", () => {
     });
 
     expect(text).toBe("BTC would exceed your range.");
-    expect(emitted).toContainEqual({ type: "tool", name: "simulate_transaction" });
+    expect(emitted).toContainEqual({ type: "tool", name: "simulate_scenario" });
     expect(calls[0].model).toBe("gpt-5-mini");
+    expect(JSON.stringify(calls[0].input)).not.toContain("totalPortfolioValue");
     const secondInput = calls[1].input as Array<Record<string, unknown>>;
     expect(secondInput).toContainEqual(expect.objectContaining({ type: "function_call_output", call_id: "call-btc" }));
   });
@@ -184,9 +253,69 @@ function responseWithToolCall() {
       type: "function_call",
       id: "fc-btc",
       call_id: "call-btc",
-      name: "simulate_transaction",
-      arguments: JSON.stringify({ symbol: "BTC", type: "BUY", amount: "500" }),
+      name: "simulate_scenario",
+      arguments: JSON.stringify({ symbol: "BTC", kind: "BUY", amount: "500", accountName: null }),
       status: "completed",
     }],
   };
+}
+
+function deterministicToolServices(): AssistantToolServices {
+  const metric = (value: string | null, unavailableReason: string | null = null) => ({ value, startDate: "2026-08-01", endDate: "2026-08-02", isStale: true, unavailableReason });
+  const comparison = { points: [], startDate: null, endDate: null, isPartial: true, isStale: true, unavailableReason: "MISSING_BENCHMARK_PRICES" };
+  return {
+    getDailyBrief: async () => ({
+      currency: "EUR",
+      lastUpdated: "2026-08-02T12:00:00.000Z",
+      marketDataWarning: "Stale prices present.",
+      brief: {
+        status: "NO_ACTION",
+        summary: "No meaningful strategy change.",
+        reasonCodes: ["NO_MEANINGFUL_STRATEGY_CHANGE"],
+        currentDate: "2026-08-02",
+        previousDate: "2026-08-01",
+        currentValue: "1012.34",
+        previousValue: "1000.00",
+        portfolioValueChange: "12.34",
+        dailyGain: "12.34",
+        dailyReturnPercent: "1.23",
+        externalContributions: "0.00",
+        externalWithdrawals: "0.00",
+        unavailableReason: null,
+        isStale: true,
+        missingPriceSymbols: [],
+        positiveContributors: [],
+        negativeContributors: [],
+        allocationChanges: [],
+        newViolations: [],
+        resolvedViolations: [],
+        currentViolations: [],
+        risk: runtime.context.risk,
+      },
+    }),
+    getPerformance: async () => ({
+      currency: "EUR",
+      summary: {
+        portfolioValue: "1000.00", netInvested: "700.00", investmentGain: null, trackedCapital: "900.00", trackedCapitalReturnPercent: null,
+        netContributed: "0.00", externalContributions: "0.00", externalWithdrawals: "0.00", openingBasis: "200.00", giftTrackingBasis: "0.00", internalTradeFees: "0.00",
+        isNetInvestedPartial: false, missingNetInvestedSymbols: [], coveredSymbols: ["BTC"], openingBasisUnknownSymbols: [], performanceExclusions: [], isCostBasisPartial: true,
+        missingCostBasisSymbols: ["XAUT"], isExternalCashflowPartial: false, missingExternalCashflowSymbols: [], isPartial: true, missingPriceSymbols: ["XAUT"], hasStalePrices: true,
+      },
+      history: [],
+      advanced: {
+        twr: metric("1.00"),
+        xirr: metric(null, "XIRR_PERIOD_TOO_SHORT"),
+        ytdReturn: metric(null, "INSUFFICIENT_HISTORY"),
+        oneYearReturn: metric(null, "INSUFFICIENT_HISTORY"),
+        maxDrawdown: metric("-1.00"),
+        comparisons: { "7D": comparison, "1M": comparison, "3M": comparison, "1Y": comparison, ALL: comparison },
+      },
+      benchmark: { strategyId: null, selectedAssetId: null, selectedSymbol: null, selectedName: null, options: [] },
+      trackingStartedAt: null,
+      incompleteDates: 1,
+      staleDates: 1,
+      historicalMissingPriceSymbols: ["XAUT"],
+      historicalMissingCostBasisSymbols: ["XAUT"],
+    }),
+  } as unknown as AssistantToolServices;
 }

@@ -6,13 +6,13 @@ Single-user investment portfolio manager and decision-support copilot. The MVP f
 
 - PostgreSQL-backed assets, accounts, transaction history, strategy, daily and current market prices, contribution plan, and assistant conversations.
 - Holdings derived from transactions and initial balances; no manually editable Holding source of truth.
-- Deterministic Portfolio Engine for holdings, valuation, allocation, strategy compliance, P&L availability, contribution planning, and assistant transaction checks.
+- Deterministic Portfolio Engine for holdings, valuation, allocation, strategy compliance, P&L availability, contribution planning, risk, and read-only scenario analysis.
 - Editable class and nested asset targets/ranges with exact 100% validation at both levels.
 - CoinGecko pricing for crypto and XAUT-referenced physical gold, plus Alpha Vantage ETF search and automatic daily ETF quotes with USD conversion.
 - Encrypted in-app API-key management for OpenAI, CoinGecko, Alpha Vantage, and Twelve Data with environment fallbacks.
 - Portfolio, Dashboard, Strategy, Contribution Planner, Settings, and read-only AI Assistant screens.
 - Historical Performance with daily portfolio value, deterministic TWR/XIRR, YTD and 1Y returns, observed max drawdown, and configurable benchmark comparison.
-- OpenAI Responses API assistant with compact trusted portfolio context and deterministic read-only tools.
+- OpenAI Responses API assistant with deterministic read-only tools for Daily Brief, Risk, Performance, contribution plans, and BUY/SELL/contribution scenarios.
 - Responsive dark UI and installable PWA shell with conservative offline behavior.
 
 ## NOT IMPLEMENTED YET
@@ -28,7 +28,7 @@ Single-user investment portfolio manager and decision-support copilot. The MVP f
 
 ## Architecture
 
-The App Router pages call feature read models and server actions. Repositories are the only layer that queries Prisma. Portfolio calculations are pure and do not depend on React, market providers, or an LLM. Market providers return normalized prices through a provider-independent service and PostgreSQL cache. The AI Assistant receives compact pre-calculated context and can call only deterministic read-only tools; it cannot create transactions or execute trades.
+The App Router pages call feature read models and server actions. Repositories are the only layer that queries Prisma. Portfolio calculations are pure and do not depend on React, market providers, or an LLM. Market providers return normalized prices through a provider-independent service and PostgreSQL cache. The AI Assistant receives only compact bootstrap metadata, then obtains authoritative facts through deterministic read-only tools; it cannot create transactions, persist scenarios, execute trades, or replace unavailable values with estimates.
 
 Transactions and initial balances are the portfolio source of truth. Per-holding cost basis and P&L are shown only when they can be derived reliably in the base currency. Missing acquisition data, unsupported currencies, or ambiguous account transfers are reported as partial rather than estimated, with affected assets excluded from gain and return.
 

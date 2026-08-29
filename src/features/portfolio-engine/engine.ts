@@ -546,9 +546,9 @@ export function validateStrategyAssetAllocations(strategy: EngineStrategyAllocat
 
   for (const allocation of strategy) {
     const assetAllocations = allocation.assetAllocations ?? [];
-    if (assetAllocations.length === 0) {
-      throw new Error(`${allocation.assetClass} must contain at least one asset target.`);
-    }
+    // Asset targets are optional. The class-level plan remains authoritative,
+    // while an untargeted class intentionally has no asset recommendation.
+    if (assetAllocations.length === 0) continue;
 
     const assetIds = new Set<string>();
     let total = ZERO;

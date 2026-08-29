@@ -93,6 +93,8 @@ export type PortfolioAssistantContext = {
       effectiveTargetPercent: string;
     }>;
     warnings: Array<{ code: string; assetClass: string; currentPercent: string; limitPercent: string }>;
+    reasons: ReturnType<typeof buildContributionProjection>["reasons"];
+    dataQuality: { isPartial: boolean; missingPriceSymbols: string[] };
   } | null;
   marketData: { timestamp: string | null; hasStalePrices: boolean };
   risk: PortfolioRiskSnapshot;
@@ -105,6 +107,8 @@ export type AssistantPortfolioRuntime = {
   strategy: Strategy;
   marketPrices: MarketPrices;
   portfolio: ReturnType<typeof calculatePortfolio>;
+  riskThresholds: ReturnType<typeof riskThresholdsFromRules>;
+  hasStalePrices: boolean;
   context: PortfolioAssistantContext;
 };
 
@@ -141,12 +145,13 @@ export async function loadAssistantPortfolioRuntime({
   const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency });
   const comparisons = strategy ? compareAllocationToStrategy(portfolio, strategy.allocations) : [];
   const warnings = strategy ? evaluateStrategyCompliance(portfolio, strategy.allocations) : [];
+  const riskThresholds = riskThresholdsFromRules(strategy?.portfolioRules ?? []);
   const risk = calculatePortfolioRisk({
     portfolio,
     assets,
     accounts: accounts.map((account) => ({ id: account.id, name: account.name, type: account.type, custodian: account.custodian ? { id: account.custodian.id, name: account.custodian.name, category: account.custodian.category } : null })),
     strategy: strategy?.allocations ?? null,
-    thresholds: riskThresholdsFromRules(strategy?.portfolioRules ?? []),
+    thresholds: riskThresholds,
     hasStalePrices: marketData.hasStalePrices,
   });
   const allocationValues = new Map(portfolio.allocation.map((allocation) => [allocation.assetClass, allocation.value]));
@@ -265,11 +270,19 @@ export async function loadAssistantPortfolioRuntime({
             currentPercent: warning.currentPercent,
             limitPercent: warning.limitPercent,
           })),
+          reasons: recommendation.reasons,
+          dataQuality: {
+            isPartial: recommendation.plan.before.missingPriceSymbols.length > 0 || recommendation.plan.projectedAfter.missingPriceSymbols.length > 0,
+            missingPriceSymbols: [...new Set([
+              ...recommendation.plan.before.missingPriceSymbols,
+              ...recommendation.plan.projectedAfter.missingPriceSymbols,
+            ])].sort(),
+          },
         }
       : null,
     marketData: { timestamp: marketData.lastUpdated, hasStalePrices: marketData.hasStalePrices },
     risk,
   };
 
-  return { assets, accounts, transactions, strategy, marketPrices, portfolio, context };
+  return { assets, accounts, transactions, strategy, marketPrices, portfolio, riskThresholds, hasStalePrices: marketData.hasStalePrices, context };
 }

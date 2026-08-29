@@ -525,3 +525,59 @@ export type SimulateContributionInput = CalculatePortfolioInput & {
 export type SimulatedTransactionInput = CalculatePortfolioInput & {
   transaction: EngineTransaction;
 };
+
+export type PortfolioScenarioKind = "BUY" | "SELL" | "CONTRIBUTION";
+
+export type PortfolioScenarioWarning = {
+  source: "STRATEGY" | "RISK";
+  code: string;
+  subject: string;
+  currentPercent: string;
+  limitPercent: string;
+  excessPercent: string | null;
+};
+
+export type PortfolioScenarioReasonCode =
+  | "SCENARIO_APPLIED"
+  | "STANDALONE_BUY"
+  | "STANDALONE_SELL"
+  | "EXTERNAL_CONTRIBUTION"
+  | "PARTIAL_VALUATION"
+  | "STALE_PRICE_DATA"
+  | "NEW_WARNING"
+  | "WARNING_RESOLVED"
+  | "COMPLIANT_AMOUNT_AVAILABLE";
+
+export type CalculatePortfolioScenarioInput = CalculatePortfolioInput & {
+  accounts: CalculatePortfolioRiskInput["accounts"];
+  strategy: EngineStrategyAllocation[] | null;
+  riskThresholds: CalculatePortfolioRiskInput["thresholds"];
+  hasStalePrices: boolean;
+  baseCurrency: string;
+  accountId: string;
+  assetId: string;
+  kind: PortfolioScenarioKind;
+  amount: DecimalLike;
+};
+
+export type PortfolioScenarioResult = {
+  kind: PortfolioScenarioKind;
+  accountId: string;
+  assetId: string;
+  symbol: string;
+  amount: string;
+  quantity: string;
+  current: PortfolioSnapshot;
+  projected: PortfolioSnapshot;
+  beforeComparison: AllocationComparison[];
+  afterComparison: AllocationComparison[];
+  currentRisk: PortfolioRiskSnapshot;
+  projectedRisk: PortfolioRiskSnapshot;
+  currentWarnings: PortfolioScenarioWarning[];
+  projectedWarnings: PortfolioScenarioWarning[];
+  newWarnings: PortfolioScenarioWarning[];
+  resolvedWarnings: PortfolioScenarioWarning[];
+  maximumCompliantAmount: string | null;
+  remainingAmount: string | null;
+  reasonCodes: PortfolioScenarioReasonCode[];
+};
