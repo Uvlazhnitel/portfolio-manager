@@ -2,6 +2,7 @@ import { AssetClass, AssetType, PortfolioRuleType } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { StrategyService } from "@/features/strategy/service";
+import { toStrategyEditorModel } from "@/features/strategy/read-model";
 import { createTestDatabase, type TestDatabase } from "../helpers/test-db";
 
 let testDb: TestDatabase;
@@ -97,6 +98,76 @@ describe("strategy update", () => {
     expect(updated.portfolioRules.find((rule) => rule.type === PortfolioRuleType.MIN_REBALANCE_DRIFT)?.config).toEqual({ minDriftPercent: "2.25" });
     expect(updated.portfolioRules.find((rule) => rule.type === PortfolioRuleType.SINGLE_ASSET_MAX_ALLOCATION)).toEqual(expect.objectContaining({ enabled: true, config: { maxPercent: "35" } }));
     expect(updated.portfolioRules.find((rule) => rule.type === PortfolioRuleType.CUSTODIAN_MAX_ALLOCATION)).toEqual(expect.objectContaining({ enabled: true, config: { maxPercent: "50" } }));
+  });
+
+  it("persists a class-only allocation, clears prior targets, and allows adding one back", async () => {
+    const service = new StrategyService(new StrategyRepository(testDb.prisma));
+    const classOnlyInput = allocationsWithTargets().map((allocation) =>
+      allocation.assetClass === AssetClass.ETF ? { ...allocation, assetTargets: [] } : allocation,
+    );
+    const classOnly = await service.updateStrategy({
+      id: strategyId,
+      name: "Class-only ETF",
+      allocations: classOnlyInput,
+      rules: {
+        preferContributionsOverSelling: true,
+        challengeStrategyViolations: true,
+        preferNoActionWhenEvidenceWeak: true,
+        minimumRebalanceDrift: "2",
+      },
+    });
+    const etfAllocation = classOnly.allocations.find((allocation) => allocation.assetClass === AssetClass.ETF)!;
+    const cryptoAllocation = classOnly.allocations.find((allocation) => allocation.assetClass === AssetClass.CRYPTO)!;
+
+    expect(etfAllocation.assetAllocations).toEqual([]);
+    expect(await testDb.prisma.strategyAssetAllocation.count({ where: { strategyAllocationId: etfAllocation.id } })).toBe(0);
+    expect(cryptoAllocation.assetAllocations).toHaveLength(1);
+    expect(toStrategyEditorModel(classOnly).allocations.find((allocation) => allocation.assetClass === AssetClass.ETF)?.assetTargets).toEqual([]);
+
+    const restored = await service.updateStrategy({
+      id: strategyId,
+      name: "Targeted ETF restored",
+      allocations: allocationsWithTargets(),
+      rules: {
+        preferContributionsOverSelling: true,
+        challengeStrategyViolations: true,
+        preferNoActionWhenEvidenceWeak: true,
+        minimumRebalanceDrift: "2",
+      },
+    });
+    expect(restored.allocations.find((allocation) => allocation.assetClass === AssetClass.ETF)?.assetAllocations).toHaveLength(1);
+  });
+
+  it("creates class-only strategies and rejects invalid non-empty targets without writing", async () => {
+    const service = new StrategyService(new StrategyRepository(testDb.prisma));
+    const created = await service.createStrategy({
+      name: "Class-only strategy",
+      objective: "Class allocation only",
+      baseCurrency: "EUR",
+      allocations: [{
+        assetClass: AssetClass.ETF,
+        targetPercent: "100",
+        minPercent: "0",
+        maxPercent: "100",
+        assetTargets: [],
+      }],
+    });
+    expect(created.allocations[0].assetAllocations).toEqual([]);
+
+    const countBefore = await testDb.prisma.strategy.count();
+    expect(() => service.createStrategy({
+      name: "Invalid targeted strategy",
+      objective: "Must not persist",
+      baseCurrency: "EUR",
+      allocations: [{
+        assetClass: AssetClass.ETF,
+        targetPercent: "100",
+        minPercent: "0",
+        maxPercent: "100",
+        assetTargets: [{ assetId: assetIds.ETF, targetPercent: "99" }],
+      }],
+    })).toThrow("asset targets must total exactly 100.00%");
+    expect(await testDb.prisma.strategy.count()).toBe(countBefore);
   });
 
   it("rejects invalid input without partially updating the strategy", async () => {

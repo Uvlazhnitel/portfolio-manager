@@ -141,7 +141,7 @@ export function ContributionPlanner({ model }: { model: ContributionPlannerModel
               )}
             </div>
 
-            {projection ? <BuyList projection={projection} currency={model.strategy.currency} /> : null}
+            {projection ? <BuyList projection={projection} currency={model.strategy.currency} strategyAllocations={model.strategy.allocations} /> : null}
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {activeAssetClasses.map((assetClass) => {
@@ -180,7 +180,11 @@ function ImpactTable({ projection }: { projection: ContributionProjection }) {
   return <Card><h2 className="text-lg font-semibold">Portfolio impact</h2><div className="mt-4 space-y-3 md:hidden">{projection.afterComparison.map((after) => { const before = projection.beforeComparison.find((item) => item.assetClass === after.assetClass); return <div key={after.assetClass} className="rounded-lg border border-border bg-surface p-4"><div className="flex items-center justify-between gap-3"><p className="font-semibold">{classLabels[after.assetClass]}</p><StatusBadge status={after.status} /></div><dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm"><ImpactValue label="Current" value={formatPercent(before?.currentPercent ?? "0")} /><ImpactValue label="After" value={formatPercent(after.currentPercent)} emphasized /><ImpactValue label="Target" value={formatPercent(after.targetPercent)} /><ImpactValue label="Range" value={`${formatPercent(after.minPercent)}–${formatPercent(after.maxPercent)}`} /></dl></div>; })}</div><div className="mt-5 hidden overflow-x-auto md:block"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-b border-border text-xs uppercase tracking-wide text-muted"><tr>{["Asset class", "Current", "After contribution", "Target", "Range", "Status after"].map((label) => <th key={label} className="px-3 py-3 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-border">{projection.afterComparison.map((after) => { const before = projection.beforeComparison.find((item) => item.assetClass === after.assetClass); return <tr key={after.assetClass}><td className="px-3 py-4 font-medium">{classLabels[after.assetClass]}</td><td className="px-3 py-4">{formatPercent(before?.currentPercent ?? "0")}</td><td className="px-3 py-4 font-semibold">{formatPercent(after.currentPercent)}</td><td className="px-3 py-4">{formatPercent(after.targetPercent)}</td><td className="px-3 py-4 text-muted">{formatPercent(after.minPercent)}–{formatPercent(after.maxPercent)}</td><td className="px-3 py-4"><StatusBadge status={after.status} /></td></tr>; })}</tbody></table></div></Card>;
 }
 
-function BuyList({ projection, currency }: { projection: ContributionProjection; currency: string }) {
+function BuyList({ projection, currency, strategyAllocations }: { projection: ContributionProjection; currency: string; strategyAllocations: ContributionPlannerModel["strategy"]["allocations"] }) {
+  const targetedClasses = new Set(strategyAllocations.filter((allocation) => allocation.hasAssetTargets).map((allocation) => allocation.assetClass));
+  const classOnlyRecommendations = projection.plan.allocations.filter(
+    (allocation) => Number(allocation.amount) > 0 && !targetedClasses.has(allocation.assetClass),
+  );
   return (
     <div className="mt-5 overflow-hidden rounded-lg border border-border bg-surface">
       <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(7rem,0.8fr)_minmax(6rem,0.6fr)_minmax(6rem,0.6fr)] gap-3 border-b border-border px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted md:grid">
@@ -195,6 +199,17 @@ function BuyList({ projection, currency }: { projection: ContributionProjection;
             <div className="min-w-0">
               <p className="truncate font-semibold text-foreground">{item.symbol}</p>
               <p className="mt-1 truncate text-sm text-muted">{item.name}</p>
+            </div>
+            <Badge>{classLabels[item.assetClass]}</Badge>
+            <p className="text-right text-lg font-semibold">{formatMoney(item.amount, currency)}</p>
+            <p className="text-right text-sm text-muted">{formatPercent(item.percentOfContribution)}</p>
+          </div>
+        ))}
+        {classOnlyRecommendations.map((item) => (
+          <div key={`class-${item.assetClass}`} className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1.4fr)_minmax(7rem,0.8fr)_minmax(6rem,0.6fr)_minmax(6rem,0.6fr)] md:items-center">
+            <div className="min-w-0">
+              <p className="font-semibold text-foreground">Choose an asset</p>
+              <p className="mt-1 text-sm text-muted">No asset-level target is configured for this class.</p>
             </div>
             <Badge>{classLabels[item.assetClass]}</Badge>
             <p className="text-right text-lg font-semibold">{formatMoney(item.amount, currency)}</p>

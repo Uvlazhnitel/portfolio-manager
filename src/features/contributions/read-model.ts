@@ -18,7 +18,7 @@ import {
 import { serializeDecimal } from "@/lib/db/decimal";
 
 export type ContributionPlannerModel = {
-  strategy: { id: string; name: string; currency: string; allocations: Array<{ assetClass: AssetClass }> };
+  strategy: { id: string; name: string; currency: string; allocations: Array<{ assetClass: AssetClass; hasAssetTargets: boolean }> };
   contributionAmount: string;
   allocations: ParsedContributionAllocation[];
   recommendedAllocations: ParsedContributionAllocation[];
@@ -90,7 +90,10 @@ export async function getContributionPlannerModel({
       id: strategy.id,
       name: strategy.name,
       currency: strategy.baseCurrency,
-      allocations: activeAssetClasses.map((assetClass) => ({ assetClass })),
+      allocations: strategy.allocations.map((allocation) => ({
+        assetClass: allocation.assetClass,
+        hasAssetTargets: allocation.assetAllocations.length > 0,
+      })),
     },
     contributionAmount,
     allocations,

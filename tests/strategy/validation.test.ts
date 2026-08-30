@@ -37,6 +37,22 @@ describe("strategy allocation validation", () => {
     expect(validateStrategyAllocations(validAllocations)).toHaveLength(4);
   });
 
+  it("accepts class-only and mixed strategies with empty asset targets", () => {
+    const mixed = validAllocations.map((allocation) =>
+      allocation.assetClass === AssetClass.ETF ? { ...allocation, assetTargets: [] } : allocation,
+    );
+    const parsed = validateStrategyAllocations(mixed);
+    const analysis = analyzeStrategyDraft({
+      name: "Mixed targeting",
+      allocations: mixed,
+      minimumRebalanceDrift: "2",
+    });
+
+    expect(parsed.find((allocation) => allocation.assetClass === AssetClass.ETF)?.assetTargets).toEqual([]);
+    expect(analysis.isValid).toBe(true);
+    expect(analysis.errors).toEqual([]);
+  });
+
   it("accepts a strategy without CASH", () => {
     const withoutCash = [
       { assetClass: AssetClass.ETF, targetPercent: "78", minPercent: "70", maxPercent: "85" },

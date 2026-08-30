@@ -176,6 +176,36 @@ describe("contribution plan persistence and read model", () => {
       isCustomized: true,
     })).rejects.toThrow("not enabled");
   });
+
+  it("returns class-only allocations alongside targeted asset recommendations", async () => {
+    const etfAllocation = await testDb.prisma.strategyAllocation.findUniqueOrThrow({
+      where: { strategyId_assetClass: { strategyId, assetClass: AssetClass.ETF } },
+    });
+    await testDb.prisma.strategyAssetAllocation.deleteMany({ where: { strategyAllocationId: etfAllocation.id } });
+    resetMarketDataRuntimeCacheForTests();
+
+    const preview = await previewContribution(
+      { contributionAmount: "1000" },
+      {
+        portfolioRepository: new PortfolioRepository(testDb.prisma),
+        strategyRepository: new StrategyRepository(testDb.prisma),
+        marketDataService,
+      },
+    );
+    const model = await getContributionPlannerModel({
+      portfolioRepository: new PortfolioRepository(testDb.prisma),
+      strategyRepository: new StrategyRepository(testDb.prisma),
+      planRepository: new ContributionPlanRepository(testDb.prisma),
+      marketDataService,
+      preferredAmount: "1000",
+    });
+
+    expect(preview.projection.plan.allocations).toContainEqual(expect.objectContaining({ assetClass: AssetClass.ETF }));
+    expect(preview.projection.plan.assetRecommendations.some((item) => item.assetClass === AssetClass.ETF)).toBe(false);
+    expect(preview.projection.plan.assetRecommendations.some((item) => item.assetClass === AssetClass.CRYPTO || item.assetClass === AssetClass.GOLD)).toBe(true);
+    expect(model.strategy.allocations.find((allocation) => allocation.assetClass === AssetClass.ETF)?.hasAssetTargets).toBe(false);
+    expect(model.setupError).toBeNull();
+  });
 });
 
 class PriceStore implements MarketDataStore {

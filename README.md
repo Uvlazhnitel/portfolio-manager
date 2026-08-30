@@ -7,7 +7,7 @@ Single-user investment portfolio manager and decision-support copilot. The MVP f
 - PostgreSQL-backed assets, accounts, transaction history, strategy, daily and current market prices, contribution plan, and assistant conversations.
 - Holdings derived from transactions and initial balances; no manually editable Holding source of truth.
 - Deterministic Portfolio Engine for holdings, valuation, allocation, strategy compliance, P&L availability, contribution planning, risk, and read-only scenario analysis.
-- Editable class and nested asset targets/ranges with exact 100% validation at both levels.
+- Editable class targets/ranges with optional nested asset targets; configured asset targets must total exactly 100%, while empty targets keep the class allocation intentionally asset-agnostic.
 - CoinGecko pricing for crypto and XAUT-referenced physical gold, plus Alpha Vantage ETF search and automatic daily ETF quotes with USD conversion.
 - Encrypted in-app API-key management for OpenAI, CoinGecko, Alpha Vantage, and Twelve Data with environment fallbacks.
 - Portfolio, Dashboard, Strategy, Contribution Planner, Settings, and read-only AI Assistant screens.

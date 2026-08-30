@@ -69,7 +69,6 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
   }
 
   function addAllocation(assetClass: AssetClassValue) {
-    const firstAsset = strategy.availableAssets.find((asset) => asset.assetClass === assetClass);
     setDraft((current) => ({
       ...current,
       allocations: [
@@ -79,7 +78,7 @@ export function StrategyEditor({ strategy }: { strategy: StrategyEditorModel }) 
           targetPercent: "0",
           minPercent: "0",
           maxPercent: "100",
-          assetTargets: firstAsset ? [{ assetId: firstAsset.id, targetPercent: "100" }] : [],
+          assetTargets: [],
         },
       ].sort((left, right) => assetClassOrder(left.assetClass) - assetClassOrder(right.assetClass)),
     }));
@@ -376,10 +375,22 @@ function AllocationRow({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h4 className="text-sm font-semibold text-foreground">Asset targets</h4>
-            <p className="mt-1 text-sm text-muted">Targets inside {formatAssetClass(allocation.assetClass)} must total 100%.</p>
+            <p className="mt-1 text-sm text-muted">
+              {allocation.assetTargets.length === 0
+                ? "Optional. Add assets only when you want asset-level recommendations."
+                : `Targets inside ${formatAssetClass(allocation.assetClass)} must total 100%.`}
+            </p>
           </div>
-          <Badge tone={assetTotal === 10_000 ? "success" : "warning"}>Asset total: {(assetTotal / 100).toFixed(2)}%</Badge>
+          {allocation.assetTargets.length === 0
+            ? <Badge>Class-only</Badge>
+            : <Badge tone={assetTotal === 10_000 ? "success" : "warning"}>Asset total: {(assetTotal / 100).toFixed(2)}%</Badge>}
         </div>
+
+        {allocation.assetTargets.length === 0 ? (
+          <div className="mt-4 rounded-lg border border-dashed border-border bg-card/50 px-4 py-3 text-sm text-muted">
+            Contributions can still be allocated to this class, but the strategy will not choose a specific asset.
+          </div>
+        ) : null}
 
         <div className="mt-4 space-y-3">
           {allocation.assetTargets.map((target) => {

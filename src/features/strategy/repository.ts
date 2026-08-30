@@ -113,10 +113,12 @@ export class StrategyRepository {
         });
 
         await transaction.strategyAssetAllocation.deleteMany({
-          where: {
-            strategyAllocationId: savedAllocation.id,
-            assetId: { notIn: allocation.assetTargets.map((target) => target.assetId) },
-          },
+          where: allocation.assetTargets.length === 0
+            ? { strategyAllocationId: savedAllocation.id }
+            : {
+                strategyAllocationId: savedAllocation.id,
+                assetId: { notIn: allocation.assetTargets.map((target) => target.assetId) },
+              },
         });
 
         for (const assetTarget of allocation.assetTargets) {
