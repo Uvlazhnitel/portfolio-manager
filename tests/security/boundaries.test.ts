@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { publicErrorMessage } from "@/lib/public-error";
@@ -41,6 +42,33 @@ describe("server and client security boundaries", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("only exports async functions from use server modules", () => {
+    const offenders = sourceFiles(sourceRoot).flatMap((file) => {
+      const content = readFileSync(file, "utf8");
+      const sourceFile = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true);
+      const firstStatement = sourceFile.statements[0];
+      const isUseServerModule = Boolean(
+        firstStatement
+        && ts.isExpressionStatement(firstStatement)
+        && ts.isStringLiteral(firstStatement.expression)
+        && firstStatement.expression.text === "use server",
+      );
+      if (!isUseServerModule) return [];
+
+      return sourceFile.statements.flatMap((statement) => {
+        if (!hasModifier(statement, ts.SyntaxKind.ExportKeyword)) return [];
+        if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) return [];
+        if (ts.isExportDeclaration(statement) && statement.isTypeOnly) return [];
+        if (ts.isFunctionDeclaration(statement) && hasModifier(statement, ts.SyntaxKind.AsyncKeyword)) return [];
+
+        const line = sourceFile.getLineAndCharacterOfPosition(statement.getStart(sourceFile)).line + 1;
+        return [`${path.relative(process.cwd(), file)}:${line}`];
+      });
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
   it("returns validation details but hides unexpected internal errors", () => {
     const schema = z.object({ amount: z.string().min(1, "Amount is required.") });
     const validationError = schema.safeParse({ amount: "" });
@@ -59,4 +87,8 @@ function sourceFiles(directory: string): string[] {
       ? sourceFiles(file)
       : /\.(?:ts|tsx)$/.test(file) ? [file] : [];
   });
+}
+
+function hasModifier(node: ts.Node, modifier: ts.SyntaxKind) {
+  return ts.canHaveModifiers(node) && Boolean(ts.getModifiers(node)?.some((item) => item.kind === modifier));
 }

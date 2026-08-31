@@ -9,10 +9,8 @@ export type BenchmarkActionState = {
   message: string;
 };
 
-export const initialBenchmarkActionState: BenchmarkActionState = { ok: false, message: "" };
-
 export async function updatePerformanceBenchmarkAction(
-  previousState: BenchmarkActionState = initialBenchmarkActionState,
+  previousState: BenchmarkActionState,
   formData: FormData,
 ): Promise<BenchmarkActionState> {
   void previousState;

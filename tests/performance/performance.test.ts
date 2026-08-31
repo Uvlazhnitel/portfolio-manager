@@ -319,19 +319,29 @@ describe("performance benchmark persistence", () => {
     await testDb.cleanup();
   });
 
-  it("persists one strategy benchmark and clears it when the asset is deleted", async () => {
-    const benchmark = await testDb.prisma.asset.create({
-      data: { symbol: "BENCH", name: "Benchmark", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "USD" },
-    });
+  it("persists ETF, crypto, and gold benchmarks and clears the selection when the asset is deleted", async () => {
+    const benchmarks = await Promise.all([
+      testDb.prisma.asset.create({
+        data: { symbol: "BENCH_ETF", name: "ETF Benchmark", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "USD" },
+      }),
+      testDb.prisma.asset.create({
+        data: { symbol: "BENCH_CRYPTO", name: "Crypto Benchmark", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "BTC" },
+      }),
+      testDb.prisma.asset.create({
+        data: { symbol: "BENCH_GOLD", name: "Gold Benchmark", assetClass: AssetClass.GOLD, assetType: AssetType.PHYSICAL_GOLD, currency: "USD" },
+      }),
+    ]);
     const strategy = await testDb.prisma.strategy.create({
       data: { name: "Test", objective: "Test", baseCurrency: "USD" },
     });
     const repository = new StrategyRepository(testDb.prisma);
 
-    const updated = await repository.updateBenchmark(strategy.id, benchmark.id);
-    expect(updated.benchmarkAsset?.symbol).toBe("BENCH");
+    for (const benchmark of benchmarks) {
+      const updated = await repository.updateBenchmark(strategy.id, benchmark.id);
+      expect(updated.benchmarkAsset?.symbol).toBe(benchmark.symbol);
+    }
 
-    await testDb.prisma.asset.delete({ where: { id: benchmark.id } });
+    await testDb.prisma.asset.delete({ where: { id: benchmarks.at(-1)!.id } });
     const afterDelete = await testDb.prisma.strategy.findUniqueOrThrow({ where: { id: strategy.id } });
     expect(afterDelete.benchmarkAssetId).toBeNull();
   });

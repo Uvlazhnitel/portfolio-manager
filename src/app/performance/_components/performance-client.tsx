@@ -8,13 +8,15 @@ import { Card } from "@/components/ui/card";
 import { ChartRangeSelector, chartRangeLabel, defaultChartRange, filterChartRowsByRange, type ChartRange } from "@/components/ui/chart-range-selector";
 import { DataQualitySummary, type DataQualityItem } from "@/components/ui/data-quality-summary";
 import { PnlIndicator } from "@/components/ui/pnl-indicator";
-import { initialBenchmarkActionState, updatePerformanceBenchmarkAction } from "@/features/performance/actions";
+import { updatePerformanceBenchmarkAction, type BenchmarkActionState } from "@/features/performance/actions";
 import type { PerformanceReadModel } from "@/features/performance/read-model";
 import type { AdvancedMetricUnavailableReason, AdvancedPerformanceMetric } from "@/features/portfolio-engine";
 import { formatDecimalCurrency } from "@/lib/format/decimal";
 import { cn } from "@/lib/utils";
 
 type ChartMode = "VALUE" | "COMPARE";
+
+const initialBenchmarkActionState: BenchmarkActionState = { ok: false, message: "" };
 
 type ChartRow = {
   date: string;
@@ -152,24 +154,27 @@ function BenchmarkSelector({ performance }: { performance: PerformanceReadModel 
   const [state, action, pending] = useActionState(updatePerformanceBenchmarkAction, initialBenchmarkActionState);
   const { benchmark } = performance;
   return (
-    <form action={action} className="flex items-center gap-2">
-      <input type="hidden" name="strategyId" value={benchmark.strategyId ?? ""} />
-      <label htmlFor="performance-benchmark" className="sr-only">Benchmark</label>
-      <select
-        key={benchmark.selectedAssetId ?? "none"}
-        id="performance-benchmark"
-        name="benchmarkAssetId"
-        defaultValue={benchmark.selectedAssetId ?? ""}
-        disabled={!benchmark.strategyId || pending}
-        onChange={(event) => event.currentTarget.form?.requestSubmit()}
-        className="min-h-10 max-w-44 rounded-full border border-border bg-surface px-3 text-xs font-medium text-foreground disabled:opacity-50"
-        aria-label="Performance benchmark"
-        title={state.message || "Select performance benchmark"}
-      >
-        <option value="">No benchmark</option>
-        {benchmark.options.map((option) => <option key={option.id} value={option.id}>{option.symbol} · {option.name}</option>)}
-      </select>
-      <span className="sr-only" aria-live="polite">{state.message}</span>
+    <form action={action} className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+      <div className="flex items-center gap-2">
+        <input type="hidden" name="strategyId" value={benchmark.strategyId ?? ""} />
+        <label htmlFor="performance-benchmark" className="sr-only">Benchmark</label>
+        <select
+          key={benchmark.selectedAssetId ?? "none"}
+          id="performance-benchmark"
+          name="benchmarkAssetId"
+          defaultValue={benchmark.selectedAssetId ?? ""}
+          disabled={!benchmark.strategyId || pending}
+          onChange={(event) => event.currentTarget.form?.requestSubmit()}
+          className="min-h-10 max-w-44 rounded-full border border-border bg-surface px-3 text-xs font-medium text-foreground disabled:opacity-50"
+          aria-label="Performance benchmark"
+          title={state.message || "Select performance benchmark"}
+        >
+          <option value="">No benchmark</option>
+          {benchmark.options.map((option) => <option key={option.id} value={option.id}>{option.symbol} · {option.name}</option>)}
+        </select>
+      </div>
+      {state.message && !state.ok ? <span role="alert" className="max-w-48 text-xs leading-4 text-destructive">{state.message}</span> : null}
+      <span className="sr-only" aria-live="polite">{state.ok ? state.message : ""}</span>
     </form>
   );
 }
