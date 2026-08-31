@@ -1,4 +1,4 @@
-import { AssistantMessageRole } from "@prisma/client";
+import { AssistantMessageRole, AssistantMessageStatus } from "@prisma/client";
 import { AssistantRepository } from "@/features/assistant/repository";
 import { assistantMessageSchema, type AssistantMessageInput } from "@/features/assistant/validation";
 
@@ -7,34 +7,53 @@ export class AssistantConversationService {
 
   async prepareUserMessage(input: AssistantMessageInput) {
     const parsed = assistantMessageSchema.parse(input);
-    let conversationId = parsed.conversationId ?? null;
-
-    if (conversationId) {
-      const conversation = await this.repository.findConversation(conversationId);
-      if (!conversation) throw new Error("Assistant conversation was not found.");
-      const latest = await this.repository.findLatestMessage(conversationId);
-      if (latest?.role === AssistantMessageRole.USER && latest.content === parsed.message) {
-        return { conversationId, message: parsed.message };
+    if (parsed.retryMessageId) {
+      const existing = await this.repository.findMessage(parsed.retryMessageId);
+      if (!existing || existing.conversationId !== parsed.conversationId || existing.role !== AssistantMessageRole.USER) {
+        throw new Error("Assistant message was not found in this conversation.");
       }
-    } else {
-      const conversation = await this.repository.createConversation(buildConversationTitle(parsed.message));
-      conversationId = conversation.id;
+      const stalePending = existing.status === AssistantMessageStatus.PENDING &&
+        Date.now() - existing.createdAt.getTime() >= STALE_PENDING_AFTER_MS;
+      if (existing.status !== AssistantMessageStatus.FAILED && !stalePending) {
+        throw new Error("Only failed or interrupted messages can be retried.");
+      }
+      const message = await this.repository.retryUserMessage(existing.id);
+      return { conversationId: existing.conversationId, userMessageId: message.id, message: message.content };
     }
 
-    await this.repository.addMessage(conversationId, AssistantMessageRole.USER, parsed.message);
-    return { conversationId, message: parsed.message };
+    if (parsed.conversationId) {
+      const conversation = await this.repository.findConversation(parsed.conversationId);
+      if (!conversation) throw new Error("Assistant conversation was not found.");
+      const message = await this.repository.addPendingUserMessage(conversation.id, parsed.message);
+      return { conversationId: conversation.id, userMessageId: message.id, message: message.content };
+    }
+
+    const created = await this.repository.createConversationWithPendingMessage(buildConversationTitle(parsed.message), parsed.message);
+    return { conversationId: created.conversation.id, userMessageId: created.message.id, message: created.message.content };
   }
 
-  saveAssistantMessage(conversationId: string, content: string) {
+  completeTurn(conversationId: string, userMessageId: string, content: string) {
     const normalized = content.trim();
     if (!normalized) throw new Error("Assistant returned an empty response.");
-    return this.repository.addMessage(conversationId, AssistantMessageRole.ASSISTANT, normalized);
+    return this.repository.completeTurn(conversationId, userMessageId, normalized);
+  }
+
+  failTurn(userMessageId: string) {
+    return this.repository.failUserMessage(userMessageId);
   }
 
   listRecentMessages(conversationId: string) {
     return this.repository.listRecentMessages(conversationId, 20);
   }
+
+  async deleteConversation(conversationId: string) {
+    const conversation = await this.repository.findConversation(conversationId, 1);
+    if (!conversation) throw new Error("Assistant conversation was not found.");
+    await this.repository.deleteConversation(conversationId);
+  }
 }
+
+export const STALE_PENDING_AFTER_MS = 5 * 60 * 1000;
 
 export function buildConversationTitle(message: string) {
   const normalized = message.trim().replace(/\s+/g, " ");

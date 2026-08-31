@@ -10,6 +10,19 @@ export type AssistantStreamEvent =
   | { type: "tool"; name: string }
   | { type: "delta"; text: string };
 
+export type AssistantStreamErrorCode =
+  | "MAX_OUTPUT_TOKENS"
+  | "CONTENT_FILTER"
+  | "PROVIDER_FAILED"
+  | "PROVIDER_INCOMPLETE";
+
+export class AssistantStreamError extends Error {
+  constructor(public readonly code: AssistantStreamErrorCode, message: string) {
+    super(message);
+    this.name = "AssistantStreamError";
+  }
+}
+
 export async function streamAssistantResponse({
   client,
   model,
@@ -51,7 +64,9 @@ export async function streamAssistantResponse({
       tools: assistantToolDefinitions,
       tool_choice: "auto",
       parallel_tool_calls: false,
-      max_output_tokens: 1200,
+      reasoning: { effort: "low" },
+      text: { verbosity: "low" },
+      max_output_tokens: 3000,
       store: false,
       stream: true,
     });
@@ -63,8 +78,19 @@ export async function streamAssistantResponse({
         onEvent({ type: "delta", text: event.delta });
       }
       if (event.type === "response.completed") completedResponse = event.response;
-      if (event.type === "response.failed") throw new Error("OpenAI could not complete the response.");
-      if (event.type === "response.incomplete") throw new Error("OpenAI response was incomplete.");
+      if (event.type === "response.failed") {
+        throw new AssistantStreamError("PROVIDER_FAILED", "OpenAI could not complete the response.");
+      }
+      if (event.type === "response.incomplete") {
+        const reason = event.response.incomplete_details?.reason;
+        if (reason === "max_output_tokens") {
+          throw new AssistantStreamError("MAX_OUTPUT_TOKENS", "OpenAI reached the response limit.");
+        }
+        if (reason === "content_filter") {
+          throw new AssistantStreamError("CONTENT_FILTER", "OpenAI could not complete this response safely.");
+        }
+        throw new AssistantStreamError("PROVIDER_INCOMPLETE", "OpenAI response was incomplete.");
+      }
     }
 
     if (!completedResponse) throw new Error("OpenAI stream ended before completion.");

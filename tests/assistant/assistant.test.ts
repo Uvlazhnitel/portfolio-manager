@@ -1,4 +1,4 @@
-import { AccountType, AssetClass, AssetType, AssistantMessageRole, BasisMethod, Prisma, TransactionType, type CachedMarketPrice } from "@prisma/client";
+import { AccountType, AssetClass, AssetType, AssistantMessageRole, AssistantMessageStatus, BasisMethod, Prisma, TransactionType, type CachedMarketPrice } from "@prisma/client";
 import type OpenAI from "openai";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AssistantRepository } from "@/features/assistant/repository";
@@ -7,7 +7,7 @@ import { loadAssistantPortfolioRuntime } from "@/features/assistant/context";
 import { ASSISTANT_SYSTEM_INSTRUCTIONS } from "@/features/assistant/instructions";
 import { assistantToolDefinitions, executeAssistantTool } from "@/features/assistant/tools";
 import type { AssistantToolServices } from "@/features/assistant/tool-services";
-import { streamAssistantResponse } from "@/features/assistant/stream";
+import { AssistantStreamError, streamAssistantResponse } from "@/features/assistant/stream";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
 import { MarketDataService } from "@/features/market-data/service";
 import type { MarketDataStore } from "@/features/market-data/repository";
@@ -63,17 +63,60 @@ describe("assistant persistence", () => {
     const repository = new AssistantRepository(testDb.prisma);
     const service = new AssistantConversationService(repository);
     const prepared = await service.prepareUserMessage({ message: "  What happens if I buy BTC?  " });
-    await service.saveAssistantMessage(prepared.conversationId, "It would change crypto allocation.");
+    expect((await repository.findMessage(prepared.userMessageId))?.status).toBe(AssistantMessageStatus.PENDING);
+    expect(await service.listRecentMessages(prepared.conversationId)).toEqual([]);
+
+    await service.completeTurn(prepared.conversationId, prepared.userMessageId, "It would change crypto allocation.");
     const messages = await service.listRecentMessages(prepared.conversationId);
 
     expect(messages.map((message) => message.role)).toEqual([AssistantMessageRole.USER, AssistantMessageRole.ASSISTANT]);
+    expect(messages.every((message) => message.status === AssistantMessageStatus.COMPLETED)).toBe(true);
     expect(messages.map((message) => message.content)).toEqual(["What happens if I buy BTC?", "It would change crypto allocation."]);
     expect((await repository.findConversation(prepared.conversationId))?.title).toBe("What happens if I buy BTC?");
+  });
 
-    const beforeRetry = await testDb.prisma.assistantMessage.count({ where: { conversationId: prepared.conversationId } });
-    await service.prepareUserMessage({ conversationId: prepared.conversationId, message: "New unanswered question" });
-    await service.prepareUserMessage({ conversationId: prepared.conversationId, message: "New unanswered question" });
-    expect(await testDb.prisma.assistantMessage.count({ where: { conversationId: prepared.conversationId } })).toBe(beforeRetry + 1);
+  it("marks failed turns, excludes them from model history, and retries without duplication", async () => {
+    const repository = new AssistantRepository(testDb.prisma);
+    const service = new AssistantConversationService(repository);
+    const first = await service.prepareUserMessage({ message: "Explain my risk" });
+    await service.failTurn(first.userMessageId);
+    expect(await service.listRecentMessages(first.conversationId)).toEqual([]);
+    expect((await repository.findConversation(first.conversationId))?.messages).toContainEqual(
+      expect.objectContaining({ id: first.userMessageId, status: AssistantMessageStatus.FAILED }),
+    );
+
+    const beforeRetry = await testDb.prisma.assistantMessage.count({ where: { conversationId: first.conversationId } });
+    const retried = await service.prepareUserMessage({
+      conversationId: first.conversationId,
+      retryMessageId: first.userMessageId,
+      message: "Explain my risk",
+    });
+    expect(retried.userMessageId).toBe(first.userMessageId);
+    expect(await testDb.prisma.assistantMessage.count({ where: { conversationId: first.conversationId } })).toBe(beforeRetry);
+
+    await service.completeTurn(retried.conversationId, retried.userMessageId, "Risk is within the configured limits.");
+    expect((await service.listRecentMessages(first.conversationId)).map((message) => message.role)).toEqual([
+      AssistantMessageRole.USER,
+      AssistantMessageRole.ASSISTANT,
+    ]);
+  });
+
+  it("allows an interrupted pending message to retry after five minutes", async () => {
+    const repository = new AssistantRepository(testDb.prisma);
+    const service = new AssistantConversationService(repository);
+    const prepared = await service.prepareUserMessage({ message: "Interrupted request" });
+    await testDb.prisma.assistantMessage.update({
+      where: { id: prepared.userMessageId },
+      data: { createdAt: new Date(Date.now() - 6 * 60 * 1000) },
+    });
+
+    const retried = await service.prepareUserMessage({
+      conversationId: prepared.conversationId,
+      retryMessageId: prepared.userMessageId,
+      message: prepared.message,
+    });
+    expect(retried.userMessageId).toBe(prepared.userMessageId);
+    expect((await repository.findMessage(prepared.userMessageId))?.status).toBe(AssistantMessageStatus.PENDING);
   });
 
   it("uses a compact deterministic title and rejects unknown conversations", async () => {
@@ -81,11 +124,12 @@ describe("assistant persistence", () => {
     await expect(new AssistantConversationService(new AssistantRepository(testDb.prisma)).prepareUserMessage({ conversationId: "missing", message: "Hello" })).rejects.toThrow("not found");
   });
 
-  it("deletes owned messages when a conversation is removed", async () => {
+  it("deletes a conversation and its owned messages", async () => {
     const conversation = await testDb.prisma.assistantConversation.create({
       data: { title: "Disposable", messages: { create: { role: AssistantMessageRole.USER, content: "Hello" } } },
     });
-    await testDb.prisma.assistantConversation.delete({ where: { id: conversation.id } });
+    await new AssistantConversationService(new AssistantRepository(testDb.prisma)).deleteConversation(conversation.id);
+    expect(await testDb.prisma.assistantConversation.findUnique({ where: { id: conversation.id } })).toBeNull();
     expect(await testDb.prisma.assistantMessage.count({ where: { conversationId: conversation.id } })).toBe(0);
   });
 });
@@ -220,6 +264,9 @@ describe("assistant OpenAI orchestration", () => {
     expect(text).toBe("BTC would exceed your range.");
     expect(emitted).toContainEqual({ type: "tool", name: "simulate_scenario" });
     expect(calls[0].model).toBe("gpt-5-mini");
+    expect(calls[0].reasoning).toEqual({ effort: "low" });
+    expect(calls[0].text).toEqual({ verbosity: "low" });
+    expect(calls[0].max_output_tokens).toBe(3000);
     expect(JSON.stringify(calls[0].input)).not.toContain("totalPortfolioValue");
     const secondInput = calls[1].input as Array<Record<string, unknown>>;
     expect(secondInput).toContainEqual(expect.objectContaining({ type: "function_call_output", call_id: "call-btc" }));
@@ -229,6 +276,19 @@ describe("assistant OpenAI orchestration", () => {
     const fakeClient = { responses: { create: async () => events([{ type: "response.failed" }]) } } as unknown as OpenAI;
     await expect(streamAssistantResponse({ client: fakeClient, model: "gpt-5-mini", runtime, history: [], onEvent: () => undefined }))
       .rejects.toThrow("could not complete");
+  });
+
+  it("returns a typed max-output error for incomplete responses", async () => {
+    const fakeClient = {
+      responses: {
+        create: async () => events([{
+          type: "response.incomplete",
+          response: { incomplete_details: { reason: "max_output_tokens" } },
+        }]),
+      },
+    } as unknown as OpenAI;
+    const result = streamAssistantResponse({ client: fakeClient, model: "gpt-5-mini", runtime, history: [], onEvent: () => undefined });
+    await expect(result).rejects.toMatchObject({ code: "MAX_OUTPUT_TOKENS" } satisfies Partial<AssistantStreamError>);
   });
 });
 

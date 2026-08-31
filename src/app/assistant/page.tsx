@@ -7,11 +7,11 @@ export const dynamic = "force-dynamic";
 export default async function AssistantPage({
   searchParams,
 }: {
-  searchParams: Promise<{ conversation?: string | string[] }>;
+  searchParams: Promise<{ conversation?: string | string[]; new?: string | string[] }>;
 }) {
   const query = await searchParams;
   const conversationId = typeof query.conversation === "string" ? query.conversation : null;
-  const model = await getAssistantPageModel(conversationId);
+  const model = await getAssistantPageModel(conversationId, query.new === "1");
 
   return (
     <>

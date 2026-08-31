@@ -86,6 +86,12 @@ enum AssistantMessageRole {
   ASSISTANT
 }
 
+enum AssistantMessageStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
 enum IntegrationProvider {
   OPENAI
   COINGECKO
@@ -324,12 +330,14 @@ model AssistantMessage {
   id             String               @id @default(cuid())
   conversationId String
   role           AssistantMessageRole
+  status         AssistantMessageStatus @default(COMPLETED)
   content        String               @db.Text
   createdAt      DateTime             @default(now())
 
   conversation AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt])
+  @@index([conversationId, status, createdAt])
 }
 
 model IntegrationSetting {
