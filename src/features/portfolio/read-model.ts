@@ -15,6 +15,7 @@ import {
 type TransactionWithRelations = Awaited<ReturnType<PortfolioRepository["listTransactions"]>>[number];
 type AssetRow = Awaited<ReturnType<PortfolioRepository["listAssets"]>>[number];
 type AccountRow = Awaited<ReturnType<PortfolioRepository["listAccounts"]>>[number];
+type DailyPriceRow = Awaited<ReturnType<PortfolioRepository["listDailyPrices"]>>[number];
 
 export type PortfolioHoldingRow = {
   assetId: string;
@@ -102,6 +103,16 @@ export type PortfolioReadModel = {
     custodianName: string | null;
   }>;
   holdings: PortfolioHoldingRow[];
+  assetPriceHistory: Array<{
+    assetId: string;
+    symbol: string;
+    points: Array<{
+      date: string;
+      price: string;
+      source: string;
+      isStale: boolean;
+    }>;
+  }>;
   transactions: PortfolioTransactionRow[];
   valuation: {
     totalValue: string;
@@ -160,7 +171,10 @@ export async function getPortfolioReadModel({
     strategyRepository.findActiveStrategy(),
   ]);
   const resolvedBaseCurrency = baseCurrency ?? strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
-  const marketData = await marketDataService.getCurrentPrices({ assets, baseCurrency: resolvedBaseCurrency });
+  const [marketData, dailyPrices] = await Promise.all([
+    marketDataService.getCurrentPrices({ assets, baseCurrency: resolvedBaseCurrency }),
+    repository.listDailyPrices(resolvedBaseCurrency),
+  ]);
   const portfolio = calculatePortfolio({
     assets,
     transactions,
@@ -196,6 +210,7 @@ export async function getPortfolioReadModel({
       custodianName: account.custodian?.name ?? null,
     })),
     holdings,
+    assetPriceHistory: buildAssetPriceHistory(assets, dailyPrices, marketData.prices),
     transactions: buildTransactionRows(transactions),
     valuation: {
       totalValue: portfolio.totalValue,
@@ -238,6 +253,49 @@ export async function getPortfolioReadModel({
         }
       : null,
   };
+}
+
+function buildAssetPriceHistory(
+  assets: AssetRow[],
+  dailyPrices: DailyPriceRow[],
+  currentPrices: Awaited<ReturnType<MarketDataService["getCurrentPrices"]>>["prices"],
+): PortfolioReadModel["assetPriceHistory"] {
+  const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
+  const pointsByAsset = new Map<string, Map<string, PortfolioReadModel["assetPriceHistory"][number]["points"][number]>>();
+
+  for (const dailyPrice of dailyPrices) {
+    const asset = assetsById.get(dailyPrice.assetId);
+    if (!asset) continue;
+    const date = dailyPrice.date.toISOString().slice(0, 10);
+    const points = pointsByAsset.get(asset.id) ?? new Map();
+    points.set(date, {
+      date,
+      price: displayUnitPrice(dailyPrice.price, asset.assetType === AssetType.PHYSICAL_GOLD).toString(),
+      source: dailyPrice.source,
+      isStale: dailyPrice.isStaleAtCapture,
+    });
+    pointsByAsset.set(asset.id, points);
+  }
+
+  for (const currentPrice of currentPrices) {
+    const asset = assetsById.get(currentPrice.assetId);
+    if (!asset) continue;
+    const date = currentPrice.timestamp.toISOString().slice(0, 10);
+    const points = pointsByAsset.get(asset.id) ?? new Map();
+    points.set(date, {
+      date,
+      price: displayUnitPrice(currentPrice.price, asset.assetType === AssetType.PHYSICAL_GOLD).toString(),
+      source: currentPrice.source,
+      isStale: currentPrice.isStale,
+    });
+    pointsByAsset.set(asset.id, points);
+  }
+
+  return assets.map((asset) => ({
+    assetId: asset.id,
+    symbol: asset.symbol,
+    points: [...(pointsByAsset.get(asset.id)?.values() ?? [])].sort((left, right) => left.date.localeCompare(right.date)),
+  }));
 }
 
 function buildHoldingRows(

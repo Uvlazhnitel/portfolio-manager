@@ -162,6 +162,50 @@ describe("priced portfolio read models", () => {
     }));
   });
 
+  it("exposes per-asset daily price history and replaces today's saved point with the current quote", async () => {
+    const btc = await testDb.prisma.asset.findUniqueOrThrow({ where: { symbol: "BTC" } });
+    const gold = await testDb.prisma.asset.findUniqueOrThrow({ where: { symbol: "PHYSICAL_GOLD" } });
+    const currentQuote = await testDb.prisma.cachedMarketPrice.findFirst();
+    const currentDate = currentQuote?.timestamp ?? new Date();
+    const today = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth(), currentDate.getUTCDate()));
+    const yesterday = new Date(today);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const capturedAt = new Date(today.getTime() + 12 * 60 * 60 * 1000);
+
+    await testDb.prisma.dailyMarketPrice.createMany({
+      data: [
+        { assetId: btc.id, currency: "EUR", date: yesterday, price: "48000", source: "HISTORY", quoteTimestamp: capturedAt, capturedAt, isStaleAtCapture: false },
+        { assetId: btc.id, currency: "EUR", date: today, price: "49000", source: "HISTORY", quoteTimestamp: capturedAt, capturedAt, isStaleAtCapture: false },
+        { assetId: gold.id, currency: "EUR", date: yesterday, price: "90", source: "HISTORY", quoteTimestamp: capturedAt, capturedAt, isStaleAtCapture: true },
+      ],
+    });
+
+    try {
+      resetMarketDataRuntimeCacheForTests();
+      const model = await getPortfolioReadModel({
+        repository: new PortfolioRepository(testDb.prisma),
+        strategyRepository: new StrategyRepository(testDb.prisma),
+        marketDataService,
+      });
+      const btcHistory = model.assetPriceHistory.find((entry) => entry.assetId === btc.id);
+      const goldHistory = model.assetPriceHistory.find((entry) => entry.assetId === gold.id);
+
+      expect(btcHistory?.points).toHaveLength(2);
+      expect(btcHistory?.points.at(-1)).toEqual(expect.objectContaining({
+        date: today.toISOString().slice(0, 10),
+        price: "50000",
+        source: "COINGECKO",
+      }));
+      expect(goldHistory?.points[0]).toEqual(expect.objectContaining({
+        price: "2799.312912",
+        isStale: true,
+      }));
+      expect(goldHistory?.points.at(-1)?.price).toBe("3110.34768");
+    } finally {
+      await testDb.prisma.dailyMarketPrice.deleteMany({ where: { assetId: { in: [btc.id, gold.id] } } });
+    }
+  });
+
   it("hides every portfolio weight and strategy decision when one held asset has no price", async () => {
     const btc = await testDb.prisma.asset.findUniqueOrThrow({ where: { symbol: "BTC" } });
     const now = new Date();
