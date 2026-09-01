@@ -106,6 +106,8 @@ describe("contribution plan persistence and read model", () => {
     await testDb.prisma.strategyAllocation.update({ where: { strategyId_assetClass: { strategyId, assetClass: AssetClass.CRYPTO } }, data: { targetPercent: "25", maxPercent: "30" } });
     resetMarketDataRuntimeCacheForTests();
     const preview = await previewContribution({ contributionAmount: "1000" }, { portfolioRepository: new PortfolioRepository(testDb.prisma), strategyRepository: new StrategyRepository(testDb.prisma), marketDataService });
+    expect(preview.projection).not.toBeNull();
+    if (!preview.projection) throw new Error("Expected an available contribution projection.");
     expect(preview.projection.afterComparison.find((row) => row.assetClass === AssetClass.ETF)?.targetPercent).toBe("60.00");
     expect(preview.projection.afterComparison.find((row) => row.assetClass === AssetClass.CRYPTO)?.targetPercent).toBe("25.00");
   });
@@ -130,6 +132,8 @@ describe("contribution plan persistence and read model", () => {
       strategyRepository: new StrategyRepository(testDb.prisma),
       marketDataService,
     });
+    expect(preview.projection).not.toBeNull();
+    if (!preview.projection) throw new Error("Expected an available contribution projection.");
 
     expect(preview.recommendedAllocations.some((allocation) => allocation.assetClass === AssetClass.CASH)).toBe(false);
     expect(preview.projection.afterComparison.map((allocation) => allocation.assetClass).sort()).toEqual([
@@ -192,6 +196,8 @@ describe("contribution plan persistence and read model", () => {
         marketDataService,
       },
     );
+    expect(preview.projection).not.toBeNull();
+    if (!preview.projection) throw new Error("Expected an available contribution projection.");
     const model = await getContributionPlannerModel({
       portfolioRepository: new PortfolioRepository(testDb.prisma),
       strategyRepository: new StrategyRepository(testDb.prisma),
@@ -205,6 +211,34 @@ describe("contribution plan persistence and read model", () => {
     expect(preview.projection.plan.assetRecommendations.some((item) => item.assetClass === AssetClass.CRYPTO || item.assetClass === AssetClass.GOLD)).toBe(true);
     expect(model.strategy.allocations.find((allocation) => allocation.assetClass === AssetClass.ETF)?.hasAssetTargets).toBe(false);
     expect(model.setupError).toBeNull();
+  });
+
+  it("preserves the saved plan but blocks recommendations when current valuation is partial", async () => {
+    resetMarketDataRuntimeCacheForTests();
+    const unavailableMarketData = new MarketDataService(new PriceStore([]), []);
+    const dependencies = {
+      portfolioRepository: new PortfolioRepository(testDb.prisma),
+      strategyRepository: new StrategyRepository(testDb.prisma),
+      planRepository: new ContributionPlanRepository(testDb.prisma),
+      marketDataService: unavailableMarketData,
+    };
+
+    const model = await getContributionPlannerModel(dependencies);
+    const preview = await previewContribution({ contributionAmount: "1000" }, dependencies);
+
+    expect(model.contributionAmount).toBe("1000");
+    expect(model.availability).toEqual({
+      state: "UNAVAILABLE",
+      reasonCodes: ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"],
+      missingPriceSymbols: ["VWCE"],
+    });
+    expect(model.projection).toBeNull();
+    expect(preview).toEqual(expect.objectContaining({
+      projection: null,
+      recommendedAllocations: [],
+      availability: expect.objectContaining({ state: "UNAVAILABLE", missingPriceSymbols: ["VWCE"] }),
+    }));
+    expect(await testDb.prisma.contributionPlan.findUnique({ where: { strategyId } })).not.toBeNull();
   });
 });
 

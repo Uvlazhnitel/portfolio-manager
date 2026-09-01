@@ -16,13 +16,13 @@ import { cn } from "@/lib/utils";
 import { formatDecimalCurrency, formatDecimalPercent } from "@/lib/format/decimal";
 import { formatUtcTimestamp } from "@/lib/format/date";
 
-type PreviewState = Pick<ContributionPlannerModel, "recommendedAllocations" | "valuation"> & { projection: ContributionProjection | null };
+type PreviewState = Pick<ContributionPlannerModel, "recommendedAllocations" | "valuation" | "availability"> & { projection: ContributionProjection | null };
 
 export function ContributionPlanner({ model }: { model: ContributionPlannerModel }) {
   const [amount, setAmount] = useState(model.contributionAmount);
   const [allocations, setAllocations] = useState(model.allocations);
   const [isCustomized, setIsCustomized] = useState(model.isCustomized);
-  const [preview, setPreview] = useState<PreviewState>({ projection: model.projection, recommendedAllocations: model.recommendedAllocations, valuation: model.valuation });
+  const [preview, setPreview] = useState<PreviewState>({ projection: model.projection, recommendedAllocations: model.recommendedAllocations, valuation: model.valuation, availability: model.availability });
   const [previewError, setPreviewError] = useState("");
   const [saveMessage, setSaveMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [savedAt, setSavedAt] = useState(model.savedAt);
@@ -36,7 +36,7 @@ export function ContributionPlanner({ model }: { model: ContributionPlannerModel
 
   useEffect(() => {
     const currentRequest = ++requestId.current;
-    if (!amount.trim() || (isCustomized && !allocationAnalysis.isValid)) return;
+    if (model.availability.state === "UNAVAILABLE" || !amount.trim() || (isCustomized && !allocationAnalysis.isValid)) return;
 
     const timer = window.setTimeout(() => {
       startPreviewTransition(async () => {
@@ -55,7 +55,7 @@ export function ContributionPlanner({ model }: { model: ContributionPlannerModel
     }, 350);
 
     return () => window.clearTimeout(timer);
-  }, [amount, isCustomized, requestAllocations, allocationAnalysis.isValid]);
+  }, [amount, isCustomized, requestAllocations, allocationAnalysis.isValid, model.availability.state]);
 
   function changeAmount(value: string) {
     setSaveMessage(null);
@@ -99,6 +99,20 @@ export function ContributionPlanner({ model }: { model: ContributionPlannerModel
   const projection = preview.projection;
   const hasPositiveAmount = allocationAnalysis.expectedCents > 0;
   const displayedPreviewError = isCustomized && !allocationAnalysis.isValid ? allocationAnalysis.message : previewError;
+
+  if (model.availability.state === "UNAVAILABLE") {
+    return (
+      <div className="space-y-5">
+        <Card className="py-10 text-center">
+          <AlertCircle className="mx-auto h-8 w-8 text-warning" aria-hidden="true" />
+          <h2 className="mt-4 text-lg font-semibold">Contribution planning unavailable</h2>
+          <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted">Prices are missing for {model.availability.missingPriceSymbols.join(", ")}. Recommendations, impact analysis, customization, and saving are disabled until valuation is complete.</p>
+          {model.contributionAmount && model.savedAt ? <p className="mt-4 text-sm text-muted">Your existing {formatMoney(model.contributionAmount, model.strategy.currency)} plan from {formatUtcTimestamp(model.savedAt)} is preserved.</p> : null}
+        </Card>
+        <DataQualitySummary items={contributionDataQualityItems(preview)} className="ml-auto" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -236,7 +250,7 @@ function StatusBadge({ status }: { status: "UNDERWEIGHT" | "IN_RANGE" | "OVERWEI
 
 function contributionDataQualityItems(preview: PreviewState): DataQualityItem[] {
   const items: DataQualityItem[] = [];
-  if (preview.valuation.isPartial) items.push({ message: `Planning uses the valued portion of your portfolio. Price unavailable for: ${preview.valuation.missingPriceSymbols.join(", ")}.` });
+  if (preview.valuation.isPartial) items.push({ message: `Planning is unavailable because prices are missing for: ${preview.valuation.missingPriceSymbols.join(", ")}.` });
   if (preview.valuation.hasStalePrices) items.push({ message: "Some market prices are stale." });
   if (preview.valuation.warning) items.push({ message: preview.valuation.warning });
   return items;

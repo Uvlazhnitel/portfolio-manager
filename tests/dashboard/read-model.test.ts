@@ -65,14 +65,22 @@ describe("dashboard read model edge states", () => {
     });
 
     expect(dashboard.valuation).toEqual(expect.objectContaining({ totalValue: "10.00", isPartial: true, investmentGain: "5.00", isCostBasisPartial: true }));
-    expect(dashboard.allocation.find((item) => item.assetClass === AssetClass.ETF)?.currentPercent).toBe("0.00");
-    expect(dashboard.allocation.map((item) => item.assetClass)).toEqual([
-      AssetClass.CRYPTO,
-      AssetClass.ETF,
-      AssetClass.GOLD,
-      AssetClass.CASH,
-    ]);
-    expect(dashboard.allocation[0].driftPercent).toBe("85.00");
+    expect(dashboard.allocation).toEqual({
+      state: "PARTIAL",
+      reasonCodes: ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"],
+      missingPriceSymbols: ["GOLD"],
+      rows: [],
+    });
+    expect(dashboard.strategyStatus).toEqual(expect.objectContaining({
+      state: "UNAVAILABLE",
+      attentionCount: null,
+      missingPriceSymbols: ["GOLD"],
+    }));
+    expect(dashboard.contribution).toEqual(expect.objectContaining({
+      state: "UNAVAILABLE",
+      projection: null,
+      missingPriceSymbols: ["GOLD"],
+    }));
     expect(dashboard.history.points).toHaveLength(2);
     expect(dashboard.history.points.map((point) => point.portfolioValue)).toEqual(["29.00", "40.00"]);
     expect(dashboard.history.trackingStartedAt).toBe("2026-08-25");

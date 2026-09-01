@@ -2,6 +2,7 @@ import { AssetClass } from "@prisma/client";
 import {
   buildContributionProjection,
   calculatePortfolio,
+  getPortfolioValuationAvailability,
   projectCustomContribution,
   type ContributionProjection,
 } from "@/features/portfolio-engine";
@@ -26,6 +27,11 @@ export type ContributionPlannerModel = {
   isCustomized: boolean;
   savedAt: string | null;
   setupError: string | null;
+  availability: {
+    state: "AVAILABLE" | "UNAVAILABLE";
+    reasonCodes: string[];
+    missingPriceSymbols: string[];
+  };
   valuation: {
     isPartial: boolean;
     missingPriceSymbols: string[];
@@ -61,10 +67,12 @@ export async function getContributionPlannerModel({
     planRepository.findByStrategyId(strategy.id),
   ]);
   const portfolio = calculatePortfolio({ assets, transactions, marketPrices: toEngineMarketPrices(marketData) });
+  const valuationAvailability = getPortfolioValuationAvailability(portfolio);
+  const canPlan = valuationAvailability.state === "AVAILABLE";
   const contributionAmount = preferredAmount ?? (saved ? serializeDecimal(saved.contributionAmount) : "");
-  let setupError: string | null = null;
+  let setupError: string | null = canPlan ? null : incompleteValuationMessage(valuationAvailability.missingPriceSymbols);
   let recommendation: ContributionProjection | null = null;
-  if (contributionAmount && contributionAmount !== "0") {
+  if (canPlan && contributionAmount && contributionAmount !== "0") {
     try {
       recommendation = buildContributionProjection({ portfolio, assets, strategy: strategy.allocations, contributionAmount });
     } catch (error) {
@@ -77,7 +85,7 @@ export async function getContributionPlannerModel({
   const savedAllocations = shouldRestoreSavedAllocation && saved ? parseSavedAllocations(saved.allocations) : [];
   const allocations = shouldRestoreSavedAllocation ? normalizeAllocations(savedAllocations, activeAssetClasses) : recommendedAllocations;
   let projection: ContributionProjection | null = null;
-  if (contributionAmount && contributionAmount !== "0" && !setupError) {
+  if (canPlan && contributionAmount && contributionAmount !== "0" && !setupError) {
     try {
       projection = projectCustomContribution({ portfolio, assets, strategy: strategy.allocations, contributionAmount, allocations });
     } catch (error) {
@@ -102,6 +110,11 @@ export async function getContributionPlannerModel({
     isCustomized: shouldRestoreSavedAllocation ? saved?.isCustomized ?? false : false,
     savedAt: saved?.updatedAt.toISOString() ?? null,
     setupError,
+    availability: {
+      state: canPlan ? "AVAILABLE" : "UNAVAILABLE",
+      reasonCodes: valuationAvailability.reasonCodes,
+      missingPriceSymbols: valuationAvailability.missingPriceSymbols,
+    },
     valuation: {
       isPartial: portfolio.missingPriceSymbols.length > 0,
       missingPriceSymbols: portfolio.missingPriceSymbols,
@@ -137,6 +150,25 @@ export async function previewContribution(
   }
   const marketData = await marketDataService.getCurrentPrices({ assets, baseCurrency: strategy.baseCurrency });
   const portfolio = calculatePortfolio({ assets, transactions, marketPrices: toEngineMarketPrices(marketData) });
+  const valuationAvailability = getPortfolioValuationAvailability(portfolio);
+  if (valuationAvailability.state === "PARTIAL") {
+    return {
+      projection: null,
+      recommendedAllocations: [],
+      availability: {
+        state: "UNAVAILABLE" as const,
+        reasonCodes: valuationAvailability.reasonCodes,
+        missingPriceSymbols: valuationAvailability.missingPriceSymbols,
+      },
+      valuation: {
+        isPartial: true,
+        missingPriceSymbols: valuationAvailability.missingPriceSymbols,
+        lastUpdated: marketData.lastUpdated,
+        hasStalePrices: marketData.hasStalePrices,
+        warning: marketData.warning,
+      },
+    };
+  }
   const projection = parsed.allocations
     ? projectCustomContribution({ portfolio, assets, strategy: strategy.allocations, contributionAmount: parsed.contributionAmount, allocations: parsed.allocations })
     : buildContributionProjection({ portfolio, assets, strategy: strategy.allocations, contributionAmount: parsed.contributionAmount });
@@ -147,6 +179,11 @@ export async function previewContribution(
       buildContributionProjection({ portfolio, assets, strategy: strategy.allocations, contributionAmount: parsed.contributionAmount }).plan.allocations,
       activeAssetClasses,
     ),
+    availability: {
+      state: "AVAILABLE" as const,
+      reasonCodes: [],
+      missingPriceSymbols: [],
+    },
     valuation: {
       isPartial: portfolio.missingPriceSymbols.length > 0,
       missingPriceSymbols: portfolio.missingPriceSymbols,
@@ -155,6 +192,10 @@ export async function previewContribution(
       warning: marketData.warning,
     },
   };
+}
+
+function incompleteValuationMessage(symbols: string[]) {
+  return `Contribution planning is unavailable until prices are available for: ${symbols.join(", ")}.`;
 }
 
 function normalizeAllocations(allocations: Array<{ assetClass: AssetClass; amount: string }>, assetClasses: AssetClass[]) {

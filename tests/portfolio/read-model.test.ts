@@ -162,6 +162,33 @@ describe("priced portfolio read models", () => {
     }));
   });
 
+  it("hides every portfolio weight and strategy decision when one held asset has no price", async () => {
+    const btc = await testDb.prisma.asset.findUniqueOrThrow({ where: { symbol: "BTC" } });
+    const now = new Date();
+    resetMarketDataRuntimeCacheForTests();
+    const partialMarketData = new MarketDataService(new ReadModelPriceStore([
+      makeCachedPrice(btc.id, "50000", now, "COINGECKO"),
+    ]), []);
+    const model = await getPortfolioReadModel({
+      repository: new PortfolioRepository(testDb.prisma),
+      strategyRepository: new StrategyRepository(testDb.prisma),
+      marketDataService: partialMarketData,
+    });
+
+    expect(model.valuation).toEqual(expect.objectContaining({
+      totalValue: "50000.00",
+      isPartial: true,
+      missingPriceSymbols: ["PHYSICAL_GOLD"],
+    }));
+    expect(model.holdings.every((holding) => holding.portfolioWeight === null)).toBe(true);
+    expect(model.strategyStatus).toEqual(expect.objectContaining({
+      state: "UNAVAILABLE",
+      inRangeCount: null,
+      comparisons: [],
+      missingPriceSymbols: ["PHYSICAL_GOLD"],
+    }));
+  });
+
   it("builds dashboard totals and strategy comparison from engine results", async () => {
     resetMarketDataRuntimeCacheForTests();
     const dashboard = await getDashboardReadModel({
@@ -174,13 +201,14 @@ describe("priced portfolio read models", () => {
 
     expect(dashboard.valuation.totalValue).toBe("51000.00");
     expect(dashboard.valuation.investmentGain).toBe("10202.00");
-    expect(dashboard.allocation).toHaveLength(4);
+    expect(dashboard.allocation.state).toBe("AVAILABLE");
+    expect(dashboard.allocation.rows).toHaveLength(4);
     expect(dashboard.valuation.isPartial).toBe(false);
     expect(dashboard.contribution.amount).toBe("1000");
     expect(dashboard.contribution.projection?.plan.contributionAmount).toBe("1000.00");
     expect(dashboard.contribution.projection?.plan.assetRecommendations.length).toBeGreaterThan(0);
     expect(dashboard.history.points).toEqual([]);
-    expect(dashboard.allocation[0]).toEqual(expect.objectContaining({ assetClass: AssetClass.CRYPTO, driftPercent: "83.04" }));
+    expect(dashboard.allocation.rows[0]).toEqual(expect.objectContaining({ assetClass: AssetClass.CRYPTO, driftPercent: "83.04" }));
     expect(dashboard.strategyStatus.state).toBe("NEEDS_ATTENTION");
     expect(dashboard.strategyStatus.attentionCount).toBe(3);
   });

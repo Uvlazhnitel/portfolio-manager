@@ -1,5 +1,5 @@
 import { AssetType, type Prisma } from "@prisma/client";
-import { calculateAssetNetCostBasis, calculateHoldingCostBasis, calculatePortfolio, calculatePortfolioAnalytics, compareAllocationToStrategy } from "@/features/portfolio-engine";
+import { calculateAssetNetCostBasis, calculateHoldingCostBasis, calculatePortfolio, calculatePortfolioAnalytics, compareAllocationToStrategy, getPortfolioValuationAvailability } from "@/features/portfolio-engine";
 import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/service";
 import { PortfolioRepository } from "@/features/portfolio/repository";
@@ -107,6 +107,7 @@ export type PortfolioReadModel = {
     totalValue: string;
     currency: string;
     isPartial: boolean;
+    missingPriceSymbols: string[];
     lastUpdated: string | null;
     hasStalePrices: boolean;
     warning: string | null;
@@ -123,9 +124,12 @@ export type PortfolioReadModel = {
     missingCostBasisSymbols: string[];
   };
   strategyStatus: {
+    state: "AVAILABLE" | "UNAVAILABLE";
     name: string;
-    inRangeCount: number;
+    inRangeCount: number | null;
     totalCount: number;
+    reasonCodes: string[];
+    missingPriceSymbols: string[];
     comparisons: Array<{
       assetClass: string;
       currentPercent: string;
@@ -163,8 +167,9 @@ export async function getPortfolioReadModel({
     marketPrices: toEngineMarketPrices(marketData),
   });
   const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency: resolvedBaseCurrency });
+  const valuationAvailability = getPortfolioValuationAvailability(portfolio);
   const holdings = buildHoldingRows(assets, accounts, transactions, portfolio, marketData.prices, resolvedBaseCurrency);
-  const strategyComparisons = strategy
+  const strategyComparisons = strategy && valuationAvailability.state === "AVAILABLE"
     ? compareAllocationToStrategy(portfolio, strategy.allocations)
     : [];
 
@@ -196,6 +201,7 @@ export async function getPortfolioReadModel({
       totalValue: portfolio.totalValue,
       currency: resolvedBaseCurrency,
       isPartial: portfolio.missingPriceSymbols.length > 0,
+      missingPriceSymbols: valuationAvailability.missingPriceSymbols,
       lastUpdated: marketData.lastUpdated,
       hasStalePrices: marketData.hasStalePrices,
       warning: marketData.warning,
@@ -213,9 +219,14 @@ export async function getPortfolioReadModel({
     },
     strategyStatus: strategy
       ? {
+          state: valuationAvailability.state === "AVAILABLE" ? "AVAILABLE" : "UNAVAILABLE",
           name: strategy.name,
-          inRangeCount: strategyComparisons.filter((comparison) => comparison.status === "IN_RANGE").length,
-          totalCount: strategyComparisons.length,
+          inRangeCount: valuationAvailability.state === "AVAILABLE"
+            ? strategyComparisons.filter((comparison) => comparison.status === "IN_RANGE").length
+            : null,
+          totalCount: strategy.allocations.length,
+          reasonCodes: valuationAvailability.reasonCodes,
+          missingPriceSymbols: valuationAvailability.missingPriceSymbols,
           comparisons: strategyComparisons.map((comparison) => ({
             assetClass: comparison.assetClass,
             currentPercent: comparison.currentPercent,
@@ -310,11 +321,12 @@ function buildHoldingRows(
   });
 
   const totalAvailableValue = decimal(portfolio.totalValue);
+  const exactWeightsAvailable = getPortfolioValuationAvailability(portfolio).exactPercentagesAvailable;
 
   return rows.map((row) => ({
     ...row,
     portfolioWeight:
-      row.currentValue && totalAvailableValue.greaterThan(ZERO)
+      exactWeightsAvailable && row.currentValue && totalAvailableValue.greaterThan(ZERO)
         ? decimal(row.currentValue).div(totalAvailableValue).mul(100).toFixed(2)
         : null,
   }));

@@ -9,6 +9,8 @@ import {
   calculateStrategyAlignment,
   compareAllocationToStrategy,
   evaluateStrategyCompliance,
+  getPortfolioValuationAvailability,
+  IncompletePortfolioValuationError,
   planContribution,
   buildContributionProjection,
   projectCustomContribution,
@@ -532,19 +534,42 @@ describe("portfolio engine contribution planning and simulation", () => {
     expect(projection.reasons).toContainEqual({ code: "CUSTOM_ALLOCATION_ABOVE_MAX", assetClass: AssetClass.CRYPTO });
   });
 
-  it("adds contextual deterministic reasons to recommendations for partial portfolios", () => {
+  it("blocks allocation, compliance, and contribution decisions for partial valuations", () => {
     const portfolio = calculatePortfolio({
       assets,
-      marketPrices: { ETF: "1" },
+      marketPrices: { VWCE: "1" },
       transactions: [
         transaction({ assetId: "btc", accountId: "bybit", type: TransactionType.INITIAL_BALANCE, quantity: "1" }),
         transaction({ assetId: "etf", accountId: "broker", type: TransactionType.INITIAL_BALANCE, quantity: "1000" }),
       ],
     });
-    const projection = buildContributionProjection({ portfolio, assets, strategy, contributionAmount: "1000" });
-
-    expect(projection.plan.before.missingPriceSymbols).toContain("BTC");
-    expect(projection.reasons).toContainEqual({ code: "ASSET_CLASS_UNDERWEIGHT", assetClass: AssetClass.GOLD });
+    expect(portfolio.totalValue).toBe("1000.00");
+    expect(getPortfolioValuationAvailability(portfolio)).toEqual({
+      state: "PARTIAL",
+      exactPercentagesAvailable: false,
+      reasonCodes: ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"],
+      missingPriceSymbols: ["BTC"],
+    });
+    for (const operation of [
+      () => compareAllocationToStrategy(portfolio, strategy),
+      () => evaluateStrategyCompliance(portfolio, strategy),
+      () => planContribution({ portfolio, assets, strategy, contributionAmount: "1000" }),
+      () => buildContributionProjection({ portfolio, assets, strategy, contributionAmount: "1000" }),
+      () => projectCustomContribution({
+        portfolio,
+        assets,
+        strategy,
+        contributionAmount: "1000",
+        allocations: [
+          { assetClass: AssetClass.ETF, amount: "770" },
+          { assetClass: AssetClass.CRYPTO, amount: "120" },
+          { assetClass: AssetClass.GOLD, amount: "80" },
+          { assetClass: AssetClass.CASH, amount: "30" },
+        ],
+      }),
+    ]) {
+      expect(operation).toThrow(IncompletePortfolioValuationError);
+    }
   });
 
   it("simulates buying BTC without creating a database transaction", () => {

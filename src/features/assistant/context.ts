@@ -7,6 +7,7 @@ import {
   calculatePortfolioRisk,
   compareAllocationToStrategy,
   evaluateStrategyCompliance,
+  getPortfolioValuationAvailability,
   type MarketPrices,
   type PortfolioRiskSnapshot,
 } from "@/features/portfolio-engine";
@@ -45,15 +46,20 @@ export type PortfolioAssistantContext = {
     missingPriceSymbols: string[];
     priceCoveragePercent: string;
   };
-  allocation: Array<{
-    assetClass: string;
-    value: string;
-    currentPercent: string;
-    targetPercent: string;
-    minPercent: string;
-    maxPercent: string;
-    status: string;
-  }>;
+  allocation: {
+    state: "AVAILABLE" | "PARTIAL";
+    reasonCodes: string[];
+    missingPriceSymbols: string[];
+    items: Array<{
+      assetClass: string;
+      value: string;
+      currentPercent: string;
+      targetPercent: string;
+      minPercent: string;
+      maxPercent: string;
+      status: string;
+    }>;
+  };
   strategy: {
     name: string;
     objective: string;
@@ -66,12 +72,17 @@ export type PortfolioAssistantContext = {
     }>;
     rules: Array<{ type: string; enabled: boolean; config: unknown }>;
   } | null;
-  violations: Array<{
-    code: string;
-    assetClass: string;
-    currentPercent: string;
-    limitPercent: string;
-  }>;
+  strategyCompliance: {
+    state: "AVAILABLE" | "UNAVAILABLE";
+    reasonCodes: string[];
+    missingPriceSymbols: string[];
+    violations: Array<{
+      code: string;
+      assetClass: string;
+      currentPercent: string;
+      limitPercent: string;
+    }>;
+  };
   holdings: Array<{
     symbol: string;
     assetClass: string;
@@ -143,8 +154,10 @@ export async function loadAssistantPortfolioRuntime({
   const marketPrices = toEngineMarketPrices(marketData);
   const portfolio = calculatePortfolio({ assets, transactions, marketPrices });
   const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency });
-  const comparisons = strategy ? compareAllocationToStrategy(portfolio, strategy.allocations) : [];
-  const warnings = strategy ? evaluateStrategyCompliance(portfolio, strategy.allocations) : [];
+  const valuationAvailability = getPortfolioValuationAvailability(portfolio);
+  const canEvaluateAllocation = valuationAvailability.state === "AVAILABLE";
+  const comparisons = strategy && canEvaluateAllocation ? compareAllocationToStrategy(portfolio, strategy.allocations) : [];
+  const warnings = strategy && canEvaluateAllocation ? evaluateStrategyCompliance(portfolio, strategy.allocations) : [];
   const riskThresholds = riskThresholdsFromRules(strategy?.portfolioRules ?? []);
   const risk = calculatePortfolioRisk({
     portfolio,
@@ -169,7 +182,7 @@ export async function loadAssistantPortfolioRuntime({
   }
 
   let recommendation: ReturnType<typeof buildContributionProjection> | null = null;
-  if (strategy && savedPlan && decimal(savedPlan.contributionAmount).greaterThan(ZERO)) {
+  if (strategy && canEvaluateAllocation && savedPlan && decimal(savedPlan.contributionAmount).greaterThan(ZERO)) {
     try {
       recommendation = buildContributionProjection({
         portfolio,
@@ -203,15 +216,20 @@ export async function loadAssistantPortfolioRuntime({
       missingPriceSymbols: portfolio.missingPriceSymbols,
       priceCoveragePercent: analytics.priceCoverage.percent,
     },
-    allocation: comparisons.map((comparison) => ({
-      assetClass: comparison.assetClass,
-      value: allocationValues.get(comparison.assetClass) ?? "0.00",
-      currentPercent: comparison.currentPercent,
-      targetPercent: comparison.targetPercent,
-      minPercent: comparison.minPercent,
-      maxPercent: comparison.maxPercent,
-      status: comparison.status,
-    })),
+    allocation: {
+      state: valuationAvailability.state,
+      reasonCodes: valuationAvailability.reasonCodes,
+      missingPriceSymbols: valuationAvailability.missingPriceSymbols,
+      items: comparisons.map((comparison) => ({
+        assetClass: comparison.assetClass,
+        value: allocationValues.get(comparison.assetClass) ?? "0.00",
+        currentPercent: comparison.currentPercent,
+        targetPercent: comparison.targetPercent,
+        minPercent: comparison.minPercent,
+        maxPercent: comparison.maxPercent,
+        status: comparison.status,
+      })),
+    },
     strategy: strategy
       ? {
           name: strategy.name,
@@ -231,12 +249,17 @@ export async function loadAssistantPortfolioRuntime({
             .map((rule) => ({ type: rule.type, enabled: rule.enabled, config: rule.config })),
         }
       : null,
-    violations: warnings.map((warning) => ({
-      code: warning.code,
-      assetClass: warning.assetClass,
-      currentPercent: warning.currentPercent,
-      limitPercent: warning.limitPercent,
-    })),
+    strategyCompliance: {
+      state: canEvaluateAllocation ? "AVAILABLE" : "UNAVAILABLE",
+      reasonCodes: valuationAvailability.reasonCodes,
+      missingPriceSymbols: valuationAvailability.missingPriceSymbols,
+      violations: warnings.map((warning) => ({
+        code: warning.code,
+        assetClass: warning.assetClass,
+        currentPercent: warning.currentPercent,
+        limitPercent: warning.limitPercent,
+      })),
+    },
     holdings: [...quantityByAsset.entries()].map(([assetId, quantity]) => {
       const asset = assetById.get(assetId);
       const hasPrice = asset ? !missingSymbols.has(asset.symbol) : false;

@@ -6,6 +6,7 @@ import {
   calculatePortfolioAnalytics,
   compareAllocationToStrategy,
   evaluateStrategyCompliance,
+  getPortfolioValuationAvailability,
   type AllocationStatus,
   type ContributionProjection,
   type HistoricalMarketSnapshot,
@@ -44,25 +45,35 @@ export type DashboardReadModel = {
     incompleteDates: number;
     staleDates: number;
   };
-  allocation: Array<{
-    assetClass: AssetClass;
-    value: string;
-    currentPercent: string;
-    targetPercent: string;
-    minPercent: string;
-    maxPercent: string;
-    driftPercent: string;
-    status: AllocationStatus;
-  }>;
+  allocation: {
+    state: "AVAILABLE" | "PARTIAL";
+    reasonCodes: string[];
+    missingPriceSymbols: string[];
+    rows: Array<{
+      assetClass: AssetClass;
+      value: string;
+      currentPercent: string;
+      targetPercent: string;
+      minPercent: string;
+      maxPercent: string;
+      driftPercent: string;
+      status: AllocationStatus;
+    }>;
+  };
   contribution: {
     amount: string;
     projection: ContributionProjection | null;
+    state: "AVAILABLE" | "UNAVAILABLE";
+    reasonCodes: string[];
+    missingPriceSymbols: string[];
   };
   strategyStatus: {
-    state: "EMPTY" | "STAY_CONSISTENT" | "NEEDS_ATTENTION";
+    state: "EMPTY" | "UNAVAILABLE" | "STAY_CONSISTENT" | "NEEDS_ATTENTION";
     strategyName: string | null;
-    attentionCount: number;
+    attentionCount: number | null;
     totalClasses: number;
+    reasonCodes: string[];
+    missingPriceSymbols: string[];
   };
 };
 
@@ -92,12 +103,14 @@ export async function getDashboardReadModel({
   ]);
   const portfolio = calculatePortfolio({ assets, transactions, marketPrices: toEngineMarketPrices(marketData) });
   const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency });
-  const comparisons = strategy ? compareAllocationToStrategy(portfolio, strategy.allocations) : [];
-  const warnings = strategy ? evaluateStrategyCompliance(portfolio, strategy.allocations) : [];
+  const valuationAvailability = getPortfolioValuationAvailability(portfolio);
+  const canEvaluateAllocation = valuationAvailability.state === "AVAILABLE";
+  const comparisons = strategy && canEvaluateAllocation ? compareAllocationToStrategy(portfolio, strategy.allocations) : [];
+  const warnings = strategy && canEvaluateAllocation ? evaluateStrategyCompliance(portfolio, strategy.allocations) : [];
   const allocationByClass = new Map(portfolio.allocation.map((item) => [item.assetClass, item]));
   const contributionAmount = savedPlan ? serializeDecimal(savedPlan.contributionAmount) : "";
   let contributionProjection: ReturnType<typeof buildContributionProjection> | null = null;
-  if (strategy && contributionAmount && contributionAmount !== "0") {
+  if (strategy && canEvaluateAllocation && contributionAmount && contributionAmount !== "0") {
     try {
       contributionProjection = buildContributionProjection({ portfolio, assets, strategy: strategy.allocations, contributionAmount });
     } catch {
@@ -155,13 +168,26 @@ export async function getDashboardReadModel({
       incompleteDates: history.filter((point) => !point.isComplete).length,
       staleDates: history.filter((point) => point.hasStalePrices).length,
     },
-    allocation,
-    contribution: { amount: contributionAmount, projection: contributionProjection },
+    allocation: {
+      state: valuationAvailability.state,
+      reasonCodes: valuationAvailability.reasonCodes,
+      missingPriceSymbols: valuationAvailability.missingPriceSymbols,
+      rows: allocation,
+    },
+    contribution: {
+      amount: contributionAmount,
+      projection: contributionProjection,
+      state: canEvaluateAllocation ? "AVAILABLE" : "UNAVAILABLE",
+      reasonCodes: valuationAvailability.reasonCodes,
+      missingPriceSymbols: valuationAvailability.missingPriceSymbols,
+    },
     strategyStatus: {
-      state: !hasHoldings ? "EMPTY" : warnings.length > 0 ? "NEEDS_ATTENTION" : "STAY_CONSISTENT",
+      state: !hasHoldings ? "EMPTY" : !canEvaluateAllocation ? "UNAVAILABLE" : warnings.length > 0 ? "NEEDS_ATTENTION" : "STAY_CONSISTENT",
       strategyName: strategy?.name ?? null,
-      attentionCount: warnings.length,
-      totalClasses: comparisons.length,
+      attentionCount: canEvaluateAllocation ? warnings.length : null,
+      totalClasses: strategy?.allocations.length ?? 0,
+      reasonCodes: valuationAvailability.reasonCodes,
+      missingPriceSymbols: valuationAvailability.missingPriceSymbols,
     },
   };
 }

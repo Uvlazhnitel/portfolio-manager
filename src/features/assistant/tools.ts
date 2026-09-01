@@ -78,6 +78,12 @@ export async function executeAssistantTool(
   if (name === "explain_contribution_plan") {
     const parsed = explainContributionPlanToolSchema.parse(argumentsValue);
     if (!runtime.strategy) return unavailable("STRATEGY_NOT_CONFIGURED");
+    if (runtime.context.valuation.isPartial) {
+      return unavailable("INCOMPLETE_VALUATION", {
+        missingPriceSymbols: runtime.context.valuation.missingPriceSymbols,
+        reasonCodes: ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"],
+      });
+    }
     if (parsed.amount === null) {
       return runtime.context.latestContributionRecommendation
         ? { status: "AVAILABLE", currency: runtime.strategy.baseCurrency, ...runtime.context.latestContributionRecommendation }
@@ -98,6 +104,12 @@ export async function executeAssistantTool(
     const account = resolveScenarioAccount(runtime, asset.id, parsed.accountName);
     if ("reasonCode" in account) return unavailable(account.reasonCode, { accounts: account.candidates });
     if (runtime.marketPrices[asset.symbol] === undefined) return unavailable("MISSING_MARKET_PRICE", { symbol: asset.symbol });
+    if (runtime.context.valuation.isPartial) {
+      return unavailable("INCOMPLETE_VALUATION", {
+        missingPriceSymbols: runtime.context.valuation.missingPriceSymbols,
+        reasonCodes: ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"],
+      });
+    }
     let scenario: PortfolioScenarioResult;
     try {
       scenario = calculatePortfolioScenario({
@@ -135,7 +147,7 @@ function portfolioSummary(runtime: AssistantPortfolioRuntime) {
     baseCurrency: runtime.context.baseCurrency,
     valuation: runtime.context.valuation,
     allocation: runtime.context.allocation,
-    violations: runtime.context.violations,
+    strategyCompliance: runtime.context.strategyCompliance,
     holdings: runtime.context.holdings,
     accounts: runtime.context.accounts,
     marketData: runtime.context.marketData,

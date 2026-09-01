@@ -188,6 +188,40 @@ describe("assistant portfolio context and tools", () => {
     expect(missingPrice).toEqual(expect.objectContaining({ status: "UNAVAILABLE", reasonCodes: ["MISSING_MARKET_PRICE"] }));
   });
 
+  it("does not expose false allocation, compliance, plans, or scenarios for a partial valuation", async () => {
+    const partialRuntime = {
+      ...runtime,
+      context: {
+        ...runtime.context,
+        valuation: { ...runtime.context.valuation, isPartial: true, missingPriceSymbols: ["XAUT"] },
+        allocation: {
+          state: "PARTIAL" as const,
+          reasonCodes: ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"],
+          missingPriceSymbols: ["XAUT"],
+          items: [],
+        },
+        strategyCompliance: {
+          state: "UNAVAILABLE" as const,
+          reasonCodes: ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"],
+          missingPriceSymbols: ["XAUT"],
+          violations: [],
+        },
+        latestContributionRecommendation: null,
+      },
+    };
+    const summary = await executeAssistantTool("get_portfolio_summary", "{}", partialRuntime) as {
+      allocation: { state: string; items: unknown[] };
+      strategyCompliance: { state: string; violations: unknown[] };
+    };
+    const plan = await executeAssistantTool("explain_contribution_plan", JSON.stringify({ amount: "100" }), partialRuntime) as { status: string; reasonCodes: string[] };
+    const scenario = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "BTC", kind: "BUY", amount: "10", accountName: null }), partialRuntime) as { status: string; reasonCodes: string[] };
+
+    expect(summary.allocation).toEqual(expect.objectContaining({ state: "PARTIAL", items: [] }));
+    expect(summary.strategyCompliance).toEqual(expect.objectContaining({ state: "UNAVAILABLE", violations: [] }));
+    expect(plan).toEqual(expect.objectContaining({ status: "UNAVAILABLE", reasonCodes: ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"] }));
+    expect(scenario).toEqual(expect.objectContaining({ status: "UNAVAILABLE", reasonCodes: ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"] }));
+  });
+
   it("returns account candidates instead of guessing and supports safe scenarios", async () => {
     const ambiguousRuntime = {
       ...runtime,

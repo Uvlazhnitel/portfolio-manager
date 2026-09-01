@@ -4,6 +4,7 @@ import {
   calculatePortfolio,
   compareAllocationToStrategy,
   evaluateStrategyCompliance,
+  requireCompletePortfolioValuation,
 } from "@/features/portfolio-engine/engine";
 import { calculatePortfolioRisk } from "@/features/portfolio-engine/risk";
 import type {
@@ -24,6 +25,7 @@ export function calculatePortfolioScenario(input: CalculatePortfolioScenarioInpu
   if (!price.isFinite() || !price.greaterThan(ZERO)) throw new Error(`Current price must be greater than zero for ${asset.symbol}.`);
 
   const current = calculatePortfolio(input);
+  requireCompletePortfolioValuation(current);
   const quantity = amount.div(price);
   if (input.kind === "SELL") validateAccountSell(current, input.accountId, input.assetId, quantity, asset.symbol);
 

@@ -31,6 +31,7 @@ import type {
   PlanContributionInput,
   ProjectContributionInput,
   PortfolioSnapshot,
+  PortfolioValuationAvailability,
   PortfolioAnalytics,
   PortfolioPerformancePoint,
   PerformanceExclusionReason,
@@ -107,7 +108,7 @@ export function calculatePortfolio(input: CalculatePortfolioInput): PortfolioSna
     const rawPrice = input.marketPrices[asset.symbol];
     const price = rawPrice === undefined ? ZERO : decimal(rawPrice);
 
-    if (rawPrice === undefined) {
+    if (rawPrice === undefined && decimal(holding.quantity).greaterThan(ZERO)) {
       missingPriceSymbols.add(asset.symbol);
     }
 
@@ -133,6 +134,37 @@ export function calculatePortfolio(input: CalculatePortfolioInput): PortfolioSna
     allocation,
     missingPriceSymbols: Array.from(missingPriceSymbols).sort(),
   };
+}
+
+export class IncompletePortfolioValuationError extends Error {
+  readonly code = "INCOMPLETE_VALUATION" as const;
+  readonly reasonCodes = ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"] as const;
+
+  constructor(readonly missingPriceSymbols: string[]) {
+    super(`Portfolio valuation is incomplete. Missing prices: ${missingPriceSymbols.join(", ")}.`);
+    this.name = "IncompletePortfolioValuationError";
+  }
+}
+
+export function getPortfolioValuationAvailability(
+  portfolio: PortfolioSnapshot,
+): PortfolioValuationAvailability {
+  const missingPriceSymbols = [...new Set(portfolio.missingPriceSymbols)].sort();
+  const isPartial = missingPriceSymbols.length > 0;
+  return {
+    state: isPartial ? "PARTIAL" : "AVAILABLE",
+    exactPercentagesAvailable: !isPartial,
+    reasonCodes: isPartial ? ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"] : [],
+    missingPriceSymbols,
+  };
+}
+
+export function requireCompletePortfolioValuation(portfolio: PortfolioSnapshot) {
+  const availability = getPortfolioValuationAvailability(portfolio);
+  if (!availability.exactPercentagesAvailable) {
+    throw new IncompletePortfolioValuationError(availability.missingPriceSymbols);
+  }
+  return availability;
 }
 
 export function calculatePortfolioAnalytics(input: CalculatePortfolioAnalyticsInput): PortfolioAnalytics {
@@ -307,6 +339,7 @@ export function compareAllocationToStrategy(
   portfolio: PortfolioSnapshot,
   strategy: EngineStrategyAllocation[],
 ): AllocationComparison[] {
+  requireCompletePortfolioValuation(portfolio);
   validateStrategy(strategy);
 
   const currentByClass = new Map(portfolio.allocation.map((allocation) => [allocation.assetClass, allocation]));
@@ -364,6 +397,7 @@ export function evaluateStrategyCompliance(
 }
 
 export function planContribution(input: PlanContributionInput): ContributionPlan {
+  requireCompletePortfolioValuation(input.portfolio);
   validateStrategy(input.strategy);
   validateStrategyAssetAllocations(input.strategy, input.assets);
 
@@ -411,6 +445,7 @@ export function buildContributionProjection(input: PlanContributionInput): Contr
 }
 
 export function projectCustomContribution(input: ProjectContributionInput): ContributionProjection {
+  requireCompletePortfolioValuation(input.portfolio);
   validateStrategy(input.strategy);
   validateStrategyAssetAllocations(input.strategy, input.assets);
   const contributionAmount = requireMoney(input.contributionAmount, "Contribution amount");

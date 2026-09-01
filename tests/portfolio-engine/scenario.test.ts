@@ -1,6 +1,6 @@
 import { AccountType, AssetClass, AssetType, BasisMethod, TransactionType } from "@prisma/client";
 import { describe, expect, it } from "vitest";
-import { calculatePortfolioScenario, type CalculatePortfolioScenarioInput } from "@/features/portfolio-engine";
+import { calculatePortfolioScenario, IncompletePortfolioValuationError, type CalculatePortfolioScenarioInput } from "@/features/portfolio-engine";
 
 const input: CalculatePortfolioScenarioInput = {
   assets: [
@@ -47,17 +47,12 @@ describe("portfolio scenario engine", () => {
       .toThrow("selected account");
   });
 
-  it("preserves partial and stale states without calculating an alternative", () => {
-    const partial = calculatePortfolioScenario({
+  it("rejects scenarios when current valuation is partial", () => {
+    expect(() => calculatePortfolioScenario({
       ...input,
       hasStalePrices: true,
       assets: [...input.assets, { id: "gold", symbol: "GOLD", assetClass: AssetClass.GOLD, assetType: AssetType.OTHER }],
       transactions: [...input.transactions, { accountId: "exchange", assetId: "gold", type: TransactionType.BUY, quantity: "1", pricePerUnit: "10", currency: "USD" }],
-    });
-
-    expect(partial.currentRisk.state).toBe("PARTIAL");
-    expect(partial.projectedRisk.missingPriceSymbols).toContain("GOLD");
-    expect(partial.reasonCodes).toEqual(expect.arrayContaining(["PARTIAL_VALUATION", "STALE_PRICE_DATA"]));
-    expect(partial.maximumCompliantAmount).toBeNull();
+    })).toThrow(IncompletePortfolioValuationError);
   });
 });

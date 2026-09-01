@@ -182,6 +182,20 @@ function SummaryMetric({ label, value, tone = "default", muted = false, emphasis
 function StrategySummary({ portfolio }: PortfolioClientProps) {
   const status = portfolio.strategyStatus;
   if (!status) return null;
+  if (status.state === "UNAVAILABLE") {
+    return (
+      <Card className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs uppercase tracking-wide text-muted">Strategy · {status.name}</p>
+          <p className="mt-1 text-lg font-semibold text-foreground">Allocation unavailable</p>
+          <p className="mt-2 text-sm leading-5 text-muted">Missing prices for {status.missingPriceSymbols.join(", ")}. Current weights and strategy drift are hidden until valuation is complete.</p>
+        </div>
+        <Link href="/plan/strategy" className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-border px-3 text-sm font-medium text-muted transition hover:border-primary/50 hover:text-foreground">
+          Strategy <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </Card>
+    );
+  }
   const problemClasses = status.comparisons
     .filter((comparison) => comparison.status !== "IN_RANGE")
     .sort((a, b) => Math.abs(Number(b.currentPercent) - Number(b.targetPercent)) - Math.abs(Number(a.currentPercent) - Number(a.targetPercent)))
@@ -1017,7 +1031,7 @@ function preferredAccountId(accounts: PortfolioReadModel["accounts"], physicalGo
 function portfolioDataQualityItems(portfolio: PortfolioReadModel): DataQualityItem[] {
   const items: DataQualityItem[] = [];
   if (portfolio.valuation.isPartial) {
-    items.push({ message: "Partial valuation: at least one holding is missing a current price." });
+    items.push({ message: `Partial valuation: prices are missing for ${portfolio.valuation.missingPriceSymbols.join(", ")}. Portfolio weights and strategy compliance are unavailable.` });
   }
   if (portfolio.valuation.isCostBasisPartial) {
     items.push({ message: `Partial cost basis: net invested, gain, and return exclude ${portfolio.valuation.missingCostBasisSymbols.join(", ")}.` });

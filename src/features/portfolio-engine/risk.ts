@@ -1,12 +1,13 @@
 import { decimal, ONE_HUNDRED, toDecimalString, ZERO } from "@/features/portfolio-engine/decimal";
-import { evaluateStrategyCompliance } from "@/features/portfolio-engine/engine";
+import { evaluateStrategyCompliance, getPortfolioValuationAvailability } from "@/features/portfolio-engine/engine";
 import type { CalculatePortfolioRiskInput, EngineCustodianCategory, PortfolioRiskSnapshot, RiskExposure, RiskMetric, RiskReasonCode, RiskViolation } from "@/features/portfolio-engine/types";
 
 export function calculatePortfolioRisk(input: CalculatePortfolioRiskInput): PortfolioRiskSnapshot {
-  const missing = [...input.portfolio.missingPriceSymbols].sort();
+  const valuation = getPortfolioValuationAvailability(input.portfolio);
+  const missing = valuation.missingPriceSymbols;
   const total = decimal(input.portfolio.totalValue);
   const noValue = total.lessThanOrEqualTo(ZERO);
-  const incomplete = missing.length > 0;
+  const incomplete = valuation.state === "PARTIAL";
   const baseState = noValue ? "UNAVAILABLE" as const : incomplete ? "PARTIAL" as const : "OK" as const;
   const baseReasons: RiskReasonCode[] = noValue ? ["NO_VALUED_HOLDINGS"] : incomplete ? ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"] : [];
   if (input.hasStalePrices) baseReasons.push("STALE_PRICE_DATA");

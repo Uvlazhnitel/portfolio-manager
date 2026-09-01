@@ -163,7 +163,9 @@ function AllocationPanel({ dashboard }: { dashboard: DashboardReadModel }) {
   const status = dashboard.strategyStatus;
   const summary = status.state === "EMPTY"
     ? "No holdings yet"
-    : status.attentionCount > 0
+    : status.state === "UNAVAILABLE"
+      ? "Current allocation unavailable"
+    : (status.attentionCount ?? 0) > 0
       ? `${status.attentionCount} ${status.attentionCount === 1 ? "class needs" : "classes need"} attention`
       : "All classes within range";
 
@@ -174,11 +176,16 @@ function AllocationPanel({ dashboard }: { dashboard: DashboardReadModel }) {
           Edit strategy <ArrowRight className="h-4 w-4" aria-hidden="true" />
         </Link>
       </SectionHeading>
-      <p className={cn("mt-3 text-sm", status.attentionCount > 0 ? "text-warning" : "text-muted")}>{summary}</p>
+      <p className={cn("mt-3 text-sm", status.state === "UNAVAILABLE" || (status.attentionCount ?? 0) > 0 ? "text-warning" : "text-muted")}>{summary}</p>
 
-      {dashboard.allocation.length > 0 ? (
+      {dashboard.allocation.state === "PARTIAL" ? (
+        <div className="mt-6 border-y border-border py-10 text-center">
+          <p className="font-medium text-foreground">Exact percentages are hidden</p>
+          <p className="mx-auto mt-2 max-w-lg text-sm leading-5 text-muted">Prices are unavailable for {dashboard.allocation.missingPriceSymbols.join(", ")}. Strategy drift and compliance will return when valuation is complete.</p>
+        </div>
+      ) : dashboard.allocation.rows.length > 0 ? (
         <div className="mt-6 divide-y divide-border">
-          {dashboard.allocation.map((item) => <AllocationRow key={item.assetClass} item={item} currency={dashboard.valuation.currency} />)}
+          {dashboard.allocation.rows.map((item) => <AllocationRow key={item.assetClass} item={item} currency={dashboard.valuation.currency} />)}
         </div>
       ) : (
         <div className="mt-6 border-t border-border py-12 text-center text-sm text-muted">Configure an active strategy to compare allocation targets.</div>
@@ -187,7 +194,7 @@ function AllocationPanel({ dashboard }: { dashboard: DashboardReadModel }) {
   );
 }
 
-function AllocationRow({ item, currency }: { item: DashboardReadModel["allocation"][number]; currency: string }) {
+function AllocationRow({ item, currency }: { item: DashboardReadModel["allocation"]["rows"][number]; currency: string }) {
   const current = clampPercent(item.currentPercent);
   const target = clampPercent(item.targetPercent);
   const driftSign = decimalSign(item.driftPercent) ?? 0;
@@ -219,7 +226,7 @@ function AllocationRow({ item, currency }: { item: DashboardReadModel["allocatio
 }
 
 function ContributionPanel({ dashboard }: { dashboard: DashboardReadModel }) {
-  const { amount, projection } = dashboard.contribution;
+  const { amount, projection, state, missingPriceSymbols } = dashboard.contribution;
   const recommendations = projection?.plan.assetRecommendations ?? [];
   const visibleRecommendations = recommendations.slice(0, 3);
   const remaining = recommendations.length - visibleRecommendations.length;
@@ -229,7 +236,12 @@ function ContributionPanel({ dashboard }: { dashboard: DashboardReadModel }) {
     <Card className="order-2 min-w-0 xl:col-start-2 xl:row-start-2">
       <SectionHeading eyebrow="Saved plan" title="Next contribution" icon={<TrendingUp className="h-5 w-5" />} />
 
-      {amount && projection ? (
+      {state === "UNAVAILABLE" ? (
+        <div className="mt-6 border-y border-border py-10">
+          <p className="font-medium">Recommendation unavailable</p>
+          <p className="mt-2 text-sm leading-5 text-muted">Missing prices for {missingPriceSymbols.join(", ")}. The saved amount is preserved, but no buy list is calculated.</p>
+        </div>
+      ) : amount && projection ? (
         <>
           <p className="mt-6 text-3xl font-semibold">{formatCurrency(projection.plan.contributionAmount, dashboard.valuation.currency)}</p>
           <div className="mt-5 divide-y divide-border border-y border-border">
@@ -299,7 +311,7 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   return <span className="flex items-center gap-1.5"><span className={cn("h-2 w-2 rounded-full", color)} />{label}</span>;
 }
 
-function StatusLabel({ status }: { status: DashboardReadModel["allocation"][number]["status"] }) {
+function StatusLabel({ status }: { status: DashboardReadModel["allocation"]["rows"][number]["status"] }) {
   const label = status === "IN_RANGE" ? "In range" : status === "OVERWEIGHT" ? "Overweight" : "Underweight";
   const tone = status === "IN_RANGE" ? "success" : status === "OVERWEIGHT" ? "destructive" : "warning";
   return <Badge tone={tone}>{label}</Badge>;

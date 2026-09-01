@@ -109,6 +109,15 @@ export type PortfolioSnapshot = {
   missingPriceSymbols: string[];
 };
 
+export type PortfolioValuationReasonCode = "INCOMPLETE_VALUATION" | "MISSING_MARKET_PRICE";
+
+export type PortfolioValuationAvailability = {
+  state: "AVAILABLE" | "PARTIAL";
+  exactPercentagesAvailable: boolean;
+  reasonCodes: PortfolioValuationReasonCode[];
+  missingPriceSymbols: string[];
+};
+
 export type CalculatePortfolioInput = {
   assets: EngineAsset[];
   transactions: EngineTransaction[];

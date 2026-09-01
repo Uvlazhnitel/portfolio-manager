@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { previewContribution } from "@/features/contributions/read-model";
 import { ContributionPlanService } from "@/features/contributions/service";
 import type { ContributionPreviewInput, SaveContributionPlanInput } from "@/features/contributions/validation";
+import { IncompletePortfolioValuationError } from "@/features/portfolio-engine";
 import { publicErrorMessage } from "@/lib/public-error";
 
 export async function previewContributionAction(input: ContributionPreviewInput) {
@@ -16,6 +17,13 @@ export async function previewContributionAction(input: ContributionPreviewInput)
 
 export async function saveContributionPlanAction(input: SaveContributionPlanInput) {
   try {
+    const preview = await previewContribution({
+      contributionAmount: input.contributionAmount,
+      allocations: input.allocations,
+    });
+    if (preview.availability.state === "UNAVAILABLE") {
+      throw new IncompletePortfolioValuationError(preview.availability.missingPriceSymbols);
+    }
     const saved = await new ContributionPlanService().save(input);
     revalidatePath("/plan/contributions");
     revalidatePath("/dashboard");
