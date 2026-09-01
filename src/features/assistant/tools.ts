@@ -13,7 +13,7 @@ export const assistantToolDefinitions: Responses.Tool[] = [
   tool("get_strategy", "Return the saved long-term strategy, allocation targets, ranges, and portfolio rules."),
   tool("get_daily_brief", "Return the existing deterministic Daily Brief. Use it for questions about what changed since the previous complete daily observation."),
   tool("get_risk_snapshot", "Return the shared deterministic Risk Engine snapshot. Use it for every portfolio risk, concentration, custody, or crypto exposure question."),
-  tool("get_performance_summary", "Return deterministic Performance metrics and compact benchmark results. Use it for P&L, TWR, XIRR, YTD, 1Y, drawdown, or benchmark questions."),
+  tool("get_performance_summary", "Return deterministic Performance metrics and compact benchmark results. Use it for P&L, cashflow-adjusted return, XIRR, YTD, 1Y, drawdown, or benchmark questions."),
   {
     type: "function",
     name: "explain_contribution_plan",
@@ -29,7 +29,7 @@ export const assistantToolDefinitions: Responses.Tool[] = [
   {
     type: "function",
     name: "simulate_scenario",
-    description: "Run a deterministic read-only EXTERNAL_BUY, SELL, CONTRIBUTION, or TRADE scenario. Use TRADE only when the user names an existing funding asset. If funding source is unclear, ask whether it is new money or an existing portfolio reallocation.",
+    description: "Run a deterministic read-only EXTERNAL_BUY, SELL, CONTRIBUTION, or TRADE scenario. External buys/contributions need a destination account when multiple accounts exist. Use TRADE only when the user names an existing funding asset.",
     strict: true,
     parameters: {
       type: "object",
@@ -151,7 +151,7 @@ export async function executeAssistantTool(
       return scenarioOutput(scenario, account.destination.name, runtime);
     }
 
-    const account = resolveScenarioAccount(runtime, asset.id, parsed.accountName);
+    const account = resolveScenarioAccount(runtime, asset.id, parsed.accountName, parsed.kind);
     if ("reasonCode" in account) return unavailable(account.reasonCode, { accounts: account.candidates });
     if (runtime.marketPrices[asset.symbol] === undefined) return unavailable("MISSING_MARKET_PRICE", { symbol: asset.symbol });
     let scenario: PortfolioScenarioResult;
@@ -333,11 +333,14 @@ function scenarioOutput(scenario: PortfolioScenarioResult, accountName: string, 
   };
 }
 
-function resolveScenarioAccount(runtime: AssistantPortfolioRuntime, assetId: string, requestedName: string | null) {
+function resolveScenarioAccount(runtime: AssistantPortfolioRuntime, assetId: string, requestedName: string | null, kind: "BUY" | "EXTERNAL_BUY" | "SELL" | "CONTRIBUTION") {
   const candidates = runtime.accounts.map((account) => ({ id: account.id, name: account.name, type: account.type, custodian: account.custodian?.name ?? null }));
   if (requestedName) {
     const matches = candidates.filter((account) => account.name.toLocaleLowerCase() === requestedName.toLocaleLowerCase());
     return matches.length === 1 ? matches[0] : { reasonCode: matches.length === 0 ? "ACCOUNT_NOT_FOUND" : "ACCOUNT_REQUIRED", candidates };
+  }
+  if (kind !== "SELL") {
+    return candidates.length === 1 ? candidates[0] : { reasonCode: "ACCOUNT_REQUIRED", candidates };
   }
   const holdingAccountIds = new Set(runtime.portfolio.holdings.filter((holding) => holding.assetId === assetId).map((holding) => holding.accountId));
   const holdingAccounts = candidates.filter((account) => holdingAccountIds.has(account.id));

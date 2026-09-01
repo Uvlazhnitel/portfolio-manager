@@ -80,7 +80,7 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
       </div>
 
       <div className="grid gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-2 xl:grid-cols-5">
-        <AdvancedMetric label="TWR" metric={advanced.twr} />
+        <AdvancedMetric label="Cashflow-adjusted return" metric={advanced.twr} />
         <AdvancedMetric label="XIRR (annualized)" metric={advanced.xirr} />
         <AdvancedMetric label="YTD" metric={advanced.ytdReturn} />
         <AdvancedMetric label="1Y" metric={advanced.oneYearReturn} />
@@ -153,7 +153,7 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
         <DetailMetric label="Gift tracking basis" value={formatDecimalCurrency(summary.giftTrackingBasis, currency)} />
         <DetailMetric label="Tracked capital (covered)" value={formatDecimalCurrency(summary.trackedCapital, currency)} />
       </div>
-      <p className="text-sm leading-6 text-muted">Net invested is BUY cost plus fees minus SELL proceeds after fees. Internal trades and transfers, deposits, withdrawals, gifts, and opening balances do not change it. TWR removes deposits and withdrawals; XIRR uses their actual dates. Opening and gift basis remain separate.</p>
+      <p className="text-sm leading-6 text-muted">Net invested is BUY cost plus fees minus SELL proceeds after fees. Internal trades and transfers, deposits, withdrawals, gifts, and opening balances do not change it. Cashflow-adjusted return removes daily deposits and withdrawals using day-level observations; it is not strict intraday TWR. XIRR uses actual cashflow dates. Opening and gift basis remain separate.</p>
     </div>
   );
 }
@@ -246,7 +246,7 @@ function PeriodPnlSummary({
             <PnlIndicator value={period.amount} format="currency" currency={currency} size="lg" variant="text" />
           </div>
           <div>
-            <p className="text-[11px] text-muted">TWR</p>
+            <p className="text-[11px] text-muted">Return</p>
             <PnlIndicator value={period.returnPercent} format="percent" size="lg" variant="text" />
           </div>
         </div>
@@ -300,7 +300,7 @@ function performanceDataQualityItems(performance: PerformanceReadModel): DataQua
   if (summary.openingBasisUnknownSymbols.length > 0) items.push({ message: `Opening basis is unknown for: ${summary.openingBasisUnknownSymbols.join(", ")}. Valuation is retained, but those components are excluded from gain and return.` });
   if (summary.isExternalCashflowPartial) items.push({ message: `External cashflow totals are partial: ${summary.missingExternalCashflowSymbols.join(", ")} has missing acquisition data.` });
   const unavailableByReason = new Map<AdvancedMetricUnavailableReason, string[]>();
-  for (const [label, metric] of [["TWR", advanced.twr], ["XIRR", advanced.xirr], ["YTD", advanced.ytdReturn], ["1Y", advanced.oneYearReturn], ["Max drawdown", advanced.maxDrawdown]] as const) {
+  for (const [label, metric] of [["Cashflow-adjusted return", advanced.twr], ["XIRR", advanced.xirr], ["YTD", advanced.ytdReturn], ["1Y", advanced.oneYearReturn], ["Max drawdown", advanced.maxDrawdown]] as const) {
     if (!metric.unavailableReason) continue;
     unavailableByReason.set(metric.unavailableReason, [...(unavailableByReason.get(metric.unavailableReason) ?? []), label]);
   }

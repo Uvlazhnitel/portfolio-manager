@@ -1,4 +1,4 @@
-import { AccountType, AssetClass, AssetType, AssistantMessageRole, AssistantMessageStatus, BasisMethod, Prisma, TransactionType, type CachedMarketPrice } from "@prisma/client";
+import { AccountType, AssetClass, AssetType, AssistantMessageRole, AssistantMessageStatus, BasisMethod, CustodianCategory, Prisma, TransactionType, type CachedMarketPrice } from "@prisma/client";
 import type OpenAI from "openai";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AssistantRepository } from "@/features/assistant/repository";
@@ -251,6 +251,40 @@ describe("assistant portfolio context and tools", () => {
     expect(ambiguous.accounts.map((account) => account.name)).toEqual(["Main broker", "Other broker"]);
     expect(safe.newWarnings).toEqual([]);
     expect(safe.alternatives).toBeNull();
+  });
+
+  it("requires a destination account for external buys when multiple accounts exist", async () => {
+    const now = new Date("2026-08-25T10:00:00Z");
+    const ledger = {
+      ...runtime.accounts[0],
+      name: "Ledger",
+      type: AccountType.WALLET,
+      custodian: { id: "ledger-custodian", name: "Ledger", category: CustodianCategory.SELF_CUSTODY, description: null, createdAt: now, updatedAt: now },
+    };
+    const bybit = {
+      ...runtime.accounts[0],
+      id: "bybit-account",
+      name: "Bybit",
+      type: AccountType.EXCHANGE,
+      custodian: { id: "bybit-custodian", name: "Bybit", category: CustodianCategory.EXCHANGE, description: null, createdAt: now, updatedAt: now },
+    };
+    const multiAccountRuntime = {
+      ...runtime,
+      accounts: [ledger, bybit],
+    };
+
+    const sell = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "BTC", kind: "SELL", amount: "10", accountName: null }), multiAccountRuntime) as unknown as { accountName: string; projectedPortfolioValue: string };
+    const buy = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "BTC", kind: "EXTERNAL_BUY", amount: "10", accountName: null, sourceSymbol: null, sourceAccountName: null, destinationAccountName: null, fee: null }), multiAccountRuntime) as { status: string; reasonCodes: string[]; accounts: Array<{ name: string }> };
+    const contribution = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "BTC", kind: "CONTRIBUTION", amount: "10", accountName: null, sourceSymbol: null, sourceAccountName: null, destinationAccountName: null, fee: null }), multiAccountRuntime) as { status: string; reasonCodes: string[] };
+    const explicitBuy = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "BTC", kind: "EXTERNAL_BUY", amount: "10", accountName: "Bybit", sourceSymbol: null, sourceAccountName: null, destinationAccountName: null, fee: null }), multiAccountRuntime) as unknown as { accountName: string; riskAfter: { exchangeExposure: { subjectName: string | null; valuePercent: string | null } } };
+
+    expect(sell.accountName).toBe("Ledger");
+    expect(sell.projectedPortfolioValue).toBe("990.00");
+    expect(buy).toEqual(expect.objectContaining({ status: "UNAVAILABLE", reasonCodes: ["ACCOUNT_REQUIRED"] }));
+    expect(buy.accounts.map((account) => account.name)).toEqual(["Ledger", "Bybit"]);
+    expect(contribution).toEqual(expect.objectContaining({ status: "UNAVAILABLE", reasonCodes: ["ACCOUNT_REQUIRED"] }));
+    expect(explicitBuy.accountName).toBe("Bybit");
+    expect(explicitBuy.riskAfter.exchangeExposure).toEqual(expect.objectContaining({ subjectName: "EXCHANGE", valuePercent: "0.99" }));
   });
 
   it("explains saved and class-only contribution plans without inventing asset targets", async () => {

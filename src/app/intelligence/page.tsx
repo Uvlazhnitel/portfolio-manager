@@ -66,7 +66,7 @@ export default async function IntelligencePage() {
             <Metric label="Portfolio value" value={moneyOrUnavailable(brief.currentValue, currency)} prominent />
             <Metric label="Value change" value={signedMoneyOrUnavailable(brief.portfolioValueChange, currency)} tone={toneFor(brief.portfolioValueChange)} />
             <Metric label="Daily gain / loss" value={signedMoneyOrUnavailable(brief.dailyGain, currency)} tone={toneFor(brief.dailyGain)} prominent />
-            <Metric label="Daily return" value={signedPercentOrUnavailable(brief.dailyReturnPercent)} tone={toneFor(brief.dailyReturnPercent)} prominent />
+            <Metric label="Cashflow-adjusted return" value={signedPercentOrUnavailable(brief.dailyReturnPercent)} tone={toneFor(brief.dailyReturnPercent)} prominent />
           </div>
         </Card>
 
@@ -81,7 +81,7 @@ export default async function IntelligencePage() {
                 <SmallMetric label="External withdrawals" value={formatDecimalCurrency(brief.externalWithdrawals ?? "0", currency)} />
               </div>
             )}
-            <p className="mt-4 text-xs leading-5 text-muted">Daily gain removes external deposits and withdrawals from the change in portfolio value.</p>
+            <p className="mt-4 text-xs leading-5 text-muted">Daily gain removes external deposits and withdrawals from the change in portfolio value using day-level observations, so large same-day cashflows can affect interpretation.</p>
           </Card>
 
           <Card className="min-w-0">
@@ -96,6 +96,7 @@ export default async function IntelligencePage() {
                 <ContributorList title="Negative" contributors={brief.negativeContributors} currency={currency} />
               </div>
             )}
+            <p className="mt-4 text-xs leading-5 text-muted">Contributor ranking covers price movement on holdings present at the previous observation; same-day purchases from new external cashflow may affect daily gain without appearing here.</p>
           </Card>
         </div>
 
