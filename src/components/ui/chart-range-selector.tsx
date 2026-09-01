@@ -3,6 +3,7 @@
 import { cn } from "@/lib/utils";
 
 export const chartRangeOptions = [
+  { value: "1D", label: "1D" },
   { value: "7D", label: "7D" },
   { value: "1M", label: "1M" },
   { value: "3M", label: "3M" },
@@ -63,9 +64,9 @@ export function ChartRangeSelector({
 
 function subtractRange(latestTime: number, range: Exclude<ChartRange, "ALL">) {
   const latestDate = new Date(latestTime);
-  if (range === "7D") {
+  if (range === "1D" || range === "7D") {
     const cutoff = new Date(latestTime);
-    cutoff.setUTCDate(cutoff.getUTCDate() - 7);
+    cutoff.setUTCDate(cutoff.getUTCDate() - (range === "1D" ? 1 : 7));
     return cutoff.getTime();
   }
   if (range === "1M") return Date.UTC(latestDate.getUTCFullYear(), latestDate.getUTCMonth() - 1, latestDate.getUTCDate());

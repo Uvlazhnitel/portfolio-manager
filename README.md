@@ -42,6 +42,8 @@ The Performance screen keeps trading capital, external cashflows, opening basis,
 
 TWR chains UTC daily subperiod returns and removes contributions and withdrawals from each interval. XIRR uses Actual/365 dated cashflows, the first complete daily valuation as its opening boundary, and the current portfolio value as its terminal value. To avoid misleading annualization over a few days, XIRR remains unavailable until the covered period reaches 30 calendar days. YTD uses the latest observation on or before the prior 31 December; 1Y uses the latest observation on or before the clamped one-year UTC boundary. Metrics return an explicit unavailable reason when history, valuation, cashflow, or numerical coverage is insufficient.
 
+Period P&L is available for `1D`, `7D`, `1M`, `3M`, `1Y`, and all tracked history. Its money value is the change in deterministic Investment gain between the period anchors, so realized sales remain included while external cashflows and internal reallocations stay neutral. Its percentage is TWR over the same observations. `1D` means the two latest daily observations, and longer periods remain unavailable until a boundary observation exists.
+
 The active strategy may reference one benchmark asset. The default strategy uses VWCE, but Performance can select any existing asset. Portfolio and benchmark comparison is normalized to 100 over their common observations; benchmark prices continue through the provider-independent market-data cache and daily history. A dedicated Docker worker stores one price observation per asset and UTC day from activation onward. Earlier portfolio or benchmark prices are never estimated or backfilled.
 
 ## Development setup

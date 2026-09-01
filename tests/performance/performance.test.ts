@@ -1,4 +1,4 @@
-import { AccountType, AssetClass, AssetType, Prisma, TransactionType, type DailyMarketPrice } from "@prisma/client";
+import { AccountType, AssetClass, AssetType, Prisma, TransactionGroupKind, TransactionType, type DailyMarketPrice } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { MarketDataService } from "@/features/market-data/service";
 import { captureDailyMarketPrices } from "@/features/performance/capture";
@@ -6,6 +6,7 @@ import { getPerformanceReadModel } from "@/features/performance/read-model";
 import { DailyMarketPriceRepository, type DailyMarketPriceStore } from "@/features/performance/repository";
 import { HISTORY_RETRY_DELAY_MS, millisecondsUntilNextCapture, runHistoryWorker } from "@/features/performance/worker";
 import {
+  calculateAdvancedPerformance,
   calculateHistoricalPerformance,
   type EngineAsset,
   type EngineTransaction,
@@ -164,6 +165,65 @@ describe("historical performance engine", () => {
       trackedCapital: "1010.00",
       trackedCapitalReturnPercent: "28.51",
     }));
+  });
+
+  it("keeps profitable sells and transfers correct in period money P&L", () => {
+    const periodTransactions: EngineTransaction[] = [
+      assetTransaction("buy", TransactionType.BUY, "0.1", "2026-08-01T10:00:00Z"),
+      { ...assetTransaction("transfer-out", TransactionType.TRANSFER_OUT, "0.1", "2026-08-02T10:00:00Z"), pricePerUnit: null },
+      { ...assetTransaction("transfer-in", TransactionType.TRANSFER_IN, "0.1", "2026-08-02T10:00:00Z", "wallet"), pricePerUnit: null },
+      { ...assetTransaction("sell", TransactionType.SELL, "0.05", "2026-08-03T10:00:00Z", "wallet"), pricePerUnit: "12000" },
+    ];
+    const history = calculateHistoricalPerformance({
+      assets,
+      transactions: periodTransactions,
+      baseCurrency: "USD",
+      snapshots: [snapshot("2026-08-01", "11000"), snapshot("2026-08-02", "11000"), snapshot("2026-08-03", "12000")],
+    });
+    const advanced = calculateAdvancedPerformance({
+      assets,
+      transactions: periodTransactions,
+      baseCurrency: "USD",
+      history: history.slice(0, -1).map(advancedObservation),
+      current: advancedObservation(history.at(-1)!),
+      asOf: "2026-08-03T12:00:00Z",
+      benchmark: null,
+    });
+
+    expect(history.map((point) => point.investmentGain)).toEqual(["100.00", "100.00", "200.00"]);
+    expect(advanced.periodPnl.ALL.amount).toBe("100.00");
+  });
+
+  it("keeps an internal grouped trade neutral in period money P&L", () => {
+    const usdt: EngineAsset = { id: "usdt", symbol: "USDT", name: "Tether", assetClass: AssetClass.CASH, assetType: AssetType.STABLECOIN, currency: "USDT" };
+    const group = { kind: TransactionGroupKind.TRADE };
+    const periodTransactions: EngineTransaction[] = [
+      { id: "opening", assetId: usdt.id, accountId: "exchange", type: TransactionType.INITIAL_BALANCE, quantity: "500", pricePerUnit: "1", currency: "USD", executedAt: "2026-08-01T10:00:00Z" },
+      { id: "sell", assetId: usdt.id, accountId: "exchange", type: TransactionType.SELL, quantity: "500", pricePerUnit: "1", currency: "USD", executedAt: "2026-08-02T10:00:00Z", transactionGroupId: "trade", transactionGroup: group },
+      { id: "buy", assetId: "btc", accountId: "exchange", type: TransactionType.BUY, quantity: "0.05", pricePerUnit: "10000", currency: "USD", executedAt: "2026-08-02T10:00:00Z", transactionGroupId: "trade", transactionGroup: group },
+    ];
+    const tradeAssets = [...assets, usdt];
+    const history = calculateHistoricalPerformance({
+      assets: tradeAssets,
+      transactions: periodTransactions,
+      baseCurrency: "USD",
+      snapshots: [
+        { date: "2026-08-01", marketPrices: { BTC: "10000", USD: "1", USDT: "1" }, hasStalePrices: false },
+        { date: "2026-08-02", marketPrices: { BTC: "10000", USD: "1", USDT: "1" }, hasStalePrices: false },
+      ],
+    });
+    const advanced = calculateAdvancedPerformance({
+      assets: tradeAssets,
+      transactions: periodTransactions,
+      baseCurrency: "USD",
+      history: [advancedObservation(history[0])],
+      current: advancedObservation(history[1]),
+      asOf: "2026-08-02T12:00:00Z",
+      benchmark: null,
+    });
+
+    expect(history.map((point) => point.investmentGain)).toEqual(["0.00", "0.00"]);
+    expect(advanced.periodPnl["1D"]).toEqual(expect.objectContaining({ amount: "0.00", returnPercent: "0.00" }));
   });
 });
 
@@ -367,6 +427,10 @@ describe("performance read model", () => {
     expect(model.trackingStartedAt).toBe("2026-08-26");
     expect(model.benchmark).toEqual(expect.objectContaining({ strategyId: "strategy", selectedAssetId: assetRows[0].id }));
     expect(model.advanced.twr.unavailableReason).toBe("INSUFFICIENT_HISTORY");
+    expect(model.advanced.periodPnl["1D"]).toEqual(expect.objectContaining({
+      state: "UNAVAILABLE",
+      unavailableReasons: ["INSUFFICIENT_HISTORY"],
+    }));
   });
 });
 
@@ -374,3 +438,4 @@ function snapshot(date: string, btcPrice: string) { return { date, marketPrices:
 function cashTransaction(id: string, type: TransactionType, quantity: string, executedAt: string): EngineTransaction { return { id, assetId: "usd", accountId: "bank", type, quantity, pricePerUnit: "1", currency: "USD", executedAt }; }
 function assetTransaction(id: string, type: TransactionType, quantity: string, executedAt: string, accountId = "exchange"): EngineTransaction { return { id, assetId: "btc", accountId, type, quantity, pricePerUnit: type === TransactionType.BUY || type === TransactionType.SELL ? "10000" : null, currency: "USD", executedAt }; }
 function dailyPrice(assetId: string, price: string, timestamp: Date): DailyMarketPrice { return { id: `daily-${assetId}`, assetId, currency: "USD", date: new Date("2026-08-26T00:00:00Z"), price: new Prisma.Decimal(price), source: "TEST", quoteTimestamp: timestamp, capturedAt: timestamp, isStaleAtCapture: false, createdAt: timestamp, updatedAt: timestamp }; }
+function advancedObservation(point: ReturnType<typeof calculateHistoricalPerformance>[number]) { return { date: point.date, portfolioValue: point.portfolioValue, investmentGain: point.investmentGain, externalContributions: point.externalContributions, externalWithdrawals: point.externalWithdrawals, performanceExclusions: point.performanceExclusions, isComplete: point.isComplete, hasStalePrices: point.hasStalePrices }; }

@@ -259,13 +259,14 @@ describe("assistant portfolio context and tools", () => {
     const services = deterministicToolServices();
     const daily = await executeAssistantTool("get_daily_brief", "{}", runtime, services) as unknown as { status: string; dailyGain: string; reasonCodes: string[]; dataQuality: { isStale: boolean } };
     const risk = await executeAssistantTool("get_risk_snapshot", "{}", runtime, services) as unknown as { risk: { state: string }; dataQuality: { state: string } };
-    const performance = await executeAssistantTool("get_performance_summary", "{}", runtime, services) as unknown as { metrics: { xirr: { unavailableReason: string } }; dataQuality: { isPartial: boolean; staleDates: number } };
+    const performance = await executeAssistantTool("get_performance_summary", "{}", runtime, services) as unknown as { metrics: { xirr: { unavailableReason: string }; periodPnl: { "1D": { amount: string } } }; dataQuality: { isPartial: boolean; staleDates: number } };
 
     expect(daily).toEqual(expect.objectContaining({ status: "NO_ACTION", dailyGain: "12.34", reasonCodes: ["NO_MEANINGFUL_STRATEGY_CHANGE"] }));
     expect(daily.dataQuality.isStale).toBe(true);
     expect(risk.risk).toBe(runtime.context.risk);
     expect(risk.dataQuality.state).toBe("PARTIAL");
     expect(performance.metrics.xirr.unavailableReason).toBe("XIRR_PERIOD_TOO_SHORT");
+    expect(performance.metrics.periodPnl["1D"].amount).toBe("12.34");
     expect(performance.dataQuality).toEqual(expect.objectContaining({ isPartial: true, staleDates: 1 }));
   });
 });
@@ -357,6 +358,7 @@ function responseWithToolCall() {
 function deterministicToolServices(): AssistantToolServices {
   const metric = (value: string | null, unavailableReason: string | null = null) => ({ value, startDate: "2026-08-01", endDate: "2026-08-02", isStale: true, unavailableReason });
   const comparison = { points: [], startDate: null, endDate: null, isPartial: true, isStale: true, unavailableReason: "MISSING_BENCHMARK_PRICES" };
+  const periodPnl = { amount: "12.34", returnPercent: "1.23", state: "AVAILABLE", startDate: "2026-08-01", endDate: "2026-08-02", isStale: true, excludedSymbols: [], unavailableReasons: [] };
   return {
     getDailyBrief: async () => ({
       currency: "EUR",
@@ -402,7 +404,8 @@ function deterministicToolServices(): AssistantToolServices {
         ytdReturn: metric(null, "INSUFFICIENT_HISTORY"),
         oneYearReturn: metric(null, "INSUFFICIENT_HISTORY"),
         maxDrawdown: metric("-1.00"),
-        comparisons: { "7D": comparison, "1M": comparison, "3M": comparison, "1Y": comparison, ALL: comparison },
+        periodPnl: { "1D": periodPnl, "7D": periodPnl, "1M": periodPnl, "3M": periodPnl, "1Y": periodPnl, ALL: periodPnl },
+        comparisons: { "1D": comparison, "7D": comparison, "1M": comparison, "3M": comparison, "1Y": comparison, ALL: comparison },
       },
       benchmark: { strategyId: null, selectedAssetId: null, selectedSymbol: null, selectedName: null, options: [] },
       trackingStartedAt: null,

@@ -9,6 +9,8 @@ import type {
   BenchmarkComparison,
   BenchmarkPerformanceObservation,
   CalculateAdvancedPerformanceInput,
+  PeriodPerformance,
+  PeriodPerformanceUnavailableReason,
   PerformanceRange,
 } from "@/features/portfolio-engine/types";
 
@@ -32,8 +34,14 @@ export function calculateAdvancedPerformance(input: CalculateAdvancedPerformance
     ytdReturn: ytdHistory ? calculateTwr(ytdHistory) : unavailable("INSUFFICIENT_HISTORY"),
     oneYearReturn: oneYearHistory ? calculateTwr(oneYearHistory) : unavailable("INSUFFICIENT_HISTORY"),
     maxDrawdown: calculateMaxDrawdown(fullHistory),
+    periodPnl: Object.fromEntries(
+      (["1D", "7D", "1M", "3M", "1Y", "ALL"] as const).map((range) => [
+        range,
+        calculatePeriodPerformance(observations, range),
+      ]),
+    ) as AdvancedPerformance["periodPnl"],
     comparisons: Object.fromEntries(
-      (["7D", "1M", "3M", "1Y", "ALL"] as const).map((range) => [
+      (["1D", "7D", "1M", "3M", "1Y", "ALL"] as const).map((range) => [
         range,
         calculateBenchmarkComparison(observations, input.benchmark, range),
       ]),
@@ -43,14 +51,66 @@ export function calculateAdvancedPerformance(input: CalculateAdvancedPerformance
 
 export function performanceRangeCutoff(latestDate: string, range: Exclude<PerformanceRange, "ALL">) {
   const latest = parseDate(latestDate);
-  if (range === "7D") {
-    latest.setUTCDate(latest.getUTCDate() - 7);
+  if (range === "1D" || range === "7D") {
+    latest.setUTCDate(latest.getUTCDate() - (range === "1D" ? 1 : 7));
     return formatDate(latest);
   }
   if (range === "1M" || range === "3M") {
     return formatDate(subtractUtcMonthsClamped(latest, range === "1M" ? 1 : 3));
   }
   return formatDate(subtractUtcYearClamped(latest));
+}
+
+export function calculatePeriodPerformance(
+  observationsInput: AdvancedPerformanceObservation[],
+  range: PerformanceRange,
+): PeriodPerformance {
+  const observations = observationsForRange(
+    [...observationsInput].sort(compareObservations),
+    range,
+  );
+  if (!observations) return unavailablePeriod("INSUFFICIENT_HISTORY");
+
+  const returnMetric = calculateTwr(observations);
+  const unavailableReasons = new Set<PeriodPerformanceUnavailableReason>();
+  if (returnMetric.unavailableReason && isPeriodUnavailableReason(returnMetric.unavailableReason)) {
+    unavailableReasons.add(returnMetric.unavailableReason);
+  }
+
+  const first = observations[0];
+  const last = observations.at(-1)!;
+  const exclusionSignatures = new Set(observations.map(performanceExclusionSignature));
+  const excludedSymbols = [...new Set(
+    observations.flatMap((point) => point.performanceExclusions.map((item) => item.symbol)),
+  )].sort();
+  let amount: string | null = null;
+
+  if (first.investmentGain === null || last.investmentGain === null) {
+    unavailableReasons.add("INCOMPLETE_COST_BASIS");
+  } else if (exclusionSignatures.size > 1) {
+    unavailableReasons.add("INCONSISTENT_PERFORMANCE_COVERAGE");
+  } else {
+    amount = toDecimalString(decimal(last.investmentGain).minus(first.investmentGain));
+    if (excludedSymbols.length > 0) unavailableReasons.add("INCOMPLETE_COST_BASIS");
+  }
+
+  const returnPercent = returnMetric.value;
+  const state = amount === null && returnPercent === null
+    ? "UNAVAILABLE"
+    : unavailableReasons.size > 0
+      ? "PARTIAL"
+      : "AVAILABLE";
+
+  return {
+    amount,
+    returnPercent,
+    state,
+    startDate: first.date,
+    endDate: last.date,
+    isStale: observations.some((point) => point.hasStalePrices),
+    excludedSymbols,
+    unavailableReasons: [...unavailableReasons],
+  };
 }
 
 function calculateTwr(observations: AdvancedPerformanceObservation[]): AdvancedPerformanceMetric {
@@ -226,6 +286,17 @@ function observationsForOneYear(observations: AdvancedPerformanceObservation[], 
   return observationsFromBoundary(observations, formatDate(subtractUtcYearClamped(asOf)));
 }
 
+function observationsForRange(
+  observations: AdvancedPerformanceObservation[],
+  range: PerformanceRange,
+) {
+  if (observations.length < 2) return null;
+  if (range === "1D") return observations.slice(-2);
+  if (range === "ALL") return observations;
+  const cutoff = performanceRangeCutoff(observations.at(-1)!.date, range);
+  return observationsFromBoundary(observations, cutoff);
+}
+
 function observationsFromBoundary(observations: AdvancedPerformanceObservation[], boundary: string) {
   const anchor = [...observations].reverse().find((point) => point.date <= boundary);
   if (!anchor) return null;
@@ -242,6 +313,35 @@ function mergeBenchmarkCurrent(history: BenchmarkPerformanceObservation[], curre
   const byDate = new Map(history.map((point) => [point.date, point]));
   if (current) byDate.set(current.date, current);
   return [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
+}
+
+function performanceExclusionSignature(observation: AdvancedPerformanceObservation) {
+  return observation.performanceExclusions
+    .map((item) => `${item.symbol}:${[...item.reasons].sort().join(",")}`)
+    .sort()
+    .join("|");
+}
+
+function isPeriodUnavailableReason(
+  reason: AdvancedMetricUnavailableReason,
+): reason is Extract<PeriodPerformanceUnavailableReason, AdvancedMetricUnavailableReason> {
+  return reason === "INSUFFICIENT_HISTORY"
+    || reason === "INCOMPLETE_VALUATION"
+    || reason === "INCOMPLETE_EXTERNAL_CASHFLOWS"
+    || reason === "INVALID_START_VALUE";
+}
+
+function unavailablePeriod(reason: PeriodPerformanceUnavailableReason): PeriodPerformance {
+  return {
+    amount: null,
+    returnPercent: null,
+    state: "UNAVAILABLE",
+    startDate: null,
+    endDate: null,
+    isStale: false,
+    excludedSymbols: [],
+    unavailableReasons: [reason],
+  };
 }
 
 function available(value: Prisma.Decimal, observations: AdvancedPerformanceObservation[]): AdvancedPerformanceMetric {

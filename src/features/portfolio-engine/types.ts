@@ -341,7 +341,7 @@ export type CalculatePortfolioRiskInput = {
   hasStalePrices: boolean;
 };
 
-export const performanceRanges = ["7D", "1M", "3M", "1Y", "ALL"] as const;
+export const performanceRanges = ["1D", "7D", "1M", "3M", "1Y", "ALL"] as const;
 
 export type PerformanceRange = (typeof performanceRanges)[number];
 
@@ -367,10 +367,29 @@ export type AdvancedPerformanceMetric = {
 export type AdvancedPerformanceObservation = {
   date: string;
   portfolioValue: string | null;
+  investmentGain: string | null;
   externalContributions: string | null;
   externalWithdrawals: string | null;
+  performanceExclusions: PerformanceExclusion[];
   isComplete: boolean;
   hasStalePrices: boolean;
+};
+
+export type PeriodPerformanceUnavailableReason =
+  | Extract<AdvancedMetricUnavailableReason,
+    "INSUFFICIENT_HISTORY" | "INCOMPLETE_VALUATION" | "INCOMPLETE_EXTERNAL_CASHFLOWS" | "INVALID_START_VALUE">
+  | "INCOMPLETE_COST_BASIS"
+  | "INCONSISTENT_PERFORMANCE_COVERAGE";
+
+export type PeriodPerformance = {
+  amount: string | null;
+  returnPercent: string | null;
+  state: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE";
+  startDate: string | null;
+  endDate: string | null;
+  isStale: boolean;
+  excludedSymbols: string[];
+  unavailableReasons: PeriodPerformanceUnavailableReason[];
 };
 
 export type BenchmarkPerformanceObservation = {
@@ -403,6 +422,7 @@ export type AdvancedPerformance = {
   ytdReturn: AdvancedPerformanceMetric;
   oneYearReturn: AdvancedPerformanceMetric;
   maxDrawdown: AdvancedPerformanceMetric;
+  periodPnl: Record<PerformanceRange, PeriodPerformance>;
   comparisons: Record<PerformanceRange, BenchmarkComparison>;
 };
 

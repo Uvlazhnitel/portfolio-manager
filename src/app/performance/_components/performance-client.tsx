@@ -10,7 +10,12 @@ import { DataQualitySummary, type DataQualityItem } from "@/components/ui/data-q
 import { PnlIndicator } from "@/components/ui/pnl-indicator";
 import { updatePerformanceBenchmarkAction, type BenchmarkActionState } from "@/features/performance/actions";
 import type { PerformanceReadModel } from "@/features/performance/read-model";
-import type { AdvancedMetricUnavailableReason, AdvancedPerformanceMetric } from "@/features/portfolio-engine";
+import type {
+  AdvancedMetricUnavailableReason,
+  AdvancedPerformanceMetric,
+  PeriodPerformance,
+  PeriodPerformanceUnavailableReason,
+} from "@/features/portfolio-engine";
 import { formatDecimalCurrency } from "@/lib/format/decimal";
 import { cn } from "@/lib/utils";
 
@@ -53,6 +58,7 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
   }));
   const visibleChartRows = filterChartRowsByRange(chartRows, range);
   const comparison = advanced.comparisons[range];
+  const periodPnl = advanced.periodPnl[range];
   const comparisonRows = comparison.points.map<ComparisonRow>((point) => ({
     date: point.date,
     portfolioIndex: Number(point.portfolioIndex),
@@ -101,6 +107,8 @@ export function PerformanceClient({ performance }: { performance: PerformanceRea
             {performance.staleDates > 0 || summary.hasStalePrices || comparison.isStale ? <Badge tone="warning">Stale prices present</Badge> : null}
           </div>
         </div>
+
+        <PeriodPnlSummary period={periodPnl} range={range} currency={currency} />
 
         {chartMode === "VALUE" ? (
           visibleChartRows.length > 0 ? (
@@ -214,6 +222,44 @@ function AdvancedMetric({ label, metric }: { label: string; metric: AdvancedPerf
   );
 }
 
+function PeriodPnlSummary({
+  period,
+  range,
+  currency,
+}: {
+  period: PeriodPerformance;
+  range: ChartRange;
+  currency: string;
+}) {
+  const reason = period.unavailableReasons.map(periodPerformanceReason).join(" ");
+  return (
+    <div className="mt-5 flex flex-col gap-4 border-y border-border py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs uppercase tracking-wide text-muted">Period P&amp;L · {range === "ALL" ? "All" : range}</p>
+          {period.state === "PARTIAL" ? <Badge>Partial</Badge> : null}
+          {period.isStale ? <Badge tone="warning">Stale</Badge> : null}
+        </div>
+        <div className="mt-2 flex flex-wrap items-end gap-x-6 gap-y-3">
+          <div>
+            <p className="text-[11px] text-muted">Money</p>
+            <PnlIndicator value={period.amount} format="currency" currency={currency} size="lg" variant="text" />
+          </div>
+          <div>
+            <p className="text-[11px] text-muted">TWR</p>
+            <PnlIndicator value={period.returnPercent} format="percent" size="lg" variant="text" />
+          </div>
+        </div>
+      </div>
+      <div className="max-w-lg text-left text-xs leading-5 text-muted sm:text-right">
+        <p>{period.startDate && period.endDate ? `${formatDate(period.startDate)} – ${formatDate(period.endDate)}` : "Period unavailable"}</p>
+        {reason ? <p className="mt-1">{reason}</p> : null}
+        {period.excludedSymbols.length > 0 ? <p className="mt-1">Excluded: {period.excludedSymbols.join(", ")}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 function PerformanceTooltip({ active, row, currency }: { active?: boolean; row?: ChartRow; currency: string }) {
   if (!active || !row) return null;
   return <div className="max-w-64 rounded-lg border border-border bg-card p-3 shadow-xl"><p className="font-medium text-foreground">{formatDate(row.date)}</p>{row.isComplete ? <div className="mt-3 space-y-2 text-sm"><TooltipValue label="Portfolio value" value={moneyOrUnavailable(decimalFromNumber(row.portfolioValue), currency)} /><TooltipValue label="Net invested" value={moneyOrUnavailable(decimalFromNumber(row.netInvested), currency)} /><TooltipValue label="Investment gain" value={<PnlIndicator value={decimalFromNumber(row.investmentGain)} format="currency" currency={currency} size="sm" variant="text" />} /></div> : <p className="mt-2 text-sm text-warning">Missing: {row.missingPriceSymbols.join(", ")}</p>}{row.hasStalePrices ? <p className="mt-2 text-xs text-warning">Includes stale observations</p> : null}</div>;
@@ -274,6 +320,12 @@ function advancedMetricReason(reason: AdvancedMetricUnavailableReason) {
   if (reason === "XIRR_AMBIGUOUS_SOLUTION") return "The dated cashflows produce more than one possible XIRR.";
   if (reason === "BENCHMARK_NOT_CONFIGURED") return "Select a benchmark to enable comparison.";
   return "There are not enough common benchmark price observations.";
+}
+
+function periodPerformanceReason(reason: PeriodPerformanceUnavailableReason) {
+  if (reason === "INCOMPLETE_COST_BASIS") return "The money result includes only assets with reliable cost basis.";
+  if (reason === "INCONSISTENT_PERFORMANCE_COVERAGE") return "Cost-basis coverage changed during this period, so money P&L is unavailable.";
+  return advancedMetricReason(reason);
 }
 
 function metricPeriod(metric: AdvancedPerformanceMetric) {

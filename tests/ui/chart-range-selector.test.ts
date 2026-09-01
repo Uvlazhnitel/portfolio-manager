@@ -21,6 +21,10 @@ describe("chart range selector helpers", () => {
     expect(filterChartRowsByRange(rows, "7D").map((row) => row.date)).toEqual(["2026-08-21", "2026-08-28"]);
   });
 
+  it("filters 1D relative to the latest available point", () => {
+    expect(filterChartRowsByRange(rows, "1D").map((row) => row.date)).toEqual(["2026-08-28"]);
+  });
+
   it("filters month ranges relative to the latest available point and includes the boundary", () => {
     expect(filterChartRowsByRange(rows, "1M").map((row) => row.date)).toEqual(["2026-08-20", "2026-08-21", "2026-08-28"]);
     expect(filterChartRowsByRange(rows, "3M").map((row) => row.date)).toEqual(["2026-05-28", "2026-06-27", "2026-07-27", "2026-08-20", "2026-08-21", "2026-08-28"]);
@@ -38,5 +42,6 @@ describe("chart range selector helpers", () => {
     const formatter = (value: string) => value;
     expect(chartRangeLabel("ALL", "2026-08-26", formatter)).toBe("Since 2026-08-26");
     expect(chartRangeLabel("7D", "2026-08-26", formatter)).toBe("Last 7D");
+    expect(chartRangeLabel("1D", "2026-08-26", formatter)).toBe("Last 1D");
   });
 });

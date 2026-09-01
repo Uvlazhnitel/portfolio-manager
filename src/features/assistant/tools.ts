@@ -180,6 +180,7 @@ function compactPerformance(model: Awaited<ReturnType<AssistantToolServices["get
       ytdReturn: model.advanced.ytdReturn,
       oneYearReturn: model.advanced.oneYearReturn,
       maxDrawdown: model.advanced.maxDrawdown,
+      periodPnl: model.advanced.periodPnl,
     },
     benchmark: {
       selectedAssetId: model.benchmark.selectedAssetId,

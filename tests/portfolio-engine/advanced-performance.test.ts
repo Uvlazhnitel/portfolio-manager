@@ -31,14 +31,43 @@ describe("advanced performance engine", () => {
 
   it("removes contributions and withdrawals from TWR", () => {
     const contribution = calculateAdvancedPerformance(input([
-      point("2026-01-01", "100"),
-    ], point("2026-01-02", "165", "50", "0"), "2026-01-02T12:00:00Z"));
+      point("2026-01-01", "100", "0", "0", "0"),
+    ], point("2026-01-02", "165", "50", "0", "15"), "2026-01-02T12:00:00Z"));
     const withdrawal = calculateAdvancedPerformance(input([
-      point("2026-01-01", "100"),
-    ], point("2026-01-02", "88", "0", "20"), "2026-01-02T12:00:00Z"));
+      point("2026-01-01", "100", "0", "0", "0"),
+    ], point("2026-01-02", "88", "0", "20", "8"), "2026-01-02T12:00:00Z"));
 
     expect(contribution.twr.value).toBe("15.00");
     expect(withdrawal.twr.value).toBe("8.00");
+    expect(contribution.periodPnl["1D"]).toEqual(expect.objectContaining({ amount: "15.00", returnPercent: "15.00", state: "AVAILABLE" }));
+    expect(withdrawal.periodPnl["1D"]).toEqual(expect.objectContaining({ amount: "8.00", returnPercent: "8.00", state: "AVAILABLE" }));
+  });
+
+  it("calculates money P&L and TWR for every selected range from deterministic anchors", () => {
+    const result = calculateAdvancedPerformance(input([
+      point("2025-08-31", "100", "0", "0", "0"),
+      point("2026-05-31", "110", "0", "0", "10"),
+      point("2026-07-31", "120", "0", "0", "20"),
+      point("2026-08-24", "130", "0", "0", "30"),
+      point("2026-08-30", "140", "0", "0", "40"),
+    ], point("2026-08-31", "150", "0", "0", "50"), "2026-08-31T12:00:00Z"));
+
+    expect(result.periodPnl["1D"]).toEqual(expect.objectContaining({ amount: "10.00", returnPercent: "7.14", startDate: "2026-08-30" }));
+    expect(result.periodPnl["7D"]).toEqual(expect.objectContaining({ amount: "20.00", returnPercent: "15.38", startDate: "2026-08-24" }));
+    expect(result.periodPnl["1M"]).toEqual(expect.objectContaining({ amount: "30.00", returnPercent: "25.00", startDate: "2026-07-31" }));
+    expect(result.periodPnl["3M"]).toEqual(expect.objectContaining({ amount: "40.00", returnPercent: "36.36", startDate: "2026-05-31" }));
+    expect(result.periodPnl["1Y"]).toEqual(expect.objectContaining({ amount: "50.00", returnPercent: "50.00", startDate: "2025-08-31" }));
+    expect(result.periodPnl.ALL).toEqual(expect.objectContaining({ amount: "50.00", returnPercent: "50.00", startDate: "2025-08-31", endDate: "2026-08-31" }));
+  });
+
+  it("returns negative period P&L without changing its sign", () => {
+    const result = calculateAdvancedPerformance(input(
+      [point("2026-08-30", "100", "0", "0", "20")],
+      point("2026-08-31", "90", "0", "0", "10"),
+      "2026-08-31T12:00:00Z",
+    ));
+
+    expect(result.periodPnl["1D"]).toEqual(expect.objectContaining({ amount: "-10.00", returnPercent: "-10.00", state: "AVAILABLE" }));
   });
 
   it("returns unavailable rather than skipping partial valuation or cashflow history", () => {
@@ -53,6 +82,47 @@ describe("advanced performance engine", () => {
 
     expect(incompleteValue.twr.unavailableReason).toBe("INCOMPLETE_VALUATION");
     expect(incompleteCashflow.twr.unavailableReason).toBe("INCOMPLETE_EXTERNAL_CASHFLOWS");
+    expect(incompleteValue.periodPnl.ALL).toEqual(expect.objectContaining({ returnPercent: null, unavailableReasons: expect.arrayContaining(["INCOMPLETE_VALUATION"]) }));
+    expect(incompleteCashflow.periodPnl.ALL).toEqual(expect.objectContaining({ returnPercent: null, unavailableReasons: expect.arrayContaining(["INCOMPLETE_EXTERNAL_CASHFLOWS"]) }));
+  });
+
+  it("preserves stable partial gain coverage and rejects changing exclusions", () => {
+    const exclusion = [{ symbol: "ETH", reasons: ["UNKNOWN_OPENING_BASIS" as const] }];
+    const stable = calculateAdvancedPerformance(input(
+      [{ ...point("2026-08-30", "100", "0", "0", "10"), performanceExclusions: exclusion }],
+      { ...point("2026-08-31", "110", "0", "0", "20"), performanceExclusions: exclusion },
+      "2026-08-31T12:00:00Z",
+    ));
+    const changing = calculateAdvancedPerformance(input(
+      [point("2026-08-30", "100", "0", "0", "10")],
+      { ...point("2026-08-31", "110", "0", "0", "20"), performanceExclusions: exclusion },
+      "2026-08-31T12:00:00Z",
+    ));
+
+    expect(stable.periodPnl["1D"]).toEqual(expect.objectContaining({
+      amount: "10.00",
+      returnPercent: "10.00",
+      state: "PARTIAL",
+      excludedSymbols: ["ETH"],
+      unavailableReasons: ["INCOMPLETE_COST_BASIS"],
+    }));
+    expect(changing.periodPnl["1D"]).toEqual(expect.objectContaining({
+      amount: null,
+      returnPercent: "10.00",
+      state: "PARTIAL",
+      unavailableReasons: ["INCONSISTENT_PERFORMANCE_COVERAGE"],
+    }));
+  });
+
+  it("reports insufficient history and replaces the same-day snapshot with current data", () => {
+    const insufficient = calculateAdvancedPerformance(input([], point("2026-08-31", "100", "0", "0", "0"), "2026-08-31T12:00:00Z"));
+    const replaced = calculateAdvancedPerformance(input([
+      point("2026-08-30", "100", "0", "0", "0"),
+      { ...point("2026-08-31", "105", "0", "0", "5"), hasStalePrices: true },
+    ], point("2026-08-31", "110", "0", "0", "10"), "2026-08-31T12:00:00Z"));
+
+    expect(insufficient.periodPnl["1D"]).toEqual(expect.objectContaining({ state: "UNAVAILABLE", unavailableReasons: ["INSUFFICIENT_HISTORY"] }));
+    expect(replaced.periodPnl["1D"]).toEqual(expect.objectContaining({ amount: "10.00", endDate: "2026-08-31", isStale: false }));
   });
 
   it("uses fixed YTD and one-year boundaries, including leap-day clamping", () => {
@@ -211,12 +281,15 @@ function point(
   portfolioValue: string | null,
   externalContributions = "0",
   externalWithdrawals = "0",
+  investmentGain = portfolioValue,
 ): AdvancedPerformanceObservation {
   return {
     date,
     portfolioValue,
+    investmentGain,
     externalContributions,
     externalWithdrawals,
+    performanceExclusions: [],
     isComplete: portfolioValue !== null,
     hasStalePrices: false,
   };
