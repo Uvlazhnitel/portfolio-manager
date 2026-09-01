@@ -38,13 +38,6 @@ export class PortfolioRepository {
     });
   }
 
-  listDailyPrices(currency: string) {
-    return this.db.dailyMarketPrice.findMany({
-      where: { currency },
-      orderBy: [{ date: "asc" }, { assetId: "asc" }],
-    });
-  }
-
   createAccount(data: Prisma.AccountCreateInput) {
     return this.db.account.create({ data });
   }

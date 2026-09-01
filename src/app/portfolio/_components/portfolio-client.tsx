@@ -4,7 +4,6 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  Fragment,
   useActionState,
   useCallback,
   useEffect,
@@ -14,8 +13,7 @@ import {
   useTransition,
   type ReactNode,
 } from "react";
-import { ArrowLeft, ArrowRight, ChartNoAxesCombined, ChevronDown, ChevronRight, ChevronUp, Pencil, Plus, Search, Trash2, X } from "lucide-react";
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { ArrowLeft, ArrowRight, ChevronRight, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { searchAssetsAction } from "@/features/asset-catalog/actions";
 import type { AssetCatalogResult } from "@/features/asset-catalog/types";
 import type { AssetCatalogKind } from "@/features/asset-catalog/types";
@@ -36,7 +34,6 @@ import type { PortfolioReadModel } from "@/features/portfolio/read-model";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ChartRangeSelector, chartRangeLabel, defaultChartRange, filterChartRowsByRange, type ChartRange } from "@/components/ui/chart-range-selector";
 import { DataQualitySummary, type DataQualityItem } from "@/components/ui/data-quality-summary";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PnlIndicator } from "@/components/ui/pnl-indicator";
@@ -798,7 +795,6 @@ function AssetAvatar({ asset, size }: { asset: Pick<AssetCatalogResult, "imageUr
 }
 
 function HoldingsSection({ portfolio, onAddTransaction }: PortfolioClientProps & { onAddTransaction: (assetId: string, accountId: string) => void }) {
-  const [expandedHolding, setExpandedHolding] = useState<string | null>(null);
   if (portfolio.holdings.length === 0) return <EmptyState title="Your portfolio is empty" description="Add an asset and enter the amount you currently own." icon={<Plus className="h-5 w-5" aria-hidden="true" />} />;
   return (
     <Card className="overflow-hidden p-0">
@@ -824,13 +820,8 @@ function HoldingsSection({ portfolio, onAddTransaction }: PortfolioClientProps &
             </tr>
           </thead>
           <tbody className="divide-y divide-border/70">
-            {portfolio.holdings.map((holding) => {
-              const holdingId = `${holding.accountId}:${holding.assetId}`;
-              const isChartOpen = expandedHolding === holdingId;
-              const history = portfolio.assetPriceHistory.find((entry) => entry.assetId === holding.assetId)?.points ?? [];
-              return (
-              <Fragment key={holdingId}>
-              <tr className="transition hover:bg-surface/45">
+            {portfolio.holdings.map((holding) => (
+              <tr key={`${holding.accountId}:${holding.assetId}`} className="transition hover:bg-surface/45">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
                     <AssetAvatar asset={{ imageUrl: holding.imageUrl, symbol: holding.symbol, name: holding.assetName }} size={34} />
@@ -853,35 +844,18 @@ function HoldingsSection({ portfolio, onAddTransaction }: PortfolioClientProps &
                 <td className="px-4 py-3 text-right tabular-nums"><PnlIndicator value={holding.netPnl} format="currency" currency={portfolio.valuation.currency} unavailableLabel="Price unavailable" size="sm" /></td>
                 <td className="px-4 py-3 text-right tabular-nums">{holding.portfolioWeight ? `${holding.portfolioWeight}%` : "Unavailable"}</td>
                 <td className="px-4 py-3 text-right">
-                  <div className="flex items-center justify-end gap-1">
-                    <button type="button" onClick={() => setExpandedHolding(isChartOpen ? null : holdingId)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary" title={isChartOpen ? "Hide price chart" : "Show price chart"} aria-label={`${isChartOpen ? "Hide" : "Show"} price chart for ${holding.assetName}`} aria-expanded={isChartOpen}>
-                      <ChartNoAxesCombined className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                    <button type="button" onClick={() => onAddTransaction(holding.assetId, holding.accountId)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary" title="Add transaction" aria-label={`Add transaction for ${holding.assetName}`}>
-                      <Plus className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                  </div>
+                  <button type="button" onClick={() => onAddTransaction(holding.assetId, holding.accountId)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary" title="Add transaction" aria-label={`Add transaction for ${holding.assetName}`}>
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                  </button>
                 </td>
               </tr>
-              {isChartOpen ? (
-                <tr>
-                  <td colSpan={9} className="bg-surface/30 px-5 py-5">
-                    <AssetPriceChart holding={holding} history={history} currency={portfolio.valuation.currency} />
-                  </td>
-                </tr>
-              ) : null}
-              </Fragment>
-            );})}
+            ))}
           </tbody>
         </table>
       </div>
       <div className="space-y-3 p-4 md:hidden">
-        {portfolio.holdings.map((holding) => {
-          const holdingId = `${holding.accountId}:${holding.assetId}`;
-          const isChartOpen = expandedHolding === holdingId;
-          const history = portfolio.assetPriceHistory.find((entry) => entry.assetId === holding.assetId)?.points ?? [];
-          return (
-          <div key={`${holdingId}:mobile`} className="rounded-lg border border-border bg-surface p-4">
+        {portfolio.holdings.map((holding) => (
+          <div key={`${holding.accountId}:${holding.assetId}:mobile`} className="rounded-lg border border-border bg-surface p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
                 <AssetAvatar asset={{ imageUrl: holding.imageUrl, symbol: holding.symbol, name: holding.assetName }} size={38} />
@@ -890,14 +864,9 @@ function HoldingsSection({ portfolio, onAddTransaction }: PortfolioClientProps &
                   <p className="text-sm text-muted">{holding.symbol} · {holding.assetClass} · {holding.accountName}</p>
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <button type="button" onClick={() => setExpandedHolding(isChartOpen ? null : holdingId)} className="flex h-10 w-10 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary" aria-label={`${isChartOpen ? "Hide" : "Show"} price chart for ${holding.assetName}`} aria-expanded={isChartOpen}>
-                  {isChartOpen ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
-                </button>
-                <button type="button" onClick={() => onAddTransaction(holding.assetId, holding.accountId)} className="flex h-10 w-10 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary" title="Add transaction" aria-label={`Add transaction for ${holding.assetName}`}>
-                  <Plus className="h-4 w-4" aria-hidden="true" />
-                </button>
-              </div>
+              <button type="button" onClick={() => onAddTransaction(holding.assetId, holding.accountId)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary" title="Add transaction" aria-label={`Add transaction for ${holding.assetName}`}>
+                <Plus className="h-4 w-4" aria-hidden="true" />
+              </button>
             </div>
             <p className="mt-3 text-xs text-muted">{holding.quantityLabel}</p>
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
@@ -908,80 +877,10 @@ function HoldingsSection({ portfolio, onAddTransaction }: PortfolioClientProps &
               <Info label="Avg net cost" value={formatUnitPriceOrDashText(holding.averageNetCost, portfolio.valuation.currency, holding.displayPriceUnit)} />
               <Info label="Price status" value={priceStatusText(holding)} />
             </dl>
-            {isChartOpen ? <div className="mt-5 border-t border-border pt-5"><AssetPriceChart holding={holding} history={history} currency={portfolio.valuation.currency} /></div> : null}
           </div>
-        );})}
+        ))}
       </div>
     </Card>
-  );
-}
-
-type AssetPricePoint = PortfolioReadModel["assetPriceHistory"][number]["points"][number];
-type AssetPriceChartRow = AssetPricePoint & { numericPrice: number };
-
-function AssetPriceChart({
-  holding,
-  history,
-  currency,
-}: {
-  holding: PortfolioReadModel["holdings"][number];
-  history: AssetPricePoint[];
-  currency: string;
-}) {
-  const [range, setRange] = useState<ChartRange>(defaultChartRange);
-  const rows = history.map((point) => ({ ...point, numericPrice: Number(point.price) }));
-  const visibleRows = filterChartRowsByRange(rows, range);
-  const first = visibleRows[0];
-  const last = visibleRows.at(-1);
-  const changePercent = first && last && first.numericPrice !== 0
-    ? ((last.numericPrice - first.numericPrice) / first.numericPrice) * 100
-    : null;
-
-  return (
-    <div className="min-w-0">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <h3 className="font-semibold text-foreground">{holding.symbol} price</h3>
-            {last ? <span className="text-lg font-semibold tabular-nums text-foreground">{formatCurrency(last.price, currency)} / {holding.displayPriceUnit}</span> : null}
-            {changePercent !== null ? <span className={cn("text-sm font-medium tabular-nums", changePercent > 0 ? "text-success" : changePercent < 0 ? "text-destructive" : "text-muted")}>{formatChartPercent(changePercent)}</span> : null}
-          </div>
-          <p className="mt-1 text-xs text-muted">Daily market price in {currency} · {chartRangeLabel(range, history[0]?.date ?? null, formatUtcDate)}</p>
-        </div>
-        <ChartRangeSelector value={range} onChange={setRange} />
-      </div>
-
-      {visibleRows.length > 0 ? (
-        <div className="mt-4 h-56 w-full min-w-0 sm:h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={visibleRows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-              <CartesianGrid stroke="#282d3d" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="date" tickFormatter={formatChartDate} stroke="#8d93a7" tickLine={false} axisLine={false} minTickGap={28} />
-              <YAxis domain={["auto", "auto"]} tickFormatter={(value) => compactChartMoney(Number(value), currency)} stroke="#8d93a7" tickLine={false} axisLine={false} width={72} />
-              <Tooltip content={({ active, payload }) => <AssetPriceTooltip active={active} row={payload?.[0]?.payload as AssetPriceChartRow | undefined} currency={currency} unit={holding.displayPriceUnit} />} />
-              <Line type="monotone" dataKey="numericPrice" name="Price" stroke="#8b5cf6" strokeWidth={2.5} dot={visibleRows.length === 1 ? { r: 4, fill: "#8b5cf6" } : false} activeDot={{ r: 4 }} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      ) : (
-        <div className="mt-4 rounded-lg border border-dashed border-border px-4 py-10 text-center">
-          <ChartNoAxesCombined className="mx-auto h-7 w-7 text-muted" aria-hidden="true" />
-          <p className="mt-3 font-medium text-foreground">Price history is not available yet</p>
-          <p className="mx-auto mt-1 max-w-lg text-sm leading-5 text-muted">The daily history worker will add observations automatically. Earlier prices are not estimated.</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AssetPriceTooltip({ active, row, currency, unit }: { active?: boolean; row?: AssetPriceChartRow; currency: string; unit: "unit" | "troy oz" }) {
-  if (!active || !row) return null;
-  return (
-    <div className="rounded-lg border border-border bg-card px-3 py-2 shadow-xl">
-      <p className="text-xs text-muted">{formatUtcDate(row.date)}</p>
-      <p className="mt-1 font-semibold tabular-nums text-foreground">{formatCurrency(row.price, currency)} / {unit}</p>
-      <p className={cn("mt-1 text-xs", row.isStale ? "text-warning" : "text-muted")}>{formatType(row.source)}{row.isStale ? " · stale" : ""}</p>
-    </div>
   );
 }
 
@@ -1181,11 +1080,6 @@ function formatUnitPriceOrDash(value: string | null, currency: string, unit: "un
 function formatUnitPriceOrDashText(value: string | null, currency: string, unit: "unit" | "troy oz") { return value ? `${formatCurrency(value, currency)} / ${unit}` : "—"; }
 function formatCurrency(value: string, currency: string) { return formatDecimalCurrency(value, currency); }
 function formatTimestamp(value: string | null) { return formatUtcTimestamp(value); }
-function formatChartDate(value: string) { return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`)); }
-function formatChartPercent(value: number) { return `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(value).toFixed(2)}%`; }
-function compactChartMoney(value: number, currency: string) {
-  return new Intl.NumberFormat("en", { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 }).format(value);
-}
 
 const inputClassName = "h-11 w-full rounded-lg border border-border bg-surface-strong px-3 text-sm text-foreground outline-none transition placeholder:text-muted/70 focus:border-primary/60";
 const textareaClassName = "min-h-24 w-full resize-y rounded-lg border border-border bg-surface-strong px-3 py-3 text-sm text-foreground outline-none transition placeholder:text-muted/70 focus:border-primary/60";
