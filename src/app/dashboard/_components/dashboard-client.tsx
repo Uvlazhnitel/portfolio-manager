@@ -7,6 +7,7 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import { contributionClassLabels } from "@/features/contributions/presentation";
 import type { DashboardReadModel } from "@/features/dashboard/read-model";
 import {
+  dashboardContributionItems,
   formatDashboardCurrency as formatCurrency,
   formatDashboardPercent as formatPercent,
   formatDashboardSignedCurrency as formatSignedCurrency,
@@ -227,9 +228,9 @@ function AllocationRow({ item, currency }: { item: DashboardReadModel["allocatio
 
 function ContributionPanel({ dashboard }: { dashboard: DashboardReadModel }) {
   const { amount, projection, state, missingPriceSymbols } = dashboard.contribution;
-  const recommendations = projection?.plan.assetRecommendations ?? [];
-  const visibleRecommendations = recommendations.slice(0, 3);
-  const remaining = recommendations.length - visibleRecommendations.length;
+  const contributionItems = projection ? dashboardContributionItems(projection) : [];
+  const visibleContributionItems = contributionItems.slice(0, 3);
+  const remaining = contributionItems.length - visibleContributionItems.length;
   const href = amount ? `/plan/contributions?amount=${encodeURIComponent(amount)}` : "/plan/contributions";
 
   return (
@@ -245,8 +246,8 @@ function ContributionPanel({ dashboard }: { dashboard: DashboardReadModel }) {
         <>
           <p className="mt-6 text-3xl font-semibold">{formatCurrency(projection.plan.contributionAmount, dashboard.valuation.currency)}</p>
           <div className="mt-5 divide-y divide-border border-y border-border">
-            {visibleRecommendations.map((item) => (
-              <div key={item.assetId} className="flex items-center justify-between gap-4 py-3">
+            {visibleContributionItems.map((item) => (
+              <div key={item.key} className="flex items-center justify-between gap-4 py-3">
                 <div className="min-w-0">
                   <p className="truncate font-medium">{item.symbol}</p>
                   <p className="mt-1 truncate text-xs text-muted">{item.name} · {item.percentOfContribution}%</p>
@@ -255,7 +256,7 @@ function ContributionPanel({ dashboard }: { dashboard: DashboardReadModel }) {
               </div>
             ))}
           </div>
-          {remaining > 0 ? <p className="mt-3 text-xs text-muted">+{remaining} more {remaining === 1 ? "asset" : "assets"} in the saved plan</p> : null}
+          {remaining > 0 ? <p className="mt-3 text-xs text-muted">+{remaining} more {remaining === 1 ? "item" : "items"} in the saved plan</p> : null}
         </>
       ) : (
         <div className="mt-6 border-y border-border py-10">
