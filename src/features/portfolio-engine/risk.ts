@@ -31,15 +31,14 @@ export function calculatePortfolioRisk(input: CalculatePortfolioRiskInput): Port
     ? unavailableMetric("PARTIAL", ["UNASSIGNED_CUSTODIAN"])
     : concentrationMetric(largestCustodianEntry, total, baseState, baseReasons, input.thresholds.custodianMaxPercent, "CUSTODIAN_LIMIT_EXCEEDED", largestCustodianEntry ? input.accounts.find((account) => account.custodian?.id === largestCustodianEntry[0])?.custodian?.name ?? largestCustodianEntry[0] : null);
   const cryptoValue = input.portfolio.allocation.find((item) => item.assetClass === "CRYPTO")?.value ?? "0";
-  const cryptoLimit = input.strategy?.find((item) => item.assetClass === "CRYPTO")?.maxPercent ?? null;
-  const cryptoAllocation = concentrationMetric(["CRYPTO", decimal(cryptoValue)], total, baseState, baseReasons, cryptoLimit, "CRYPTO_LIMIT_EXCEEDED", "Crypto");
+  const cryptoAllocation = concentrationMetric(["CRYPTO", decimal(cryptoValue)], total, baseState, baseReasons, null, null, "Crypto");
   const staleReasons = input.hasStalePrices ? ["STALE_PRICE_DATA" as const] : [];
   const topThreeAssets = baseState === "OK" ? metricFromPercent(topThree.div(total).mul(ONE_HUNDRED), "OK", null, "Top 3 assets", null, staleReasons) : unavailableMetric(baseState, baseReasons);
-  const violations = [largestAsset, largestCustodian, cryptoAllocation].flatMap((metric, index): RiskViolation[] => {
+  const violations = [largestAsset, largestCustodian].flatMap((metric, index): RiskViolation[] => {
     if (metric.state !== "WARNING" || !metric.valuePercent || !metric.limitPercent) return [];
     const code = metric.reasonCodes.find((reason) => reason.endsWith("LIMIT_EXCEEDED"));
     if (!code) return [];
-    return [{ code, metric: ["largestAsset", "largestCustodian", "cryptoAllocation"][index], currentPercent: metric.valuePercent, limitPercent: metric.limitPercent, excessPercent: toDecimalString(decimal(metric.valuePercent).minus(metric.limitPercent)) }];
+    return [{ code, metric: ["largestAsset", "largestCustodian"][index], currentPercent: metric.valuePercent, limitPercent: metric.limitPercent, excessPercent: toDecimalString(decimal(metric.valuePercent).minus(metric.limitPercent)) }];
   });
   const strategyViolations = input.strategy && baseState === "OK" ? evaluateStrategyCompliance(input.portfolio, input.strategy) : [];
   const exposures = (values: Map<string, ReturnType<typeof decimal>>): RiskExposure[] => [...values].sort(([a], [b]) => a.localeCompare(b)).map(([category, value]) => baseState === "OK" ? { category, valuePercent: toDecimalString(value.div(total).mul(ONE_HUNDRED)), state: "OK", reasonCodes: input.hasStalePrices ? ["STALE_PRICE_DATA"] : [] } : { category, valuePercent: null, state: baseState, reasonCodes: [...baseReasons] });

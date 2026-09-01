@@ -57,6 +57,7 @@ describe("portfolio scenario engine", () => {
     expect(result.current.totalValue).toBe("1000.00");
     expect(result.projected.totalValue).toBe("1500.00");
     expect(result.newWarnings).toContainEqual(expect.objectContaining({ source: "STRATEGY", code: "CRYPTO_ABOVE_MAX" }));
+    expect(result.newWarnings).not.toContainEqual(expect.objectContaining({ code: "CRYPTO_LIMIT_EXCEEDED" }));
     expect(result.projectedRisk.cryptoAllocation.valuePercent).toBe("40.00");
     expect(result.maximumCompliantAmount).toBe("125.00");
     expect(result.remainingAmount).toBe("375.00");

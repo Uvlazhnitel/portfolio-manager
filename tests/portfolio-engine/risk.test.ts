@@ -29,7 +29,9 @@ describe("portfolio risk engine", () => {
   it("returns deterministic warnings only for enabled thresholds", () => {
     const warned = calculatePortfolioRisk({ portfolio: snapshot(), assets, accounts, strategy: strategy(), thresholds: { singleAssetMaxPercent: "50", custodianMaxPercent: "70" }, hasStalePrices: false });
     const disabled = calculatePortfolioRisk({ portfolio: snapshot(), assets, accounts, strategy: null, thresholds: { singleAssetMaxPercent: null, custodianMaxPercent: null }, hasStalePrices: false });
-    expect(warned.violations.map((item) => item.code)).toEqual(expect.arrayContaining(["SINGLE_ASSET_LIMIT_EXCEEDED", "CUSTODIAN_LIMIT_EXCEEDED", "CRYPTO_LIMIT_EXCEEDED"]));
+    expect(warned.violations.map((item) => item.code)).toEqual(expect.arrayContaining(["SINGLE_ASSET_LIMIT_EXCEEDED", "CUSTODIAN_LIMIT_EXCEEDED"]));
+    expect(warned.violations.map((item) => item.code)).not.toContain("CRYPTO_LIMIT_EXCEEDED");
+    expect(warned.strategyViolations.map((item) => item.code)).toContain("CRYPTO_ABOVE_MAX");
     expect(disabled.violations).toEqual([]);
   });
 

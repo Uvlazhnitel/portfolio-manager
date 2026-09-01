@@ -285,7 +285,7 @@ export function calculateStrategyAlignment(input: CalculateStrategyAlignmentInpu
     ? input.comparisons.filter((comparison) => comparison.status === "IN_RANGE").length
     : 0;
   const totalClasses = input.comparisons.length;
-  const allocationPoints = Math.min(80, inRangeClasses * 20);
+  const allocationPoints = totalClasses === 0 ? 0 : Math.round(80 * inRangeClasses / totalClasses);
   const priceDataPoints = input.totalHoldings === 0
     ? 0
     : Math.round(20 * Math.min(1, Math.max(0, input.pricedHoldings / input.totalHoldings)));

@@ -299,7 +299,7 @@ export type RiskState = "OK" | "WARNING" | "PARTIAL" | "UNAVAILABLE";
 export type RiskReasonCode =
   | "INCOMPLETE_VALUATION" | "MISSING_MARKET_PRICE" | "NO_VALUED_HOLDINGS"
   | "UNASSIGNED_CUSTODIAN" | "STALE_PRICE_DATA" | "SINGLE_ASSET_LIMIT_EXCEEDED"
-  | "CUSTODIAN_LIMIT_EXCEEDED" | "CRYPTO_LIMIT_EXCEEDED" | ViolationCode;
+  | "CUSTODIAN_LIMIT_EXCEEDED" | ViolationCode;
 
 export type RiskMetric = {
   valuePercent: string | null;

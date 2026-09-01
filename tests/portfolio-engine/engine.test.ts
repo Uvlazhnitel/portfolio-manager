@@ -615,10 +615,22 @@ describe("portfolio engine dashboard analytics", () => {
       pricedHoldings: 2,
       totalHoldings: 4,
     });
+    const threeClassComplete = calculateStrategyAlignment({
+      comparisons: comparisons.slice(0, 3).map((comparison) => ({ ...comparison, status: "IN_RANGE" as const })),
+      pricedHoldings: 3,
+      totalHoldings: 3,
+    });
+    const threeClassPartial = calculateStrategyAlignment({
+      comparisons: comparisons.slice(0, 3).map((comparison, index) => ({ ...comparison, status: index === 0 ? "OVERWEIGHT" as const : "IN_RANGE" as const })),
+      pricedHoldings: 3,
+      totalHoldings: 3,
+    });
 
     expect(empty).toEqual(expect.objectContaining({ score: null, allocationPoints: 0, inRangeClasses: 0 }));
     expect(complete).toEqual(expect.objectContaining({ score: 100, allocationPoints: 80, priceDataPoints: 20 }));
     expect(partial).toEqual(expect.objectContaining({ score: 70, allocationPoints: 60, priceDataPoints: 10 }));
+    expect(threeClassComplete).toEqual(expect.objectContaining({ score: 100, allocationPoints: 80, priceDataPoints: 20, inRangeClasses: 3, totalClasses: 3 }));
+    expect(threeClassPartial).toEqual(expect.objectContaining({ score: 73, allocationPoints: 53, priceDataPoints: 20, inRangeClasses: 2, totalClasses: 3 }));
   });
 
   it("calculates strict unrealized P&L and account values when coverage is complete", () => {

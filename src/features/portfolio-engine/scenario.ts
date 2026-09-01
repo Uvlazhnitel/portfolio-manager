@@ -37,8 +37,11 @@ export function calculatePortfolioScenario(input: CalculatePortfolioScenarioInpu
   const resolvedWarnings = currentWarnings.filter((warning) => !projectedKeys.has(warningKey(warning)));
   const isPartial = current.missingPriceSymbols.length > 0 || projected.missingPriceSymbols.length > 0;
   const normalizedKind = input.kind === "BUY" ? "EXTERNAL_BUY" : input.kind;
-  const compliant = normalizedKind !== "SELL" && newWarnings.length > 0 && !isPartial
+  const searchedCompliant = normalizedKind !== "SELL" && newWarnings.length > 0 && !isPartial
     ? findMaximumCompliantAmount(input, amount, price, currentKeys)
+    : null;
+  const compliant = searchedCompliant
+    ? capByStrategyClassMax(input, current, asset.assetClass, searchedCompliant)
     : null;
   const maximumCompliantAmount = compliant && compliant.lessThan(amount) ? toDecimalString(compliant) : null;
   const remainingAmount = maximumCompliantAmount ? toDecimalString(amount.minus(compliant!)) : null;
@@ -286,6 +289,27 @@ function findMaximumCompliantAmount(
     else low = middle;
   }
   return low.div(100);
+}
+
+function capByStrategyClassMax(
+  input: CalculatePortfolioScenarioInput,
+  current: ReturnType<typeof calculatePortfolio>,
+  assetClass: CalculatePortfolioScenarioInput["assets"][number]["assetClass"],
+  candidate: Prisma.Decimal,
+) {
+  const strategyAllocation = input.strategy?.find((allocation) => allocation.assetClass === assetClass);
+  if (!strategyAllocation) return candidate;
+  const maxPercent = decimal(strategyAllocation.maxPercent);
+  if (maxPercent.greaterThanOrEqualTo(100)) return candidate;
+
+  const currentClassValue = decimal(current.allocation.find((allocation) => allocation.assetClass === assetClass)?.value ?? 0);
+  const totalValue = decimal(current.totalValue);
+  const maxFraction = maxPercent.div(100);
+  const maximumAdditionalValue = maxFraction.mul(totalValue).minus(currentClassValue).div(decimal(1).minus(maxFraction));
+  if (maximumAdditionalValue.lessThanOrEqualTo(ZERO)) return ZERO;
+
+  const roundedDown = maximumAdditionalValue.mul(100).floor().div(100);
+  return candidate.lessThan(roundedDown) ? candidate : roundedDown;
 }
 
 function validateAccountSell(
