@@ -14,15 +14,12 @@ import type {
 } from "@/features/portfolio-engine/types";
 
 export function calculatePortfolioScenario(input: CalculatePortfolioScenarioInput): PortfolioScenarioResult {
-  const amount = requirePositiveMoney(input.amount);
-  const asset = input.assets.find((candidate) => candidate.id === input.assetId);
-  if (!asset) throw new Error("Selected asset was not found.");
-  if (!input.accounts.some((account) => account.id === input.accountId)) throw new Error("Selected account was not found.");
+  if (input.kind === "TRADE") return calculateTradeScenario(input);
 
-  const rawPrice = input.marketPrices[asset.symbol];
-  if (rawPrice === undefined) throw new Error(`Current price is unavailable for ${asset.symbol}.`);
-  const price = decimal(rawPrice);
-  if (!price.isFinite() || !price.greaterThan(ZERO)) throw new Error(`Current price must be greater than zero for ${asset.symbol}.`);
+  const amount = requirePositiveMoney(input.amount, "Scenario amount");
+  const asset = requireScenarioAsset(input, input.assetId, "Selected asset");
+  requireScenarioAccount(input, input.accountId, "Selected account");
+  const price = requireMarketPrice(input, asset.id, "Current price");
 
   const current = calculatePortfolio(input);
   requireCompletePortfolioValuation(current);
@@ -39,14 +36,15 @@ export function calculatePortfolioScenario(input: CalculatePortfolioScenarioInpu
   const newWarnings = projectedWarnings.filter((warning) => !currentKeys.has(warningKey(warning)));
   const resolvedWarnings = currentWarnings.filter((warning) => !projectedKeys.has(warningKey(warning)));
   const isPartial = current.missingPriceSymbols.length > 0 || projected.missingPriceSymbols.length > 0;
-  const compliant = input.kind !== "SELL" && newWarnings.length > 0 && !isPartial
+  const normalizedKind = input.kind === "BUY" ? "EXTERNAL_BUY" : input.kind;
+  const compliant = normalizedKind !== "SELL" && newWarnings.length > 0 && !isPartial
     ? findMaximumCompliantAmount(input, amount, price, currentKeys)
     : null;
   const maximumCompliantAmount = compliant && compliant.lessThan(amount) ? toDecimalString(compliant) : null;
   const remainingAmount = maximumCompliantAmount ? toDecimalString(amount.minus(compliant!)) : null;
   const reasonCodes: PortfolioScenarioResult["reasonCodes"] = [
     "SCENARIO_APPLIED",
-    input.kind === "BUY" ? "STANDALONE_BUY" : input.kind === "SELL" ? "STANDALONE_SELL" : "EXTERNAL_CONTRIBUTION",
+    normalizedKind === "EXTERNAL_BUY" ? "STANDALONE_BUY" : normalizedKind === "SELL" ? "STANDALONE_SELL" : "EXTERNAL_CONTRIBUTION",
   ];
   if (isPartial) reasonCodes.push("PARTIAL_VALUATION");
   if (input.hasStalePrices) reasonCodes.push("STALE_PRICE_DATA");
@@ -61,6 +59,17 @@ export function calculatePortfolioScenario(input: CalculatePortfolioScenarioInpu
     symbol: asset.symbol,
     amount: toDecimalString(amount),
     quantity: toQuantityString(quantity),
+    sourceAccountId: null,
+    sourceAssetId: null,
+    sourceSymbol: null,
+    sourceAmount: null,
+    sourceQuantity: null,
+    destinationAccountId: null,
+    destinationAssetId: null,
+    destinationSymbol: null,
+    destinationAmount: null,
+    destinationQuantity: null,
+    fee: null,
     current,
     projected,
     beforeComparison: input.strategy ? compareAllocationToStrategy(current, input.strategy) : [],
@@ -73,6 +82,88 @@ export function calculatePortfolioScenario(input: CalculatePortfolioScenarioInpu
     resolvedWarnings,
     maximumCompliantAmount,
     remainingAmount,
+    reasonCodes,
+  };
+}
+
+function calculateTradeScenario(input: CalculatePortfolioScenarioInput): PortfolioScenarioResult {
+  const sourceAssetId = input.sourceAssetId ?? input.assetId;
+  const sourceAccountId = input.sourceAccountId ?? input.accountId;
+  const destinationAssetId = input.destinationAssetId ?? input.assetId;
+  const destinationAccountId = input.destinationAccountId ?? input.accountId;
+  const sourceAmount = requirePositiveMoney(input.sourceAmount ?? input.amount, "Scenario source amount");
+  const fee = requireScenarioFee(input.fee ?? "0", sourceAmount);
+  const sourceAsset = requireScenarioAsset(input, sourceAssetId, "Source asset");
+  const destinationAsset = requireScenarioAsset(input, destinationAssetId, "Destination asset");
+  if (sourceAsset.id === destinationAsset.id) throw new Error("Trade source and destination assets must be different.");
+  requireScenarioAccount(input, sourceAccountId, "Source account");
+  requireScenarioAccount(input, destinationAccountId, "Destination account");
+  const sourcePrice = requireMarketPrice(input, sourceAsset.id, "Source price");
+  const destinationPrice = requireMarketPrice(input, destinationAsset.id, "Destination price");
+  const destinationAmount = sourceAmount.minus(fee);
+  const sourceQuantity = sourceAmount.div(sourcePrice);
+  const destinationQuantity = destinationAmount.div(destinationPrice);
+
+  const current = calculatePortfolio(input);
+  requireCompletePortfolioValuation(current);
+  validateAccountSell(current, sourceAccountId, sourceAsset.id, sourceQuantity, sourceAsset.symbol);
+
+  const currentRisk = riskFor(current, input);
+  const currentWarnings = warningsFor(current, currentRisk, input);
+  const projected = projectTrade(input, {
+    sourceAccountId,
+    sourceAssetId: sourceAsset.id,
+    sourceQuantity,
+    sourcePrice,
+    destinationAccountId,
+    destinationAssetId: destinationAsset.id,
+    destinationQuantity,
+    destinationPrice,
+    fee,
+  });
+  const projectedRisk = riskFor(projected, input);
+  const projectedWarnings = warningsFor(projected, projectedRisk, input);
+  const currentKeys = new Set(currentWarnings.map(warningKey));
+  const projectedKeys = new Set(projectedWarnings.map(warningKey));
+  const newWarnings = projectedWarnings.filter((warning) => !currentKeys.has(warningKey(warning)));
+  const resolvedWarnings = currentWarnings.filter((warning) => !projectedKeys.has(warningKey(warning)));
+  const isPartial = current.missingPriceSymbols.length > 0 || projected.missingPriceSymbols.length > 0;
+  const reasonCodes: PortfolioScenarioResult["reasonCodes"] = ["SCENARIO_APPLIED", "INTERNAL_TRADE"];
+  if (isPartial) reasonCodes.push("PARTIAL_VALUATION");
+  if (input.hasStalePrices) reasonCodes.push("STALE_PRICE_DATA");
+  if (newWarnings.length > 0) reasonCodes.push("NEW_WARNING");
+  if (resolvedWarnings.length > 0) reasonCodes.push("WARNING_RESOLVED");
+
+  return {
+    kind: "TRADE",
+    accountId: destinationAccountId,
+    assetId: destinationAsset.id,
+    symbol: destinationAsset.symbol,
+    amount: toDecimalString(sourceAmount),
+    quantity: toQuantityString(destinationQuantity),
+    sourceAccountId,
+    sourceAssetId: sourceAsset.id,
+    sourceSymbol: sourceAsset.symbol,
+    sourceAmount: toDecimalString(sourceAmount),
+    sourceQuantity: toQuantityString(sourceQuantity),
+    destinationAccountId,
+    destinationAssetId: destinationAsset.id,
+    destinationSymbol: destinationAsset.symbol,
+    destinationAmount: toDecimalString(destinationAmount),
+    destinationQuantity: toQuantityString(destinationQuantity),
+    fee: toDecimalString(fee),
+    current,
+    projected,
+    beforeComparison: input.strategy ? compareAllocationToStrategy(current, input.strategy) : [],
+    afterComparison: input.strategy ? compareAllocationToStrategy(projected, input.strategy) : [],
+    currentRisk,
+    projectedRisk,
+    currentWarnings,
+    projectedWarnings,
+    newWarnings,
+    resolvedWarnings,
+    maximumCompliantAmount: null,
+    remainingAmount: null,
     reasonCodes,
   };
 }
@@ -93,6 +184,46 @@ function project(
         type: input.kind === "SELL" ? TransactionType.SELL : input.kind === "CONTRIBUTION" ? TransactionType.DEPOSIT : TransactionType.BUY,
         quantity: toQuantityString(quantity),
         pricePerUnit: toDecimalString(price),
+        currency: input.baseCurrency,
+      },
+    ],
+  });
+}
+
+function projectTrade(
+  input: CalculatePortfolioScenarioInput,
+  trade: {
+    sourceAccountId: string;
+    sourceAssetId: string;
+    sourceQuantity: Prisma.Decimal;
+    sourcePrice: Prisma.Decimal;
+    destinationAccountId: string;
+    destinationAssetId: string;
+    destinationQuantity: Prisma.Decimal;
+    destinationPrice: Prisma.Decimal;
+    fee: Prisma.Decimal;
+  },
+) {
+  return calculatePortfolio({
+    assets: input.assets,
+    marketPrices: input.marketPrices,
+    transactions: [
+      ...input.transactions,
+      {
+        accountId: trade.sourceAccountId,
+        assetId: trade.sourceAssetId,
+        type: TransactionType.SELL,
+        quantity: toQuantityString(trade.sourceQuantity),
+        pricePerUnit: toDecimalString(trade.sourcePrice),
+        currency: input.baseCurrency,
+      },
+      {
+        accountId: trade.destinationAccountId,
+        assetId: trade.destinationAssetId,
+        type: TransactionType.BUY,
+        quantity: toQuantityString(trade.destinationQuantity),
+        pricePerUnit: toDecimalString(trade.destinationPrice),
+        fee: toDecimalString(trade.fee),
         currency: input.baseCurrency,
       },
     ],
@@ -174,15 +305,48 @@ function warningKey(warning: PortfolioScenarioWarning) {
   return `${warning.source}:${warning.code}:${warning.subject}`;
 }
 
-function requirePositiveMoney(value: CalculatePortfolioScenarioInput["amount"]) {
+function requireScenarioAsset(input: CalculatePortfolioScenarioInput, assetId: string, label: string) {
+  const asset = input.assets.find((candidate) => candidate.id === assetId);
+  if (!asset) throw new Error(`${label} was not found.`);
+  return asset;
+}
+
+function requireScenarioAccount(input: CalculatePortfolioScenarioInput, accountId: string, label: string) {
+  if (!input.accounts.some((account) => account.id === accountId)) throw new Error(`${label} was not found.`);
+}
+
+function requireMarketPrice(input: CalculatePortfolioScenarioInput, assetId: string, label: string) {
+  const asset = requireScenarioAsset(input, assetId, label);
+  const rawPrice = input.marketPrices[asset.symbol];
+  if (rawPrice === undefined) throw new Error(`${label} is unavailable for ${asset.symbol}.`);
+  const price = decimal(rawPrice);
+  if (!price.isFinite() || !price.greaterThan(ZERO)) throw new Error(`${label} must be greater than zero for ${asset.symbol}.`);
+  return price;
+}
+
+function requirePositiveMoney(value: CalculatePortfolioScenarioInput["amount"], label: string) {
   let amount: Prisma.Decimal;
   try {
     amount = decimal(value);
   } catch {
-    throw new Error("Scenario amount must be a valid number.");
+    throw new Error(`${label} must be a valid number.`);
   }
   if (!amount.isFinite() || amount.decimalPlaces() > 2 || !amount.greaterThan(ZERO)) {
-    throw new Error("Scenario amount must be positive with at most two decimal places.");
+    throw new Error(`${label} must be positive with at most two decimal places.`);
   }
   return amount;
+}
+
+function requireScenarioFee(value: CalculatePortfolioScenarioInput["fee"], sourceAmount: Prisma.Decimal) {
+  let fee: Prisma.Decimal;
+  try {
+    fee = decimal(value ?? "0");
+  } catch {
+    throw new Error("Scenario fee must be a valid number.");
+  }
+  if (!fee.isFinite() || fee.decimalPlaces() > 2 || fee.lessThan(ZERO)) {
+    throw new Error("Scenario fee must be non-negative with at most two decimal places.");
+  }
+  if (!fee.lessThan(sourceAmount)) throw new Error("Scenario fee must be less than the source amount.");
+  return fee;
 }

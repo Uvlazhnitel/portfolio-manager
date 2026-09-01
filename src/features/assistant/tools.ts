@@ -29,17 +29,21 @@ export const assistantToolDefinitions: Responses.Tool[] = [
   {
     type: "function",
     name: "simulate_scenario",
-    description: "Run a deterministic read-only BUY, SELL, or external CONTRIBUTION scenario. Never use it for an internal Trade. If funding source is unclear, ask the user before selecting BUY versus CONTRIBUTION.",
+    description: "Run a deterministic read-only EXTERNAL_BUY, SELL, CONTRIBUTION, or TRADE scenario. Use TRADE only when the user names an existing funding asset. If funding source is unclear, ask whether it is new money or an existing portfolio reallocation.",
     strict: true,
     parameters: {
       type: "object",
       properties: {
-        symbol: { type: "string", description: "Existing asset symbol, for example BTC." },
-        kind: { type: "string", enum: ["BUY", "SELL", "CONTRIBUTION"] },
-        amount: { type: "string", description: "Positive amount in the portfolio base currency with at most two decimals." },
-        accountName: { type: ["string", "null"], description: "Exact existing account name, or null for deterministic safe resolution." },
+        symbol: { type: "string", description: "Existing destination/requested asset symbol, for example BTC." },
+        kind: { type: "string", enum: ["BUY", "EXTERNAL_BUY", "SELL", "CONTRIBUTION", "TRADE"] },
+        amount: { type: "string", description: "Positive amount in the portfolio base currency with at most two decimals. For TRADE, this is the source amount." },
+        accountName: { type: ["string", "null"], description: "Exact existing account name for legacy BUY/EXTERNAL_BUY/SELL/CONTRIBUTION, or null for deterministic safe resolution." },
+        sourceSymbol: { type: ["string", "null"], description: "Existing funding asset symbol for TRADE, for example USDT. Must be null for non-trade scenarios." },
+        sourceAccountName: { type: ["string", "null"], description: "Exact source account name for TRADE, or null for deterministic safe resolution." },
+        destinationAccountName: { type: ["string", "null"], description: "Exact destination account name for TRADE, or null to use the source account." },
+        fee: { type: ["string", "null"], description: "Optional non-negative base-currency trade fee with at most two decimals, or null." },
       },
-      required: ["symbol", "kind", "amount", "accountName"],
+      required: ["symbol", "kind", "amount", "accountName", "sourceSymbol", "sourceAccountName", "destinationAccountName", "fee"],
       additionalProperties: false,
     },
   },
@@ -101,30 +105,70 @@ export async function executeAssistantTool(
     const parsed = simulateScenarioToolSchema.parse(argumentsValue);
     const asset = runtime.assets.find((candidate) => candidate.symbol.toUpperCase() === parsed.symbol);
     if (!asset) return unavailable("ASSET_NOT_FOUND", { symbol: parsed.symbol });
-    const account = resolveScenarioAccount(runtime, asset.id, parsed.accountName);
-    if ("reasonCode" in account) return unavailable(account.reasonCode, { accounts: account.candidates });
-    if (runtime.marketPrices[asset.symbol] === undefined) return unavailable("MISSING_MARKET_PRICE", { symbol: asset.symbol });
     if (runtime.context.valuation.isPartial) {
       return unavailable("INCOMPLETE_VALUATION", {
         missingPriceSymbols: runtime.context.valuation.missingPriceSymbols,
         reasonCodes: ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"],
       });
     }
+
+    if (parsed.kind === "TRADE") {
+      if (!parsed.sourceSymbol) return unavailable("SOURCE_ASSET_REQUIRED");
+      const sourceAsset = runtime.assets.find((candidate) => candidate.symbol.toUpperCase() === parsed.sourceSymbol);
+      if (!sourceAsset) return unavailable("SOURCE_ASSET_REQUIRED", { symbol: parsed.sourceSymbol });
+      const account = resolveTradeAccounts(runtime, sourceAsset.id, parsed.sourceAccountName, parsed.destinationAccountName);
+      if ("reasonCode" in account) return unavailable(account.reasonCode, { accounts: account.candidates });
+      if (runtime.marketPrices[sourceAsset.symbol] === undefined) return unavailable("MISSING_MARKET_PRICE", { symbol: sourceAsset.symbol });
+      if (runtime.marketPrices[asset.symbol] === undefined) return unavailable("MISSING_MARKET_PRICE", { symbol: asset.symbol });
+      let scenario: PortfolioScenarioResult;
+      try {
+        scenario = calculatePortfolioScenario({
+          assets: runtime.assets,
+          transactions: runtime.transactions,
+          marketPrices: runtime.marketPrices,
+          accounts: engineAccounts(runtime),
+          strategy: runtime.strategy?.allocations ?? null,
+          riskThresholds: runtime.riskThresholds,
+          hasStalePrices: runtime.hasStalePrices,
+          baseCurrency: runtime.context.baseCurrency,
+          accountId: account.destination.id,
+          assetId: asset.id,
+          kind: parsed.kind,
+          amount: parsed.amount,
+          sourceAssetId: sourceAsset.id,
+          sourceAccountId: account.source.id,
+          destinationAssetId: asset.id,
+          destinationAccountId: account.destination.id,
+          sourceAmount: parsed.amount,
+          fee: parsed.fee ?? "0",
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("Sell amount exceeds")) {
+          return unavailable("INSUFFICIENT_SOURCE_HOLDING", { accountName: account.source.name, symbol: sourceAsset.symbol });
+        }
+        throw error;
+      }
+      return scenarioOutput(scenario, account.destination.name, runtime);
+    }
+
+    const account = resolveScenarioAccount(runtime, asset.id, parsed.accountName);
+    if ("reasonCode" in account) return unavailable(account.reasonCode, { accounts: account.candidates });
+    if (runtime.marketPrices[asset.symbol] === undefined) return unavailable("MISSING_MARKET_PRICE", { symbol: asset.symbol });
     let scenario: PortfolioScenarioResult;
     try {
       scenario = calculatePortfolioScenario({
-      assets: runtime.assets,
-      transactions: runtime.transactions,
-      marketPrices: runtime.marketPrices,
-      accounts: engineAccounts(runtime),
-      strategy: runtime.strategy?.allocations ?? null,
-      riskThresholds: runtime.riskThresholds,
-      hasStalePrices: runtime.hasStalePrices,
-      baseCurrency: runtime.context.baseCurrency,
-      accountId: account.id,
-      assetId: asset.id,
-      kind: parsed.kind,
-      amount: parsed.amount,
+        assets: runtime.assets,
+        transactions: runtime.transactions,
+        marketPrices: runtime.marketPrices,
+        accounts: engineAccounts(runtime),
+        strategy: runtime.strategy?.allocations ?? null,
+        riskThresholds: runtime.riskThresholds,
+        hasStalePrices: runtime.hasStalePrices,
+        baseCurrency: runtime.context.baseCurrency,
+        accountId: account.id,
+        assetId: asset.id,
+        kind: parsed.kind,
+        amount: parsed.amount,
       });
     } catch (error) {
       if (error instanceof Error && error.message.includes("Sell amount exceeds")) {
@@ -252,6 +296,17 @@ function scenarioOutput(scenario: PortfolioScenarioResult, accountName: string, 
     accountName,
     amount: scenario.amount,
     quantity: scenario.quantity,
+    sourceSymbol: scenario.sourceSymbol,
+    sourceAccountId: scenario.sourceAccountId,
+    sourceAccountName: scenario.sourceAccountId ? accountNameById(runtime, scenario.sourceAccountId) : null,
+    sourceAmount: scenario.sourceAmount,
+    sourceQuantity: scenario.sourceQuantity,
+    destinationSymbol: scenario.destinationSymbol,
+    destinationAccountId: scenario.destinationAccountId,
+    destinationAccountName: scenario.destinationAccountId ? accountNameById(runtime, scenario.destinationAccountId) : null,
+    destinationAmount: scenario.destinationAmount,
+    destinationQuantity: scenario.destinationQuantity,
+    fee: scenario.fee,
     currency: runtime.context.baseCurrency,
     currentPortfolioValue: scenario.current.totalValue,
     projectedPortfolioValue: scenario.projected.totalValue,
@@ -289,6 +344,50 @@ function resolveScenarioAccount(runtime: AssistantPortfolioRuntime, assetId: str
   if (holdingAccounts.length === 1) return holdingAccounts[0];
   if (candidates.length === 1) return candidates[0];
   return { reasonCode: "ACCOUNT_REQUIRED", candidates };
+}
+
+function resolveTradeAccounts(
+  runtime: AssistantPortfolioRuntime,
+  sourceAssetId: string,
+  sourceAccountName: string | null,
+  destinationAccountName: string | null,
+) {
+  const candidates = runtime.accounts.map((account) => ({ id: account.id, name: account.name, type: account.type, custodian: account.custodian?.name ?? null }));
+  const source = sourceAccountName
+    ? resolveAccountByName(candidates, sourceAccountName, "SOURCE_ACCOUNT_REQUIRED")
+    : resolveUniqueHoldingAccount(runtime, candidates, sourceAssetId, "SOURCE_ACCOUNT_REQUIRED");
+  if ("reasonCode" in source) return source;
+
+  const destination = destinationAccountName
+    ? resolveAccountByName(candidates, destinationAccountName, "DESTINATION_ACCOUNT_REQUIRED")
+    : source;
+  if ("reasonCode" in destination) return destination;
+
+  return { source, destination };
+}
+
+function resolveAccountByName(
+  candidates: Array<{ id: string; name: string; type: string; custodian: string | null }>,
+  requestedName: string,
+  reasonCode: string,
+) {
+  const matches = candidates.filter((account) => account.name.toLocaleLowerCase() === requestedName.toLocaleLowerCase());
+  return matches.length === 1 ? matches[0] : { reasonCode, candidates };
+}
+
+function resolveUniqueHoldingAccount(
+  runtime: AssistantPortfolioRuntime,
+  candidates: Array<{ id: string; name: string; type: string; custodian: string | null }>,
+  assetId: string,
+  reasonCode: string,
+) {
+  const holdingAccountIds = new Set(runtime.portfolio.holdings.filter((holding) => holding.assetId === assetId).map((holding) => holding.accountId));
+  const holdingAccounts = candidates.filter((account) => holdingAccountIds.has(account.id));
+  return holdingAccounts.length === 1 ? holdingAccounts[0] : { reasonCode, candidates };
+}
+
+function accountNameById(runtime: AssistantPortfolioRuntime, accountId: string) {
+  return runtime.accounts.find((account) => account.id === accountId)?.name ?? null;
 }
 
 function engineAccounts(runtime: AssistantPortfolioRuntime) {

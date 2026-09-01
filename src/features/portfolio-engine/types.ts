@@ -555,7 +555,7 @@ export type SimulatedTransactionInput = CalculatePortfolioInput & {
   transaction: EngineTransaction;
 };
 
-export type PortfolioScenarioKind = "BUY" | "SELL" | "CONTRIBUTION";
+export type PortfolioScenarioKind = "BUY" | "EXTERNAL_BUY" | "SELL" | "CONTRIBUTION" | "TRADE";
 
 export type PortfolioScenarioWarning = {
   source: "STRATEGY" | "RISK";
@@ -571,6 +571,7 @@ export type PortfolioScenarioReasonCode =
   | "STANDALONE_BUY"
   | "STANDALONE_SELL"
   | "EXTERNAL_CONTRIBUTION"
+  | "INTERNAL_TRADE"
   | "PARTIAL_VALUATION"
   | "STALE_PRICE_DATA"
   | "NEW_WARNING"
@@ -587,6 +588,12 @@ export type CalculatePortfolioScenarioInput = CalculatePortfolioInput & {
   assetId: string;
   kind: PortfolioScenarioKind;
   amount: DecimalLike;
+  sourceAssetId?: string;
+  sourceAccountId?: string;
+  destinationAssetId?: string;
+  destinationAccountId?: string;
+  sourceAmount?: DecimalLike;
+  fee?: DecimalLike;
 };
 
 export type PortfolioScenarioResult = {
@@ -596,6 +603,17 @@ export type PortfolioScenarioResult = {
   symbol: string;
   amount: string;
   quantity: string;
+  sourceAccountId: string | null;
+  sourceAssetId: string | null;
+  sourceSymbol: string | null;
+  sourceAmount: string | null;
+  sourceQuantity: string | null;
+  destinationAccountId: string | null;
+  destinationAssetId: string | null;
+  destinationSymbol: string | null;
+  destinationAmount: string | null;
+  destinationQuantity: string | null;
+  fee: string | null;
   current: PortfolioSnapshot;
   projected: PortfolioSnapshot;
   beforeComparison: AllocationComparison[];

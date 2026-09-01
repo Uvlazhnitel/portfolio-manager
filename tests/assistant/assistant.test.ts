@@ -147,7 +147,10 @@ describe("assistant portfolio context and tools", () => {
     expect(names).not.toEqual(expect.arrayContaining(["simulate_transaction", "plan_contribution"]));
     expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain("For what changed since the previous observation, call get_daily_brief");
     expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain("Never calculate allocation, value, drift, P&L, TWR, XIRR, risk");
+    expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain("use TRADE with that source asset");
     expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain("Never execute trades, create transactions, persist scenarios");
+    expect(JSON.stringify(assistantToolDefinitions.find((tool) => "name" in tool && tool.name === "simulate_scenario"))).toContain("EXTERNAL_BUY");
+    expect(JSON.stringify(assistantToolDefinitions.find((tool) => "name" in tool && tool.name === "simulate_scenario"))).toContain("TRADE");
   });
 
   it("builds compact Decimal-safe context without transaction notes", () => {
@@ -164,6 +167,8 @@ describe("assistant portfolio context and tools", () => {
     const savedStrategy = await executeAssistantTool("get_strategy", "{}", runtime) as { allocations: unknown[] };
     const plan = await executeAssistantTool("explain_contribution_plan", JSON.stringify({ amount: "1000" }), runtime) as { currency: string; allocations: Array<{ amount: string }>; assetRecommendations: Array<{ symbol: string }> };
     const simulation = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "btc", kind: "BUY", amount: "500", accountName: null }), runtime) as unknown as { allocationAfter: Array<{ assetClass: string; currentPercent: string }>; newWarnings: Array<{ code: string }>; alternatives: { maximumAmountForRequestedAsset: string } };
+    const externalBuy = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "BTC", kind: "EXTERNAL_BUY", amount: "50", accountName: null, sourceSymbol: null, sourceAccountName: null, destinationAccountName: null, fee: null }), runtime) as unknown as { reasonCodes: string[]; projectedPortfolioValue: string };
+    const trade = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "BTC", kind: "TRADE", amount: "50", accountName: null, sourceSymbol: "EUR", sourceAccountName: null, destinationAccountName: null, fee: null }), runtime) as unknown as { reasonCodes: string[]; currentPortfolioValue: string; projectedPortfolioValue: string; sourceSymbol: string; destinationSymbol: string; sourceAmount: string; destinationAmount: string; sourceQuantity: string; destinationQuantity: string };
 
     expect(summary.valuation.totalPortfolioValue).toBe("1000.00");
     expect(savedStrategy.allocations).toHaveLength(4);
@@ -174,6 +179,17 @@ describe("assistant portfolio context and tools", () => {
     expect(simulation.allocationAfter).toContainEqual(expect.objectContaining({ assetClass: "CRYPTO", currentPercent: "40.00" }));
     expect(simulation.newWarnings).toContainEqual(expect.objectContaining({ code: "CRYPTO_ABOVE_MAX" }));
     expect(simulation.alternatives.maximumAmountForRequestedAsset).toBe("125.00");
+    expect(externalBuy.reasonCodes).toContain("STANDALONE_BUY");
+    expect(externalBuy.projectedPortfolioValue).toBe("1050.00");
+    expect(trade.reasonCodes).toContain("INTERNAL_TRADE");
+    expect(trade.currentPortfolioValue).toBe("1000.00");
+    expect(trade.projectedPortfolioValue).toBe("1000.00");
+    expect(trade.sourceSymbol).toBe("EUR");
+    expect(trade.destinationSymbol).toBe("BTC");
+    expect(trade.sourceAmount).toBe("50.00");
+    expect(trade.destinationAmount).toBe("50.00");
+    expect(trade.sourceQuantity).toBe("50");
+    expect(trade.destinationQuantity).toBe("0.5");
     expect(await testDb.prisma.transaction.count()).toBe(transactionCount);
   });
 
