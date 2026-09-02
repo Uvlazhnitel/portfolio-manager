@@ -2,6 +2,7 @@ import { AssetType, type Prisma } from "@prisma/client";
 import { calculateAssetNetCostBasis, calculateHoldingCostBasis, calculatePortfolio, calculatePortfolioAnalytics, compareAllocationToStrategy, getPortfolioValuationAvailability } from "@/features/portfolio-engine";
 import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/service";
+import { buildPortfolioValuationPresentation } from "@/features/portfolio/valuation-presentation";
 import { PortfolioRepository } from "@/features/portfolio/repository";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { serializeDecimal, serializeNullableDecimal } from "@/lib/db/decimal";
@@ -105,6 +106,8 @@ export type PortfolioReadModel = {
   transactions: PortfolioTransactionRow[];
   valuation: {
     totalValue: string;
+    exactTotalValue: string | null;
+    knownValuedSubtotal: string;
     currency: string;
     isPartial: boolean;
     missingPriceSymbols: string[];
@@ -166,6 +169,7 @@ export async function getPortfolioReadModel({
     transactions,
     marketPrices: toEngineMarketPrices(marketData),
   });
+  const valuationPresentation = buildPortfolioValuationPresentation(portfolio);
   const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency: resolvedBaseCurrency });
   const valuationAvailability = getPortfolioValuationAvailability(portfolio);
   const holdings = buildHoldingRows(assets, accounts, transactions, portfolio, marketData.prices, resolvedBaseCurrency);
@@ -199,9 +203,11 @@ export async function getPortfolioReadModel({
     transactions: buildTransactionRows(transactions),
     valuation: {
       totalValue: portfolio.totalValue,
+      exactTotalValue: valuationPresentation.exactTotalValue,
+      knownValuedSubtotal: valuationPresentation.knownValuedSubtotal,
       currency: resolvedBaseCurrency,
-      isPartial: portfolio.missingPriceSymbols.length > 0,
-      missingPriceSymbols: valuationAvailability.missingPriceSymbols,
+      isPartial: valuationPresentation.isPartial,
+      missingPriceSymbols: valuationPresentation.missingPriceSymbols,
       lastUpdated: marketData.lastUpdated,
       hasStalePrices: marketData.hasStalePrices,
       warning: marketData.warning,

@@ -10,6 +10,7 @@ import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/
 import { PortfolioRepository } from "@/features/portfolio/repository";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
+import { parseSavedContributionAllocations } from "@/features/contributions/saved-plan";
 import {
   parsePreviewInput,
   validateContributionAllocations,
@@ -82,7 +83,7 @@ export async function getContributionPlannerModel({
   const activeAssetClasses = strategy.allocations.map((allocation) => allocation.assetClass);
   const recommendedAllocations = normalizeAllocations(recommendation?.plan.allocations ?? [], activeAssetClasses);
   const shouldRestoreSavedAllocation = !preferredAmount && Boolean(saved);
-  const savedAllocations = shouldRestoreSavedAllocation && saved ? parseSavedAllocations(saved.allocations) : [];
+  const savedAllocations = shouldRestoreSavedAllocation && saved ? parseSavedContributionAllocations(saved.allocations) : [];
   const allocations = shouldRestoreSavedAllocation ? normalizeAllocations(savedAllocations, activeAssetClasses) : recommendedAllocations;
   let projection: ContributionProjection | null = null;
   if (canPlan && contributionAmount && contributionAmount !== "0" && !setupError) {
@@ -201,13 +202,4 @@ function incompleteValuationMessage(symbols: string[]) {
 function normalizeAllocations(allocations: Array<{ assetClass: AssetClass; amount: string }>, assetClasses: AssetClass[]) {
   const byClass = new Map(allocations.map((allocation) => [allocation.assetClass, allocation.amount]));
   return assetClasses.map((assetClass) => ({ assetClass, amount: byClass.get(assetClass) ?? "0.00" }));
-}
-
-function parseSavedAllocations(value: unknown): ParsedContributionAllocation[] {
-  if (!Array.isArray(value)) throw new Error("Saved contribution allocations are invalid.");
-  return value.map((item) => {
-    if (!item || typeof item !== "object") throw new Error("Saved contribution allocations are invalid.");
-    const row = item as Record<string, unknown>;
-    return { assetClass: row.assetClass as AssetClass, amount: String(row.amount) };
-  });
 }

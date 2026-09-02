@@ -72,8 +72,13 @@ beforeAll(async () => {
     strategyId: strategy.id,
     contributionAmount: "1000",
     currency: "EUR",
-    allocations: [],
-    isCustomized: false,
+    allocations: [
+      { assetClass: AssetClass.ETF, amount: "600.00" },
+      { assetClass: AssetClass.CRYPTO, amount: "400.00" },
+      { assetClass: AssetClass.GOLD, amount: "0.00" },
+      { assetClass: AssetClass.CASH, amount: "0.00" },
+    ],
+    isCustomized: true,
   } });
 
   const now = new Date();
@@ -126,6 +131,8 @@ describe("priced portfolio read models", () => {
     const gold = model.holdings.find((holding) => holding.symbol === "PHYSICAL_GOLD");
 
     expect(model.valuation.totalValue).toBe("51000.00");
+    expect(model.valuation.exactTotalValue).toBe("51000.00");
+    expect(model.valuation.knownValuedSubtotal).toBe("51000.00");
     expect(model.valuation.isPartial).toBe(false);
     expect(model.strategyStatus?.totalCount).toBe(4);
     expect(btc).toEqual(expect.objectContaining({
@@ -177,6 +184,8 @@ describe("priced portfolio read models", () => {
 
     expect(model.valuation).toEqual(expect.objectContaining({
       totalValue: "50000.00",
+      exactTotalValue: null,
+      knownValuedSubtotal: "50000.00",
       isPartial: true,
       missingPriceSymbols: ["PHYSICAL_GOLD"],
     }));
@@ -206,6 +215,11 @@ describe("priced portfolio read models", () => {
     expect(dashboard.valuation.isPartial).toBe(false);
     expect(dashboard.contribution.amount).toBe("1000");
     expect(dashboard.contribution.projection?.plan.contributionAmount).toBe("1000.00");
+    expect(dashboard.contribution.projection?.isCustomized).toBe(true);
+    expect(dashboard.contribution.projection?.plan.allocations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ assetClass: AssetClass.ETF, amount: "600.00" }),
+      expect.objectContaining({ assetClass: AssetClass.CRYPTO, amount: "400.00" }),
+    ]));
     expect(dashboard.contribution.projection?.plan.assetRecommendations.length).toBeGreaterThan(0);
     expect(dashboard.history.points).toEqual([]);
     expect(dashboard.allocation.rows[0]).toEqual(expect.objectContaining({ assetClass: AssetClass.CRYPTO, driftPercent: "83.04" }));

@@ -8,6 +8,7 @@ import {
   formatDashboardSignedCurrency,
   strategyWarningText,
 } from "@/features/dashboard/presentation";
+import { portfolioValuationDisplayLabel } from "@/features/portfolio/valuation-presentation";
 
 describe("dashboard presentation helpers", () => {
   it("formats small and very large portfolio values without losing finite output", () => {
@@ -26,6 +27,11 @@ describe("dashboard presentation helpers", () => {
     expect(parseContributionQueryAmount("0")).toBeNull();
     expect(parseContributionQueryAmount("1.234")).toBeNull();
     expect(parseContributionQueryAmount(["100", "200"])).toBeNull();
+  });
+
+  it("labels partial valuation as known value instead of exact portfolio value", () => {
+    expect(portfolioValuationDisplayLabel({ isPartial: false })).toBe("Portfolio value");
+    expect(portfolioValuationDisplayLabel({ isPartial: true })).toBe("Known value");
   });
 
   it("keeps class-only contribution allocations visible in the dashboard list", () => {

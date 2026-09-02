@@ -1,6 +1,5 @@
 import type { AssetClass, DailyMarketPrice } from "@prisma/client";
 import {
-  buildContributionProjection,
   calculateHistoricalPerformance,
   calculatePortfolio,
   calculatePortfolioAnalytics,
@@ -12,10 +11,12 @@ import {
   type HistoricalMarketSnapshot,
   type PortfolioPerformancePoint,
 } from "@/features/portfolio-engine";
+import { buildSavedContributionProjection } from "@/features/contributions/saved-plan";
 import { decimal, toDecimalString } from "@/features/portfolio-engine/decimal";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
 import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/service";
 import { DailyMarketPriceRepository, type DailyMarketPriceStore } from "@/features/performance/repository";
+import { buildPortfolioValuationPresentation } from "@/features/portfolio/valuation-presentation";
 import { PortfolioRepository } from "@/features/portfolio/repository";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { serializeDecimal } from "@/lib/db/decimal";
@@ -24,6 +25,8 @@ import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 export type DashboardReadModel = {
   valuation: {
     totalValue: string;
+    exactTotalValue: string | null;
+    knownValuedSubtotal: string;
     investmentGain: string | null;
     netInvested: string;
     trackedCapital: string;
@@ -102,6 +105,7 @@ export async function getDashboardReadModel({
     dailyPriceStore.listDailyPrices(baseCurrency),
   ]);
   const portfolio = calculatePortfolio({ assets, transactions, marketPrices: toEngineMarketPrices(marketData) });
+  const valuationPresentation = buildPortfolioValuationPresentation(portfolio);
   const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency });
   const valuationAvailability = getPortfolioValuationAvailability(portfolio);
   const canEvaluateAllocation = valuationAvailability.state === "AVAILABLE";
@@ -109,10 +113,10 @@ export async function getDashboardReadModel({
   const warnings = strategy && canEvaluateAllocation ? evaluateStrategyCompliance(portfolio, strategy.allocations) : [];
   const allocationByClass = new Map(portfolio.allocation.map((item) => [item.assetClass, item]));
   const contributionAmount = savedPlan ? serializeDecimal(savedPlan.contributionAmount) : "";
-  let contributionProjection: ReturnType<typeof buildContributionProjection> | null = null;
-  if (strategy && canEvaluateAllocation && contributionAmount && contributionAmount !== "0") {
+  let contributionProjection: ContributionProjection | null = null;
+  if (strategy && savedPlan && canEvaluateAllocation && contributionAmount && contributionAmount !== "0") {
     try {
-      contributionProjection = buildContributionProjection({ portfolio, assets, strategy: strategy.allocations, contributionAmount });
+      contributionProjection = buildSavedContributionProjection({ portfolio, assets, strategy: strategy.allocations, savedPlan });
     } catch {
       contributionProjection = null;
     }
@@ -147,6 +151,8 @@ export async function getDashboardReadModel({
   return {
     valuation: {
       totalValue: portfolio.totalValue,
+      exactTotalValue: valuationPresentation.exactTotalValue,
+      knownValuedSubtotal: valuationPresentation.knownValuedSubtotal,
       investmentGain: analytics.investmentGain,
       netInvested: analytics.netInvested,
       trackedCapital: analytics.trackedCapital,
@@ -156,8 +162,8 @@ export async function getDashboardReadModel({
       isCostBasisPartial: analytics.isCostBasisPartial,
       missingCostBasisSymbols: analytics.missingCostBasisSymbols,
       currency: baseCurrency,
-      isPartial: portfolio.missingPriceSymbols.length > 0,
-      missingPriceSymbols: portfolio.missingPriceSymbols,
+      isPartial: valuationPresentation.isPartial,
+      missingPriceSymbols: valuationPresentation.missingPriceSymbols,
       lastUpdated: marketData.lastUpdated,
       hasStalePrices: marketData.hasStalePrices,
       warning: marketData.warning,

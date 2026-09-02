@@ -43,7 +43,18 @@ beforeAll(async () => {
       ] },
     },
   });
-  await testDb.prisma.contributionPlan.create({ data: { strategyId: strategy.id, contributionAmount: "1000", currency: "EUR", allocations: [], isCustomized: false } });
+  await testDb.prisma.contributionPlan.create({ data: {
+    strategyId: strategy.id,
+    contributionAmount: "1000",
+    currency: "EUR",
+    allocations: [
+      { assetClass: AssetClass.ETF, amount: "600.00" },
+      { assetClass: AssetClass.CRYPTO, amount: "400.00" },
+      { assetClass: AssetClass.GOLD, amount: "0.00" },
+      { assetClass: AssetClass.CASH, amount: "0.00" },
+    ],
+    isCustomized: true,
+  } });
   const now = new Date("2026-08-25T10:00:00Z");
   const prices: CachedMarketPrice[] = [
     price("etf-price", etf.id, "10", now), price("btc-price", btc.id, "100", now), price("eur-price", eur.id, "1", now),
@@ -148,22 +159,34 @@ describe("assistant portfolio context and tools", () => {
     expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain("For what changed since the previous observation, call get_daily_brief");
     expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain("Never calculate allocation, value, drift, P&L, TWR, XIRR, risk");
     expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain("use TRADE with that source asset");
+    expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain("known valued subtotal");
     expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain("Never execute trades, create transactions, persist scenarios");
     expect(JSON.stringify(assistantToolDefinitions.find((tool) => "name" in tool && tool.name === "simulate_scenario"))).toContain("EXTERNAL_BUY");
     expect(JSON.stringify(assistantToolDefinitions.find((tool) => "name" in tool && tool.name === "simulate_scenario"))).toContain("TRADE");
   });
 
   it("builds compact Decimal-safe context without transaction notes", () => {
-    expect(runtime.context.valuation).toEqual(expect.objectContaining({ totalPortfolioValue: "1000.00", isPartial: false, priceCoveragePercent: "100.00" }));
+    expect(runtime.context.valuation).toEqual(expect.objectContaining({
+      totalPortfolioValue: "1000.00",
+      exactTotalValue: "1000.00",
+      knownValuedSubtotal: "1000.00",
+      isPartial: false,
+      priceCoveragePercent: "100.00",
+    }));
     expect(runtime.context.holdings).toEqual(expect.arrayContaining([expect.objectContaining({ symbol: "BTC", quantity: "1", currentValue: "100.00" })]));
     expect(runtime.context.latestContributionRecommendation?.contributionAmount).toBe("1000.00");
+    expect(runtime.context.latestContributionRecommendation?.isCustomized).toBe(true);
+    expect(runtime.context.latestContributionRecommendation?.allocations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ assetClass: "ETF", amount: "600.00" }),
+      expect.objectContaining({ assetClass: "CRYPTO", amount: "400.00" }),
+    ]));
     expect(runtime.context.risk).toEqual(expect.objectContaining({ state: "PARTIAL", largestAsset: expect.objectContaining({ subjectName: "VWCE", valuePercent: "80.00" }), largestCustodian: expect.objectContaining({ state: "PARTIAL", valuePercent: null }) }));
     expect(JSON.stringify(runtime.context)).not.toContain("DO_NOT_SEND_THIS_NOTE");
   });
 
   it("returns deterministic summary, strategy, contribution plan, and BTC scenario", async () => {
     const transactionCount = await testDb.prisma.transaction.count();
-    const summary = await executeAssistantTool("get_portfolio_summary", "{}", runtime) as { valuation: { totalPortfolioValue: string } };
+    const summary = await executeAssistantTool("get_portfolio_summary", "{}", runtime) as { valuation: { totalPortfolioValue: string | null; exactTotalValue: string | null; knownValuedSubtotal: string } };
     const savedStrategy = await executeAssistantTool("get_strategy", "{}", runtime) as { allocations: unknown[] };
     const plan = await executeAssistantTool("explain_contribution_plan", JSON.stringify({ amount: "1000" }), runtime) as { currency: string; allocations: Array<{ amount: string }>; assetRecommendations: Array<{ symbol: string }> };
     const simulation = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "btc", kind: "BUY", amount: "500", accountName: null }), runtime) as unknown as { allocationAfter: Array<{ assetClass: string; currentPercent: string }>; newWarnings: Array<{ code: string }>; alternatives: { maximumAmountForRequestedAsset: string } };
@@ -171,6 +194,8 @@ describe("assistant portfolio context and tools", () => {
     const trade = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "BTC", kind: "TRADE", amount: "50", accountName: null, sourceSymbol: "EUR", sourceAccountName: null, destinationAccountName: null, fee: null }), runtime) as unknown as { reasonCodes: string[]; currentPortfolioValue: string; projectedPortfolioValue: string; sourceSymbol: string; destinationSymbol: string; sourceAmount: string; destinationAmount: string; sourceQuantity: string; destinationQuantity: string };
 
     expect(summary.valuation.totalPortfolioValue).toBe("1000.00");
+    expect(summary.valuation.exactTotalValue).toBe("1000.00");
+    expect(summary.valuation.knownValuedSubtotal).toBe("1000.00");
     expect(savedStrategy.allocations).toHaveLength(4);
     expect(plan.allocations.reduce((sum, allocation) => sum + Number(allocation.amount), 0)).toBe(1000);
     expect(plan.assetRecommendations.map((item) => item.symbol)).toContain("BTC");
@@ -209,7 +234,14 @@ describe("assistant portfolio context and tools", () => {
       ...runtime,
       context: {
         ...runtime.context,
-        valuation: { ...runtime.context.valuation, isPartial: true, missingPriceSymbols: ["XAUT"] },
+        valuation: {
+          ...runtime.context.valuation,
+          totalPortfolioValue: null,
+          exactTotalValue: null,
+          knownValuedSubtotal: "1000.00",
+          isPartial: true,
+          missingPriceSymbols: ["XAUT"],
+        },
         allocation: {
           state: "PARTIAL" as const,
           reasonCodes: ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"],
@@ -226,12 +258,24 @@ describe("assistant portfolio context and tools", () => {
       },
     };
     const summary = await executeAssistantTool("get_portfolio_summary", "{}", partialRuntime) as {
+      valuation: { totalPortfolioValue: string | null; exactTotalValue: string | null; knownValuedSubtotal: string; isPartial: boolean; missingPriceSymbols: string[] };
       allocation: { state: string; items: unknown[] };
       strategyCompliance: { state: string; violations: unknown[] };
     };
     const plan = await executeAssistantTool("explain_contribution_plan", JSON.stringify({ amount: "100" }), partialRuntime) as { status: string; reasonCodes: string[] };
     const scenario = await executeAssistantTool("simulate_scenario", JSON.stringify({ symbol: "BTC", kind: "BUY", amount: "10", accountName: null }), partialRuntime) as { status: string; reasonCodes: string[] };
+    const risk = await executeAssistantTool("get_risk_snapshot", "{}", partialRuntime) as {
+      valuation: { totalPortfolioValue: string | null; exactTotalValue: string | null; knownValuedSubtotal: string; isPartial: boolean };
+    };
 
+    expect(summary.valuation).toEqual(expect.objectContaining({
+      totalPortfolioValue: null,
+      exactTotalValue: null,
+      knownValuedSubtotal: "1000.00",
+      isPartial: true,
+      missingPriceSymbols: ["XAUT"],
+    }));
+    expect(risk.valuation).toEqual(expect.objectContaining({ totalPortfolioValue: null, exactTotalValue: null, knownValuedSubtotal: "1000.00", isPartial: true }));
     expect(summary.allocation).toEqual(expect.objectContaining({ state: "PARTIAL", items: [] }));
     expect(summary.strategyCompliance).toEqual(expect.objectContaining({ state: "UNAVAILABLE", violations: [] }));
     expect(plan).toEqual(expect.objectContaining({ status: "UNAVAILABLE", reasonCodes: ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"] }));
@@ -288,7 +332,7 @@ describe("assistant portfolio context and tools", () => {
   });
 
   it("explains saved and class-only contribution plans without inventing asset targets", async () => {
-    const saved = await executeAssistantTool("explain_contribution_plan", JSON.stringify({ amount: null }), runtime) as { status: string; contributionAmount: string };
+    const saved = await executeAssistantTool("explain_contribution_plan", JSON.stringify({ amount: null }), runtime) as { status: string; contributionAmount: string; isCustomized: boolean; allocations: Array<{ assetClass: string; amount: string }> };
     const noSaved = await executeAssistantTool("explain_contribution_plan", JSON.stringify({ amount: null }), { ...runtime, context: { ...runtime.context, latestContributionRecommendation: null } }) as { status: string; reasonCodes: string[] };
     const classOnlyRuntime = {
       ...runtime,
@@ -300,6 +344,11 @@ describe("assistant portfolio context and tools", () => {
     const classOnly = await executeAssistantTool("explain_contribution_plan", JSON.stringify({ amount: "100" }), classOnlyRuntime) as unknown as { allocations: unknown[]; assetRecommendations: unknown[] };
 
     expect(saved).toEqual(expect.objectContaining({ status: "AVAILABLE", contributionAmount: "1000.00" }));
+    expect(saved.isCustomized).toBe(true);
+    expect(saved.allocations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ assetClass: "ETF", amount: "600.00" }),
+      expect.objectContaining({ assetClass: "CRYPTO", amount: "400.00" }),
+    ]));
     expect(noSaved).toEqual(expect.objectContaining({ status: "UNAVAILABLE", reasonCodes: ["CONTRIBUTION_PLAN_NOT_CONFIGURED"] }));
     expect(classOnly.allocations.length).toBeGreaterThan(0);
     expect(classOnly.assetRecommendations).toEqual([]);

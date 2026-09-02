@@ -2,6 +2,7 @@ import type { Responses } from "openai/resources/responses/responses";
 import {
   buildContributionProjection,
   calculatePortfolioScenario,
+  type ContributionProjection,
   type PortfolioScenarioResult,
 } from "@/features/portfolio-engine";
 import type { AssistantPortfolioRuntime } from "@/features/assistant/context";
@@ -65,6 +66,8 @@ export async function executeAssistantTool(
       baseCurrency: runtime.context.baseCurrency,
       valuation: {
         totalPortfolioValue: runtime.context.valuation.totalPortfolioValue,
+        exactTotalValue: runtime.context.valuation.exactTotalValue,
+        knownValuedSubtotal: runtime.context.valuation.knownValuedSubtotal,
         isPartial: runtime.context.valuation.isPartial,
         priceCoveragePercent: runtime.context.valuation.priceCoveragePercent,
       },
@@ -255,12 +258,13 @@ function compactPerformance(model: Awaited<ReturnType<AssistantToolServices["get
   };
 }
 
-function contributionOutput(projection: ReturnType<typeof buildContributionProjection>, currency: string) {
+function contributionOutput(projection: ContributionProjection, currency: string) {
   const isPartial = projection.plan.before.missingPriceSymbols.length > 0 || projection.plan.projectedAfter.missingPriceSymbols.length > 0;
   const missingPriceSymbols = [...new Set([...projection.plan.before.missingPriceSymbols, ...projection.plan.projectedAfter.missingPriceSymbols])].sort();
   return {
     status: isPartial ? "PARTIAL" : "AVAILABLE",
     currency,
+    isCustomized: projection.isCustomized,
     contributionAmount: projection.plan.contributionAmount,
     allocations: projection.plan.allocations,
     assetRecommendations: projection.plan.assetRecommendations,

@@ -1,7 +1,7 @@
 import { AssetType, PortfolioRuleType } from "@prisma/client";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
+import { buildSavedContributionProjection } from "@/features/contributions/saved-plan";
 import {
-  buildContributionProjection,
   calculatePortfolio,
   calculatePortfolioAnalytics,
   calculatePortfolioRisk,
@@ -14,6 +14,7 @@ import {
 import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/service";
 import { PortfolioRepository } from "@/features/portfolio/repository";
+import { buildPortfolioValuationPresentation } from "@/features/portfolio/valuation-presentation";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { serializeDecimal } from "@/lib/db/decimal";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
@@ -28,7 +29,9 @@ type Strategy = Awaited<ReturnType<StrategyRepository["findActiveStrategy"]>>;
 export type PortfolioAssistantContext = {
   baseCurrency: string;
   valuation: {
-    totalPortfolioValue: string;
+    totalPortfolioValue: string | null;
+    exactTotalValue: string | null;
+    knownValuedSubtotal: string;
     totalUnrealizedPnl: string | null;
     investmentGain: string | null;
     netInvested: string;
@@ -92,6 +95,7 @@ export type PortfolioAssistantContext = {
   }>;
   accounts: Array<{ name: string; type: string; currentValue: string; isPartial: boolean }>;
   latestContributionRecommendation: {
+    isCustomized: boolean;
     contributionAmount: string;
     allocations: Array<{ assetClass: string; amount: string; percentOfContribution: string }>;
     assetRecommendations: Array<{
@@ -104,7 +108,7 @@ export type PortfolioAssistantContext = {
       effectiveTargetPercent: string;
     }>;
     warnings: Array<{ code: string; assetClass: string; currentPercent: string; limitPercent: string }>;
-    reasons: ReturnType<typeof buildContributionProjection>["reasons"];
+    reasons: NonNullable<ReturnType<typeof buildSavedContributionProjection>>["reasons"];
     dataQuality: { isPartial: boolean; missingPriceSymbols: string[] };
   } | null;
   marketData: { timestamp: string | null; hasStalePrices: boolean };
@@ -153,6 +157,7 @@ export async function loadAssistantPortfolioRuntime({
   ]);
   const marketPrices = toEngineMarketPrices(marketData);
   const portfolio = calculatePortfolio({ assets, transactions, marketPrices });
+  const valuationPresentation = buildPortfolioValuationPresentation(portfolio);
   const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency });
   const valuationAvailability = getPortfolioValuationAvailability(portfolio);
   const canEvaluateAllocation = valuationAvailability.state === "AVAILABLE";
@@ -181,14 +186,14 @@ export async function loadAssistantPortfolioRuntime({
     valueByAsset.set(holding.assetId, (valueByAsset.get(holding.assetId) ?? ZERO).plus(decimal(holding.value)));
   }
 
-  let recommendation: ReturnType<typeof buildContributionProjection> | null = null;
+  let recommendation: ReturnType<typeof buildSavedContributionProjection> | null = null;
   if (strategy && canEvaluateAllocation && savedPlan && decimal(savedPlan.contributionAmount).greaterThan(ZERO)) {
     try {
-      recommendation = buildContributionProjection({
+      recommendation = buildSavedContributionProjection({
         portfolio,
         assets,
         strategy: strategy.allocations,
-        contributionAmount: serializeDecimal(savedPlan.contributionAmount),
+        savedPlan,
       });
     } catch {
       recommendation = null;
@@ -198,7 +203,9 @@ export async function loadAssistantPortfolioRuntime({
   const context: PortfolioAssistantContext = {
     baseCurrency,
     valuation: {
-      totalPortfolioValue: portfolio.totalValue,
+      totalPortfolioValue: valuationPresentation.exactTotalValue,
+      exactTotalValue: valuationPresentation.exactTotalValue,
+      knownValuedSubtotal: valuationPresentation.knownValuedSubtotal,
       totalUnrealizedPnl: analytics.totalUnrealizedPnl,
       investmentGain: analytics.investmentGain,
       netInvested: analytics.netInvested,
@@ -212,8 +219,8 @@ export async function loadAssistantPortfolioRuntime({
       isCostBasisPartial: analytics.isCostBasisPartial,
       missingCostBasisSymbols: analytics.missingCostBasisSymbols,
       isExternalCashflowPartial: analytics.isExternalCashflowPartial,
-      isPartial: portfolio.missingPriceSymbols.length > 0,
-      missingPriceSymbols: portfolio.missingPriceSymbols,
+      isPartial: valuationPresentation.isPartial,
+      missingPriceSymbols: valuationPresentation.missingPriceSymbols,
       priceCoveragePercent: analytics.priceCoverage.percent,
     },
     allocation: {
@@ -284,6 +291,7 @@ export async function loadAssistantPortfolioRuntime({
     }),
     latestContributionRecommendation: recommendation
       ? {
+          isCustomized: recommendation.isCustomized,
           contributionAmount: recommendation.plan.contributionAmount,
           allocations: recommendation.plan.allocations,
           assetRecommendations: recommendation.plan.assetRecommendations,

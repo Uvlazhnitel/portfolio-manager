@@ -31,6 +31,7 @@ import {
   updateTransactionAction,
 } from "@/features/portfolio/actions";
 import type { PortfolioReadModel } from "@/features/portfolio/read-model";
+import { portfolioValuationDisplayLabel } from "@/features/portfolio/valuation-presentation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -132,10 +133,11 @@ function PortfolioOverview({ portfolio, dataQualityItems }: PortfolioClientProps
     <Card className="space-y-6">
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="min-w-0">
-          <p className="text-xs uppercase tracking-wide text-muted">Portfolio value</p>
+          <p className="text-xs uppercase tracking-wide text-muted">{portfolioValuationDisplayLabel(valuation)}</p>
           <p className="mt-5 break-words text-5xl font-semibold text-foreground sm:text-6xl">
-            {formatCurrency(valuation.totalValue, valuation.currency)}
+            {formatCurrency(valuation.exactTotalValue ?? valuation.knownValuedSubtotal, valuation.currency)}{valuation.isPartial ? "+" : ""}
           </p>
+          {valuation.isPartial ? <p className="mt-3 text-sm text-warning">Missing: {valuation.missingPriceSymbols.join(", ")}</p> : null}
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between lg:min-w-64 lg:flex-col lg:items-end">
           <div className="min-w-0 lg:text-right">
@@ -1031,7 +1033,7 @@ function preferredAccountId(accounts: PortfolioReadModel["accounts"], physicalGo
 function portfolioDataQualityItems(portfolio: PortfolioReadModel): DataQualityItem[] {
   const items: DataQualityItem[] = [];
   if (portfolio.valuation.isPartial) {
-    items.push({ message: `Partial valuation: prices are missing for ${portfolio.valuation.missingPriceSymbols.join(", ")}. Portfolio weights and strategy compliance are unavailable.` });
+    items.push({ message: `Partial valuation: known value excludes ${portfolio.valuation.missingPriceSymbols.join(", ")}. Portfolio weights and strategy compliance are unavailable.` });
   }
   if (portfolio.valuation.isCostBasisPartial) {
     items.push({ message: `Partial cost basis: net invested, gain, and return exclude ${portfolio.valuation.missingCostBasisSymbols.join(", ")}.` });

@@ -6,6 +6,7 @@ import { ArrowRight, CircleDollarSign, Clock3, Target, TrendingUp } from "lucide
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { contributionClassLabels } from "@/features/contributions/presentation";
 import type { DashboardReadModel } from "@/features/dashboard/read-model";
+import { portfolioValuationDisplayLabel } from "@/features/portfolio/valuation-presentation";
 import {
   dashboardContributionItems,
   formatDashboardCurrency as formatCurrency,
@@ -55,10 +56,11 @@ function OverviewPanel({ dashboard }: { dashboard: DashboardReadModel }) {
             <span className="text-primary"><CircleDollarSign className="h-5 w-5" aria-hidden="true" /></span>
           </div>
           <h2 className="mt-1 text-lg font-semibold text-foreground">Current position</h2>
-          <p className="mt-7 text-sm text-muted">Portfolio value</p>
+          <p className="mt-7 text-sm text-muted">{portfolioValuationDisplayLabel(valuation)}</p>
           <p className="mt-2 break-words text-5xl font-semibold tracking-normal text-foreground sm:text-6xl">
-            {formatCurrency(valuation.totalValue, valuation.currency)}
+            {formatCurrency(valuation.exactTotalValue ?? valuation.knownValuedSubtotal, valuation.currency)}{valuation.isPartial ? "+" : ""}
           </p>
+          {valuation.isPartial ? <p className="mt-3 text-sm text-warning">Missing: {valuation.missingPriceSymbols.join(", ")}</p> : null}
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end lg:pt-8">
           <DataQualitySummary items={dashboardDataQualityItems(dashboard)} className="[&_summary]:min-h-10" />
@@ -320,7 +322,7 @@ function StatusLabel({ status }: { status: DashboardReadModel["allocation"]["row
 
 function dashboardDataQualityItems(dashboard: DashboardReadModel): DataQualityItem[] {
   const items: DataQualityItem[] = [];
-  if (dashboard.valuation.isPartial) items.push({ message: `Missing prices: ${dashboard.valuation.missingPriceSymbols.join(", ")}` });
+  if (dashboard.valuation.isPartial) items.push({ message: `Known value excludes assets with missing prices: ${dashboard.valuation.missingPriceSymbols.join(", ")}` });
   if (dashboard.valuation.isCostBasisPartial) items.push({ message: `Partial cost basis: ${dashboard.valuation.missingCostBasisSymbols.join(", ")}` });
   if (dashboard.valuation.hasStalePrices) items.push({ message: "Stale prices included" });
   if (dashboard.valuation.warning) items.push({ message: dashboard.valuation.warning });

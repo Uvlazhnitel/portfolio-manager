@@ -24,7 +24,7 @@ describe("dashboard read model edge states", () => {
       dailyPriceStore: fakeDailyPrices([]),
     });
 
-    expect(dashboard.valuation.totalValue).toBe("0.00");
+    expect(dashboard.valuation).toEqual(expect.objectContaining({ totalValue: "0.00", exactTotalValue: "0.00", knownValuedSubtotal: "0.00" }));
     expect(dashboard.valuation.investmentGain).toBe("0.00");
     expect(dashboard.strategyStatus.state).toBe("EMPTY");
     expect(dashboard.history.points).toEqual([]);
@@ -64,7 +64,14 @@ describe("dashboard read model edge states", () => {
       ]),
     });
 
-    expect(dashboard.valuation).toEqual(expect.objectContaining({ totalValue: "10.00", isPartial: true, investmentGain: "5.00", isCostBasisPartial: true }));
+    expect(dashboard.valuation).toEqual(expect.objectContaining({
+      totalValue: "10.00",
+      exactTotalValue: null,
+      knownValuedSubtotal: "10.00",
+      isPartial: true,
+      investmentGain: "5.00",
+      isCostBasisPartial: true,
+    }));
     expect(dashboard.allocation).toEqual({
       state: "PARTIAL",
       reasonCodes: ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"],
@@ -119,7 +126,7 @@ describe("dashboard read model edge states", () => {
       dailyPriceStore: fakeDailyPrices([]),
     });
 
-    expect(dashboard.valuation.totalValue).toBe("100.00");
+    expect(dashboard.valuation).toEqual(expect.objectContaining({ totalValue: "100.00", exactTotalValue: "100.00", knownValuedSubtotal: "100.00" }));
     expect(dashboard.valuation.isPartial).toBe(false);
     expect(dashboard.valuation.isCostBasisPartial).toBe(true);
     expect(dashboard.valuation.missingCostBasisSymbols).toEqual(["BTC"]);

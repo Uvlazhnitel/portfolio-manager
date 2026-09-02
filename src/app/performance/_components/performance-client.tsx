@@ -293,7 +293,7 @@ function TooltipValue({ label, value }: { label: string; value: ReactNode }) { r
 function performanceDataQualityItems(performance: PerformanceReadModel): DataQualityItem[] {
   const { summary, advanced } = performance;
   const items: DataQualityItem[] = [];
-  if (summary.isPartial) items.push({ message: `Current valuation is partial because prices are missing for: ${summary.missingPriceSymbols.join(", ")}. Covered components still contribute to gain and return.` });
+  if (summary.isPartial) items.push({ message: `Current portfolio value is unavailable because prices are missing for: ${summary.missingPriceSymbols.join(", ")}. Covered components still contribute to gain and return.` });
   if (performance.incompleteDates > 0) items.push({ message: `${performance.incompleteDates} historical ${performance.incompleteDates === 1 ? "day has" : "days have"} incomplete price coverage.` });
   if (summary.isNetInvestedPartial) items.push({ message: `Net invested is partial because transaction values are missing for: ${summary.missingNetInvestedSymbols.join(", ")}.` });
   if (summary.isCostBasisPartial) items.push({ message: `Gain and return are partial. Excluded components: ${summary.performanceExclusions.map((item) => `${item.symbol} (${item.reasons.join(", ")})`).join("; ")}.` });

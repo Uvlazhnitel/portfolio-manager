@@ -24,6 +24,7 @@ import {
   type EngineTransaction,
   type PortfolioSnapshot,
 } from "@/features/portfolio-engine";
+import { buildSavedContributionProjection } from "@/features/contributions/saved-plan";
 import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 
 const assets: EngineAsset[] = [
@@ -457,6 +458,44 @@ describe("portfolio engine contribution planning and simulation", () => {
     expect(projection.plan.before.totalValue).toBe("1000.00");
     expect(projection.plan.allocations.reduce((sum, item) => sum + Math.round(Number(item.amount) * 100), 0)).toBe(10_000);
     expect(projection.isCustomized).toBe(true);
+  });
+
+  it("replays saved contribution plans as the source of truth", () => {
+    const portfolio = calculatePortfolio({ assets, marketPrices: prices, transactions: [] });
+    const recommended = buildSavedContributionProjection({
+      portfolio,
+      assets,
+      strategy,
+      savedPlan: { contributionAmount: decimal("1000"), allocations: [], isCustomized: false },
+    });
+    const customized = buildSavedContributionProjection({
+      portfolio,
+      assets,
+      strategy,
+      savedPlan: {
+        contributionAmount: decimal("1000"),
+        isCustomized: true,
+        allocations: [
+          { assetClass: AssetClass.ETF, amount: "600.00" },
+          { assetClass: AssetClass.CRYPTO, amount: "400.00" },
+          { assetClass: AssetClass.GOLD, amount: "0.00" },
+          { assetClass: AssetClass.CASH, amount: "0.00" },
+        ],
+      },
+    });
+
+    expect(recommended.isCustomized).toBe(false);
+    expect(customized.isCustomized).toBe(true);
+    expect(customized.plan.allocations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ assetClass: AssetClass.ETF, amount: "600.00" }),
+      expect.objectContaining({ assetClass: AssetClass.CRYPTO, amount: "400.00" }),
+    ]));
+    expect(() => buildSavedContributionProjection({
+      portfolio,
+      assets,
+      strategy,
+      savedPlan: { contributionAmount: decimal("1000"), allocations: [{ assetClass: AssetClass.ETF, amount: "1000.00" }], isCustomized: true },
+    })).toThrow("Contribution must contain one CRYPTO allocation.");
   });
 
   it("projects a custom contribution using only active strategy classes", () => {
