@@ -1,95 +1,175 @@
 # Portfolio Manager
 
-Single-user investment portfolio manager and decision-support copilot. The MVP focuses on long-term allocation, contribution-first rebalancing, and transparent deterministic calculations rather than trading.
+A self-hosted, single-user investment portfolio manager and read-only wealth copilot.
 
-## MVP FEATURES
+The project is built around one idea: portfolio software should be deterministic, explicit about uncertainty, and useful for long-term allocation decisions without pretending to be a trading terminal or an oracle.
 
-- PostgreSQL-backed assets, accounts, transaction history, strategy, daily and current market prices, contribution plan, and assistant conversations.
-- Holdings derived from transactions and initial balances; no manually editable Holding source of truth.
-- Deterministic Portfolio Engine for holdings, valuation, allocation, strategy compliance, P&L availability, contribution planning, risk, and read-only scenario analysis.
-- Editable class targets/ranges with optional nested asset targets; configured asset targets must total exactly 100%, while empty targets keep the class allocation intentionally asset-agnostic.
-- CoinGecko pricing for crypto and XAUT-referenced physical gold, plus Alpha Vantage ETF search and automatic daily ETF quotes with USD conversion.
-- Encrypted in-app API-key management for OpenAI, CoinGecko, Alpha Vantage, and Twelve Data with environment fallbacks.
-- Portfolio, Dashboard, Strategy, Contribution Planner, Settings, and read-only AI Assistant screens.
-- Historical Performance with daily portfolio value, deterministic TWR/XIRR, YTD and 1Y returns, observed max drawdown, and configurable benchmark comparison.
-- OpenAI Responses API assistant with deterministic read-only tools for Daily Brief, Risk, Performance, contribution plans, and BUY/SELL/contribution scenarios.
-- Responsive dark UI and installable PWA shell with conservative offline behavior.
+`/portfolio` is the primary app surface. It brings together current value, investment gain, tracked return, strategy status, risk summary, saved contribution plan, holdings, accounts, and transactions. `/` and `/dashboard` redirect to `/portfolio` for backwards compatibility.
 
-## NOT IMPLEMENTED YET
+## What it does
 
-- news intelligence
-- ETF constituent analysis
-- ETF overlap analysis
-- automatic broker sync
-- Bybit account sync
-- automated trades
-- tax calculations
-- push alerts
+- Tracks assets, accounts, custodians, transactions, transfers, internal trades, deposits, withdrawals, gifts, and opening balances in PostgreSQL.
+- Derives holdings from transaction history; holdings are not a separate editable source of truth.
+- Calculates valuation, allocation, cost basis coverage, investment gain, risk, contribution plans, strategy compliance, and scenario projections through a deterministic Portfolio Engine.
+- Preserves partial valuation semantics: if a held asset has no current price, the UI shows a known valued subtotal instead of pretending it knows the full portfolio value.
+- Supports custom contribution plans and keeps saved custom allocations as the source of truth across Portfolio and Assistant.
+- Provides a read-only AI Assistant powered by deterministic tools. The Assistant can explain, summarize, and simulate, but it cannot write transactions or execute trades.
+- Stores current market prices and daily observations for performance history and benchmark comparison.
+- Ships as an installable PWA with intentionally conservative offline behavior.
+
+## Product surfaces
+
+- **Portfolio** — app home; current value, gain, tracked return, strategy summary, risk summary, next contribution, holdings, accounts, and transactions.
+- **Plan** — strategy allocation ranges and contribution planning.
+- **Performance** — historical portfolio value, investment gain, cashflow-adjusted returns, XIRR, YTD, 1Y, max drawdown, and benchmark comparison. It remains available, but is no longer a top-level navigation item.
+- **Intelligence** — portfolio intelligence/read-model surface for future analytical features.
+- **Assistant** — read-only copilot with deterministic tools for portfolio facts, risk, performance, daily brief, contribution plans, and scenarios.
+- **Settings** — market-data providers, API keys, manual prices, custodians, and risk settings.
+
+## Financial semantics
+
+This project deliberately favors explicitness over smooth-looking but misleading numbers.
+
+### Portfolio value
+
+`calculatePortfolio().totalValue` remains the engine's known valued subtotal for compatibility. Public read models expose clearer fields:
+
+- `exactTotalValue` — full portfolio value when every held asset has a current price; otherwise `null`.
+- `knownValuedSubtotal` — subtotal of holdings with known prices.
+- `isPartial` and `missingPriceSymbols` — explain why the full value is unavailable.
+
+When valuation is partial, allocation weights, strategy compliance, contribution planning, risk decisions, and scenarios stay unavailable or partial instead of being computed from incomplete data.
+
+### Transactions and cashflows
+
+- `BUY` and `SELL` represent standalone purchases/sales against external cash unless grouped as a trade.
+- `TRADE` is an internal reallocation represented by a grouped source sell leg and destination buy leg.
+- `TRANSFER` moves quantity and basis between accounts without changing portfolio value.
+- `DEPOSIT` and `WITHDRAWAL` are external cashflows.
+- `GIFT` and opening balances remain separate from net invested unless a reliable tracking basis exists.
+
+Enter older transactions first. Sales, withdrawals, transfers, and internal trade source legs are validated against the selected account balance as of the historical execution date.
+
+### Gain and return
+
+- **Net invested** is standalone buy cost plus fees minus sell proceeds after fees.
+- **Investment gain** is current known value minus reliably tracked capital components.
+- **Return on tracked capital** uses only components with reliable basis coverage.
+- **Cashflow-adjusted return** removes daily deposits and withdrawals using day-level observations. It is intentionally labelled this way because it is not strict intraday TWR when large same-day external cashflows occur.
+- **XIRR** uses dated cashflows and remains unavailable until the covered period is long enough to avoid misleading annualization.
+
+Daily Brief contributor rankings cover price movement on holdings present at the previous complete observation. Same-day purchases from new external cashflow can affect daily gain without appearing as individual contributors.
+
+## Market data
+
+Supported provider paths:
+
+- CoinGecko for crypto prices and XAUT-referenced gold pricing.
+- Alpha Vantage for ETF listing search, daily ETF quotes, and FX conversion.
+- Twelve Data as an optional paid ETF quote provider.
+- Manual prices as fallbacks where provider data is unavailable.
+
+Provider credentials can be stored encrypted through Settings or supplied through environment variables. Database-stored credentials take precedence over environment fallbacks. The browser only receives provider status and masked key metadata, never complete secrets.
+
+ETF quote identity currently uses provider symbol, MIC metadata, and currency. A fuller Fund/Listing/ISIN model is intentionally left for a future ETF intelligence migration.
+
+## Assistant model
+
+The Assistant uses OpenAI's Responses API and a compact runtime context. It gets authoritative facts through read-only deterministic tools:
+
+- `get_portfolio_summary`
+- `get_strategy`
+- `get_daily_brief`
+- `get_risk_snapshot`
+- `get_performance_summary`
+- `explain_contribution_plan`
+- `simulate_scenario`
+
+Scenario simulation is read-only. `TRADE` models internal reallocation, while `EXTERNAL_BUY`/legacy `BUY` and `CONTRIBUTION` inject external capital. If a user asks “buy BTC for $1,000” without naming a funding source, the Assistant should ask whether this is new money or an existing asset reallocation.
+
+## Tech stack
+
+- Next.js 16 App Router
+- React 19
+- TypeScript
+- Prisma 7
+- PostgreSQL
+- Tailwind CSS 4
+- Recharts
+- Vitest
+- OpenAI SDK
+- Docker Compose
 
 ## Architecture
 
-The App Router pages call feature read models and server actions. Repositories are the only layer that queries Prisma. Portfolio calculations are pure and do not depend on React, market providers, or an LLM. Market providers return normalized prices through a provider-independent service and PostgreSQL cache. The AI Assistant receives only compact bootstrap metadata, then obtains authoritative facts through deterministic read-only tools; it cannot create transactions, persist scenarios, execute trades, or replace unavailable values with estimates.
+The codebase is organized by feature:
 
-Transactions and initial balances are the portfolio source of truth. Per-holding cost basis and P&L are shown only when they can be derived reliably in the base currency. Missing acquisition data, unsupported currencies, or ambiguous account transfers are reported as partial rather than estimated, with affected assets excluded from gain and return.
+```text
+src/app/                    Next.js routes and page-level UI
+src/components/             Shared layout and UI primitives
+src/features/portfolio      Portfolio read models, actions, mutations, presentation
+src/features/portfolio-engine
+                            Pure deterministic financial calculations
+src/features/contributions  Contribution planner persistence and helpers
+src/features/performance    Daily history, performance read model, worker
+src/features/risk           Risk rule configuration
+src/features/assistant      Assistant runtime, tool schemas, tool execution
+src/features/market-data    Provider-independent market-data service/cache
+src/features/strategy       Strategy editor, rules, allocations
+src/features/integrations   Encrypted provider credential management
+prisma/                     Schema, migrations, seed
+tests/                      Unit and integration regression tests
+```
 
-USD is the single MVP base currency. Transaction monetary values are stored in the currency recorded at entry and are never silently converted. USD cash is valued one-to-one; USDT is priced through CoinGecko. To hold EUR cash in a USD portfolio, configure a manual USD price per EUR unit in Settings. Physical gold is entered and displayed in troy ounces (`oz`, up to four decimal places), follows the CoinGecko XAUT price per troy ounce, and remains gram-normalized inside the deterministic engine. Manual gold quotes are fallback-only when XAUT and its cached price are unavailable.
+Repositories are the only layer that queries Prisma directly. Read models assemble data for pages/tools. The Portfolio Engine is pure and does not depend on React, Prisma, market providers, or an LLM.
 
-ETF assets can be searched through Alpha Vantage global listings. The selected provider symbol, MIC metadata, and native currency identify the quote; native prices such as VWCE on Xetra in EUR are converted to USD through Alpha Vantage FX rates before entering the shared cache and daily history. Alpha Vantage ETF data is treated as daily/end-of-day data and cached conservatively to stay within free-tier limits. Twelve Data remains available as an optional paid exchange quote provider. Cached or manual ETF prices remain available when the provider is temporarily unavailable.
-
-The Portfolio screen supports chronological current balances, trades, transfers, and external cashflows. Enter older transactions first. A sale, withdrawal, or transfer is checked against the selected account balance as of its historical date.
-
-The Performance screen keeps trading capital, external cashflows, opening basis, and gift basis separate. Net invested is standalone `BUY` cost plus fees minus `SELL` proceeds after fees; internal Trades and Transfers are neutral. Only `DEPOSIT` and `WITHDRAWAL` are external cashflows. Gain and return on tracked capital use reliable cost-basis components, while TWR, XIRR, YTD/1Y, and observed max drawdown use complete valuations and deterministically valued external cashflows without depending on acquisition basis.
-
-TWR chains UTC daily subperiod returns and removes contributions and withdrawals from each interval. XIRR uses Actual/365 dated cashflows, the first complete daily valuation as its opening boundary, and the current portfolio value as its terminal value. To avoid misleading annualization over a few days, XIRR remains unavailable until the covered period reaches 30 calendar days. YTD uses the latest observation on or before the prior 31 December; 1Y uses the latest observation on or before the clamped one-year UTC boundary. Metrics return an explicit unavailable reason when history, valuation, cashflow, or numerical coverage is insufficient.
-
-Period P&L is available for `1D`, `7D`, `1M`, `3M`, `1Y`, and all tracked history. Its money value is the change in deterministic Investment gain between the period anchors, so realized sales remain included while external cashflows and internal reallocations stay neutral. Its percentage is TWR over the same observations. `1D` means the two latest daily observations, and longer periods remain unavailable until a boundary observation exists.
-
-The active strategy may reference one benchmark asset. The default strategy uses VWCE, but Performance can select any existing asset. Portfolio and benchmark comparison is normalized to 100 over their common observations; benchmark prices continue through the provider-independent market-data cache and daily history. A dedicated Docker worker stores one price observation per asset and UTC day from activation onward. Earlier portfolio or benchmark prices are never estimated or backfilled.
-
-## Development setup
+## Getting started locally
 
 ### Prerequisites
 
-- Node.js 24 (the Docker image uses Node 24)
-- Corepack and `pnpm` 11
-- PostgreSQL 15 or newer
+- Node.js 24
+- Corepack with `pnpm` 11
+- PostgreSQL 15+ for local development
 
-Enable the package manager and install the exact locked dependencies:
+Install dependencies:
 
 ```bash
 corepack enable
 pnpm install --frozen-lockfile
 ```
 
-Create the environment file:
+Create an environment file:
 
 ```bash
 cp .env.example .env
 ```
 
-Create a local database and set `DATABASE_URL` in `.env`:
+Generate an encryption key and place it in `APP_ENCRYPTION_KEY`:
+
+```bash
+openssl rand -base64 32
+```
+
+Create a local database and configure `DATABASE_URL`:
 
 ```bash
 createdb portfolio_manager
 ```
 
-Example URLs for a peer-authenticated local PostgreSQL installation:
+Example local values:
 
 ```dotenv
 DATABASE_URL="postgresql://localhost:5432/portfolio_manager?schema=public"
 TEST_DATABASE_URL="postgresql://localhost:5432/postgres?schema=public"
+APP_ENCRYPTION_KEY="..."
 ```
 
-Include username/password in these URLs when your PostgreSQL installation requires them. `TEST_DATABASE_URL` must point to a server account allowed to create temporary databases; integration tests create isolated randomly named databases and remove them afterward.
-
-Apply development migrations and seed the reference assets/accounts/strategy:
+Apply migrations and seed baseline data:
 
 ```bash
 pnpm db:migrate
 pnpm db:seed
 ```
-
-The seed is idempotent. Re-running it adds missing reference records without resetting customized strategy allocations or rules.
 
 Start development:
 
@@ -97,64 +177,44 @@ Start development:
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). `/` redirects to `/dashboard`.
+Open [http://localhost:3000](http://localhost:3000). The root route redirects to `/portfolio`.
 
-### Environment variables
+## Environment variables
 
-- `DATABASE_URL` — required server-side PostgreSQL connection.
-- `TEST_DATABASE_URL` — PostgreSQL maintenance connection used only by integration tests.
-- `APP_ENCRYPTION_KEY` — base64-encoded 32-byte server secret used to encrypt API keys stored through Settings.
-- `COINGECKO_API_KEY` — optional server-side fallback; the public CoinGecko API is used when no DB or environment key exists.
-- `ALPHA_VANTAGE_API_KEY` — optional server-side fallback for free ETF listing search, daily quotes, and FX conversion.
-- `TWELVE_DATA_API_KEY` — optional server-side fallback for ETF listing search, quotes, and FX conversion; Xetra requires Grow access.
-- `OPENAI_API_KEY` — optional server-side fallback. Without a DB or environment key, `/assistant` shows a setup state.
-- `OPENAI_MODEL` — optional model fallback; defaults server-side to `gpt-5-mini`.
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | Yes | PostgreSQL connection for the app. |
+| `TEST_DATABASE_URL` | For integration tests | Maintenance connection used to create isolated temporary test databases. |
+| `APP_ENCRYPTION_KEY` | Strongly recommended | Base64-encoded 32-byte key for encrypting saved provider credentials. |
+| `OPENAI_API_KEY` | Optional | Server fallback for Assistant. Without a DB or env key, Assistant shows setup state. |
+| `OPENAI_MODEL` | Optional | Assistant model fallback; defaults to `gpt-5-mini`. |
+| `COINGECKO_API_KEY` | Optional | CoinGecko fallback credential. Public API is used when no key exists. |
+| `ALPHA_VANTAGE_API_KEY` | Optional | Alpha Vantage fallback for ETF search, daily quotes, and FX. |
+| `TWELVE_DATA_API_KEY` | Optional | Twelve Data fallback for ETF search, quotes, and FX. |
 
-Generate the encryption key once and place it in `.env` without printing it in application logs:
+Never prefix server secrets with `NEXT_PUBLIC_`, and never commit `.env`.
 
-```bash
-openssl rand -base64 32
-```
+## Useful scripts
 
-After `APP_ENCRYPTION_KEY` is configured, OpenAI, CoinGecko, Alpha Vantage, and Twelve Data keys can be saved, replaced, tested, or deleted from `/settings` without restarting the app. Database credentials override environment credentials; deleting a database key restores the environment/public fallback. The browser receives only the credential source and final four characters, never the complete key.
+| Command | What it does |
+| --- | --- |
+| `pnpm dev` | Start Next.js development server. |
+| `pnpm build` | Create a production Next.js build. |
+| `pnpm start` | Start the production server after build. |
+| `pnpm test` | Run Vitest regression tests. |
+| `pnpm lint` | Run ESLint. |
+| `pnpm typecheck` | Run TypeScript without emitting files. |
+| `pnpm prisma:validate` | Validate Prisma schema. |
+| `pnpm db:migrate` | Create/apply local development migrations. |
+| `pnpm db:deploy` | Apply committed migrations in production. |
+| `pnpm db:seed` | Run idempotent seed. |
+| `pnpm db:studio` | Open Prisma Studio. |
+| `pnpm history:capture` | Capture one daily market-price observation. |
+| `pnpm history:worker` | Run the daily market-price worker. |
+| `pnpm db:backup` | Create a Docker PostgreSQL backup under `backups/`. |
+| `pnpm db:restore -- backups/file.dump --confirm portfolio_manager` | Restore a backup into the Compose database. |
 
-Never prefix API keys with `NEXT_PUBLIC_` and never commit `.env`.
-
-### Database commands
-
-```bash
-pnpm db:migrate   # create a development migration / apply local migrations
-pnpm db:deploy    # apply committed migrations in production
-pnpm db:backup    # full Docker PostgreSQL backup under backups/
-pnpm db:restore -- backups/file.dump --confirm portfolio_manager
-pnpm db:seed      # idempotent MVP seed
-pnpm db:studio    # Prisma Studio
-```
-
-### Database backup and restore
-
-The backup command uses `pg_dump` from the running Docker Compose `postgres` service and writes a complete custom-format archive containing all application data, including transactions, strategy, price history, settings, and integration records:
-
-```bash
-pnpm db:backup
-pnpm db:backup -- backups/manual.dump
-```
-
-Backup files are stored under the git-ignored `backups/` directory by default. Existing files are never overwritten.
-
-Restore is destructive and only targets the Compose database named `portfolio_manager`. It requires both an explicit archive path and the exact database confirmation:
-
-```bash
-pnpm db:restore -- backups/portfolio_manager_20260829_120000.dump --confirm portfolio_manager
-```
-
-Before replacing the database, restore validates the archive and creates an additional `portfolio_manager_before_restore_*.dump` safety backup. It stops `app` and `history-worker`, recreates the application database, restores the complete archive, and starts the services again. If restore fails, the application remains stopped and the safety-backup path is printed.
-
-Back up `APP_ENCRYPTION_KEY` separately in a secure password manager or secrets store. It is not contained in PostgreSQL backups, and encrypted integration credentials restored from the database cannot be decrypted without the same key. Database dumps also do not include PostgreSQL cluster roles or other environment secrets.
-
-### Verification
-
-Run the complete quality gate before committing:
+Recommended quality gate before merging:
 
 ```bash
 pnpm prisma:validate
@@ -165,43 +225,68 @@ pnpm build
 pnpm audit --prod --audit-level high
 ```
 
-Pure unit tests do not require a database. Integration tests use `TEST_DATABASE_URL`; when it is absent they try local PostgreSQL peer authentication at `localhost:5432` without assuming a username.
+## Docker deployment
 
-## Production and Docker
+The bundled Compose stack runs:
 
-For a non-Docker production process:
+- `postgres`
+- `app`
+- `history-worker`
 
-```bash
-pnpm install --frozen-lockfile
-pnpm db:deploy
-pnpm db:seed
-pnpm build
-pnpm start
-```
-
-For the bundled app/PostgreSQL stack:
+Start or update it:
 
 ```bash
 docker compose up -d --build
 ```
 
-The Compose stack runs both the web application and a lightweight history worker. The worker captures prices immediately on startup, retries transient failures, and then records one observation per UTC day.
+The app binds to [http://127.0.0.1:3010](http://127.0.0.1:3010). Container startup runs:
 
-The app listens on [http://localhost:3010](http://localhost:3010) only. Container startup runs `prisma migrate deploy`, the idempotent seed, and then Next.js. Use a private reverse proxy such as the existing tailnet-only Tailscale Serve endpoint for remote access. Change the example PostgreSQL credentials before any non-local deployment.
+```bash
+pnpm db:deploy
+pnpm db:seed
+pnpm start
+```
 
-Back up `APP_ENCRYPTION_KEY` separately together with PostgreSQL backups. Encrypted integration keys cannot be recovered from the database without the same master key. Rotating the master key requires re-saving provider credentials.
+The history worker captures prices immediately on startup, retries transient failures, and then records one observation per UTC day.
 
-This MVP intentionally has no authentication. Do not expose it to the public internet; use a trusted private network until authentication is implemented.
+This application currently has no built-in authentication. Do not expose it directly to the public internet. Put it behind a trusted private network, VPN, reverse proxy with auth, or another access-control layer.
+
+## Backup and restore
+
+Backups use `pg_dump` from the running Compose `postgres` service and write a complete custom-format archive containing application data:
+
+```bash
+pnpm db:backup
+pnpm db:backup -- backups/manual.dump
+```
+
+Restore is destructive and requires explicit confirmation:
+
+```bash
+pnpm db:restore -- backups/portfolio_manager_20260829_120000.dump --confirm portfolio_manager
+```
+
+Before replacing the database, restore validates the archive and creates a safety backup. If restore fails, the app remains stopped and the safety-backup path is printed.
+
+Back up `APP_ENCRYPTION_KEY` separately in a password manager or secrets store. PostgreSQL backups contain encrypted integration credentials, but they cannot be decrypted without the same key.
 
 ## PWA and offline behavior
 
-The production app is installable where the browser supports PWAs and the site is served over HTTPS. It uses a standalone manifest, local icons, safe-area-aware mobile navigation, and a dedicated offline screen.
+The production app is installable where the browser supports PWAs and the site is served over HTTPS. The manifest starts at `/portfolio`.
 
-Offline caching is deliberately conservative: the service worker caches only local static assets and the offline fallback. It does not cache portfolio pages, API responses, Server Actions, or financial/market data. Cached market prices retain timestamps and stale status.
+Offline caching is deliberately conservative. The service worker caches static assets and the offline fallback, but does not cache portfolio pages, API responses, Server Actions, or financial data. This prevents stale financial snapshots from looking current while the network is unavailable.
 
-Test the service worker with a production build:
+## Not implemented yet
 
-```bash
-pnpm build
-pnpm start
-```
+- Authentication and multi-user support
+- Broker/exchange sync
+- Automated trades
+- Tax calculations
+- Push alerts
+- News intelligence
+- ETF constituent and overlap analysis
+- Full Fund/Listing/ISIN identity model
+
+## Safety note
+
+This is decision-support software, not financial advice. All calculations should be treated as portfolio bookkeeping and planning aids. Verify critical numbers before acting on them.
