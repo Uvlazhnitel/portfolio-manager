@@ -1,6 +1,7 @@
 import type { AssetClass } from "@prisma/client";
 import { contributionClassLabels } from "@/features/contributions/presentation";
 import type { ContributionProjection } from "@/features/portfolio-engine";
+import type { PortfolioHoldingRow, PortfolioTransactionRow } from "@/features/portfolio/read-model";
 import { decimalSign, formatDecimalCurrency, formatDecimalPercent } from "@/lib/format/decimal";
 
 export type PortfolioContributionItem = {
@@ -68,4 +69,25 @@ export function portfolioContributionItems(projection: ContributionProjection): 
       percentOfContribution: allocation.percentOfContribution,
     }];
   });
+}
+
+export function portfolioHoldingKey(holding: Pick<PortfolioHoldingRow, "accountId" | "assetId">) {
+  return `${holding.accountId}:${holding.assetId}`;
+}
+
+export function portfolioHoldingTransactions(
+  transactions: PortfolioTransactionRow[],
+  holding: Pick<PortfolioHoldingRow, "accountId" | "assetId">,
+) {
+  return transactions.filter((transaction) => (
+    isSameHoldingLeg(transaction, holding)
+    || (transaction.destination ? isSameHoldingLeg(transaction.destination, holding) : false)
+  ));
+}
+
+function isSameHoldingLeg(
+  leg: Pick<PortfolioTransactionRow, "accountId" | "assetId">,
+  holding: Pick<PortfolioHoldingRow, "accountId" | "assetId">,
+) {
+  return leg.accountId === holding.accountId && leg.assetId === holding.assetId;
 }

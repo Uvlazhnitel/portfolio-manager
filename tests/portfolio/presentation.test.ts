@@ -6,8 +6,10 @@ import {
   formatPortfolioCurrency,
   formatPortfolioSignedCurrency,
   portfolioContributionItems,
+  portfolioHoldingTransactions,
   strategyWarningText,
 } from "@/features/portfolio/presentation";
+import type { PortfolioHoldingRow, PortfolioTransactionRow } from "@/features/portfolio/read-model";
 import { portfolioValuationDisplayLabel } from "@/features/portfolio/valuation-presentation";
 
 describe("portfolio presentation helpers", () => {
@@ -68,4 +70,40 @@ describe("portfolio presentation helpers", () => {
       expect.objectContaining({ key: "asset-btc", symbol: "BTC", name: "Bitcoin", amount: "200.00" }),
     ]);
   });
+
+  it("filters holding transactions by exact source or destination asset-account leg", () => {
+    const holding = holdingRow("btc", "bybit");
+    const transactions = [
+      transactionRow("standalone-btc-bybit", "btc", "bybit"),
+      transactionRow("btc-ledger", "btc", "ledger"),
+      transactionRow("eth-bybit", "eth", "bybit"),
+      transactionRow("source-transfer", "btc", "bybit", destination("btc", "ledger")),
+      transactionRow("destination-transfer", "btc", "ledger", destination("btc", "bybit")),
+      transactionRow("destination-trade", "usdt", "bybit", destination("btc", "bybit")),
+    ];
+
+    expect(portfolioHoldingTransactions(transactions, holding).map((transaction) => transaction.id)).toEqual([
+      "standalone-btc-bybit",
+      "source-transfer",
+      "destination-transfer",
+      "destination-trade",
+    ]);
+  });
 });
+
+function holdingRow(assetId: string, accountId: string) {
+  return { assetId, accountId } as PortfolioHoldingRow;
+}
+
+function destination(assetId: string, accountId: string) {
+  return { assetId, accountId } as PortfolioTransactionRow["destination"];
+}
+
+function transactionRow(
+  id: string,
+  assetId: string,
+  accountId: string,
+  transactionDestination: PortfolioTransactionRow["destination"] = null,
+) {
+  return { id, assetId, accountId, destination: transactionDestination } as PortfolioTransactionRow;
+}

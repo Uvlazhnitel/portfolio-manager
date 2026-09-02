@@ -54,4 +54,14 @@ describe("portfolio-first routing and navigation", () => {
     expect(portfolioClient).toContain("const violations = risk.violations.slice(0, 3);");
     expect(portfolioClient).not.toContain("risk.strategyViolations");
   });
+
+  it("keeps holding transaction cards inline and accessible", async () => {
+    const portfolioClient = await readFile(path.join(projectRoot, "src/app/portfolio/_components/portfolio-client.tsx"), "utf8");
+
+    expect(portfolioClient).toContain("expandedHoldingKey");
+    expect(portfolioClient).toContain("portfolioHoldingTransactions(portfolio.transactions, holding)");
+    expect(portfolioClient).toContain("aria-expanded={expanded}");
+    expect(portfolioClient).toContain("aria-controls={panelId}");
+    expect(portfolioClient).toContain("No transactions for this holding yet.");
+  });
 });

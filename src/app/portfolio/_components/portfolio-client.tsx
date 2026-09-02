@@ -7,13 +7,14 @@ import {
   useActionState,
   useCallback,
   useEffect,
+  Fragment,
   useMemo,
   useRef,
   useState,
   useTransition,
   type ReactNode,
 } from "react";
-import { ArrowLeft, ArrowRight, ChevronRight, Pencil, Plus, Search, ShieldCheck, Trash2, TrendingUp, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, History, Pencil, Plus, Search, ShieldCheck, Trash2, TrendingUp, X } from "lucide-react";
 import { searchAssetsAction } from "@/features/asset-catalog/actions";
 import type { AssetCatalogResult } from "@/features/asset-catalog/types";
 import type { AssetCatalogKind } from "@/features/asset-catalog/types";
@@ -31,7 +32,7 @@ import {
   updateTransactionAction,
 } from "@/features/portfolio/actions";
 import type { PortfolioReadModel } from "@/features/portfolio/read-model";
-import { portfolioContributionItems } from "@/features/portfolio/presentation";
+import { portfolioContributionItems, portfolioHoldingKey, portfolioHoldingTransactions } from "@/features/portfolio/presentation";
 import { portfolioValuationDisplayLabel } from "@/features/portfolio/valuation-presentation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -114,7 +115,11 @@ export function PortfolioClient({ portfolio, initialDialog = null }: PortfolioCl
       </div>
 
       {activeTab === "holdings" ? (
-        <HoldingsSection portfolio={portfolio} onAddTransaction={(assetId, accountId) => setDialog({ kind: "transaction", assetId, accountId })} />
+        <HoldingsSection
+          portfolio={portfolio}
+          onAddTransaction={(assetId, accountId) => setDialog({ kind: "transaction", assetId, accountId })}
+          onEditTransaction={(transactionId) => setDialog({ kind: "edit-transaction", transactionId })}
+        />
       ) : null}
       {activeTab === "accounts" ? <AccountsSection portfolio={portfolio} onAddAccount={() => setDialog({ kind: "account" })} /> : null}
       {activeTab === "transactions" ? (
@@ -925,7 +930,20 @@ function AssetAvatar({ asset, size }: { asset: Pick<AssetCatalogResult, "imageUr
   );
 }
 
-function HoldingsSection({ portfolio, onAddTransaction }: PortfolioClientProps & { onAddTransaction: (assetId: string, accountId: string) => void }) {
+function HoldingsSection({
+  portfolio,
+  onAddTransaction,
+  onEditTransaction,
+}: PortfolioClientProps & {
+  onAddTransaction: (assetId: string, accountId: string) => void;
+  onEditTransaction: (transactionId: string) => void;
+}) {
+  const [expandedHoldingKey, setExpandedHoldingKey] = useState<string | null>(null);
+  const toggleHoldingTransactions = (holding: PortfolioReadModel["holdings"][number]) => {
+    const key = portfolioHoldingKey(holding);
+    setExpandedHoldingKey((current) => current === key ? null : key);
+  };
+
   if (portfolio.holdings.length === 0) return <EmptyState title="Your portfolio is empty" description="Add an asset and enter the amount you currently own." icon={<Plus className="h-5 w-5" aria-hidden="true" />} />;
   return (
     <Card className="overflow-hidden p-0">
@@ -951,67 +969,166 @@ function HoldingsSection({ portfolio, onAddTransaction }: PortfolioClientProps &
             </tr>
           </thead>
           <tbody className="divide-y divide-border/70">
-            {portfolio.holdings.map((holding) => (
-              <tr key={`${holding.accountId}:${holding.assetId}`} className="transition hover:bg-surface/45">
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    <AssetAvatar asset={{ imageUrl: holding.imageUrl, symbol: holding.symbol, name: holding.assetName }} size={34} />
-                    <div className="min-w-0">
-                      <div className="truncate font-medium text-foreground">{holding.assetName}</div>
-                      <div className="text-xs text-muted">{holding.symbol} · {holding.assetClass}</div>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-muted">{holding.accountName}</td>
-                <td className="px-4 py-3 text-right tabular-nums text-foreground">{holding.quantityLabel}</td>
-                <td className="px-4 py-3 text-right tabular-nums">
-                  {formatUnitPriceOrDash(holding.currentPrice, portfolio.valuation.currency, holding.displayPriceUnit)}
-                  <p className={cn("mt-1 text-xs", holding.isPriceStale ? "text-warning" : "text-muted")}>{priceStatusText(holding)}</p>
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums">{formatMoneyOrUnavailable(holding.currentValue, portfolio.valuation.currency)}</td>
-                <td className="px-4 py-3 text-right tabular-nums" title={holding.accountingAverageCost ? `Accounting avg cost: ${formatUnitPriceOrDashText(holding.accountingAverageCost, portfolio.valuation.currency, holding.displayPriceUnit)}` : undefined}>
-                  {formatUnitPriceOrDash(holding.averageNetCost, portfolio.valuation.currency, holding.displayPriceUnit)}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums"><PnlIndicator value={holding.netPnl} format="currency" currency={portfolio.valuation.currency} unavailableLabel="Price unavailable" size="sm" /></td>
-                <td className="px-4 py-3 text-right tabular-nums">{holding.portfolioWeight ? `${holding.portfolioWeight}%` : "Unavailable"}</td>
-                <td className="px-4 py-3 text-right">
-                  <button type="button" onClick={() => onAddTransaction(holding.assetId, holding.accountId)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary" title="Add transaction" aria-label={`Add transaction for ${holding.assetName}`}>
-                    <Plus className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {portfolio.holdings.map((holding) => {
+              const key = portfolioHoldingKey(holding);
+              const expanded = expandedHoldingKey === key;
+              const panelId = holdingTransactionPanelId(holding, "desktop");
+              const transactions = portfolioHoldingTransactions(portfolio.transactions, holding);
+
+              return (
+                <Fragment key={key}>
+                  <tr className="transition hover:bg-surface/45">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <AssetAvatar asset={{ imageUrl: holding.imageUrl, symbol: holding.symbol, name: holding.assetName }} size={34} />
+                        <div className="min-w-0">
+                          <div className="truncate font-medium text-foreground">{holding.assetName}</div>
+                          <div className="text-xs text-muted">{holding.symbol} · {holding.assetClass}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-muted">{holding.accountName}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-foreground">{holding.quantityLabel}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {formatUnitPriceOrDash(holding.currentPrice, portfolio.valuation.currency, holding.displayPriceUnit)}
+                      <p className={cn("mt-1 text-xs", holding.isPriceStale ? "text-warning" : "text-muted")}>{priceStatusText(holding)}</p>
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">{formatMoneyOrUnavailable(holding.currentValue, portfolio.valuation.currency)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums" title={holding.accountingAverageCost ? `Accounting avg cost: ${formatUnitPriceOrDashText(holding.accountingAverageCost, portfolio.valuation.currency, holding.displayPriceUnit)}` : undefined}>
+                      {formatUnitPriceOrDash(holding.averageNetCost, portfolio.valuation.currency, holding.displayPriceUnit)}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums"><PnlIndicator value={holding.netPnl} format="currency" currency={portfolio.valuation.currency} unavailableLabel="Price unavailable" size="sm" /></td>
+                    <td className="px-4 py-3 text-right tabular-nums">{holding.portfolioWeight ? `${holding.portfolioWeight}%` : "Unavailable"}</td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => toggleHoldingTransactions(holding)}
+                          aria-expanded={expanded}
+                          aria-controls={panelId}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary"
+                          title="Show transactions"
+                          aria-label={`${expanded ? "Hide" : "Show"} transactions for ${holding.assetName} in ${holding.accountName}`}
+                        >
+                          <History className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                        <button type="button" onClick={() => onAddTransaction(holding.assetId, holding.accountId)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary" title="Add transaction" aria-label={`Add transaction for ${holding.assetName}`}>
+                          <Plus className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {expanded ? (
+                    <tr id={panelId} className="bg-surface/25">
+                      <td colSpan={9} className="px-4 py-4">
+                        <HoldingTransactionsCard transactions={transactions} holding={holding} onEditTransaction={onEditTransaction} />
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
       <div className="space-y-3 p-4 md:hidden">
-        {portfolio.holdings.map((holding) => (
-          <div key={`${holding.accountId}:${holding.assetId}:mobile`} className="rounded-lg border border-border bg-surface p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <AssetAvatar asset={{ imageUrl: holding.imageUrl, symbol: holding.symbol, name: holding.assetName }} size={38} />
-                <div className="min-w-0">
-                  <p className="truncate font-medium text-foreground">{holding.assetName}</p>
-                  <p className="text-sm text-muted">{holding.symbol} · {holding.assetClass} · {holding.accountName}</p>
+        {portfolio.holdings.map((holding) => {
+          const key = portfolioHoldingKey(holding);
+          const expanded = expandedHoldingKey === key;
+          const panelId = holdingTransactionPanelId(holding, "mobile");
+          const transactions = portfolioHoldingTransactions(portfolio.transactions, holding);
+
+          return (
+            <div key={`${key}:mobile`} className="rounded-lg border border-border bg-surface p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <AssetAvatar asset={{ imageUrl: holding.imageUrl, symbol: holding.symbol, name: holding.assetName }} size={38} />
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-foreground">{holding.assetName}</p>
+                    <p className="text-sm text-muted">{holding.symbol} · {holding.assetClass} · {holding.accountName}</p>
+                  </div>
                 </div>
+                <button type="button" onClick={() => onAddTransaction(holding.assetId, holding.accountId)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary" title="Add transaction" aria-label={`Add transaction for ${holding.assetName}`}>
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                </button>
               </div>
-              <button type="button" onClick={() => onAddTransaction(holding.assetId, holding.accountId)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-primary/10 hover:text-primary" title="Add transaction" aria-label={`Add transaction for ${holding.assetName}`}>
-                <Plus className="h-4 w-4" aria-hidden="true" />
+              <p className="mt-3 text-xs text-muted">{holding.quantityLabel}</p>
+              <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                <Info label="Price" value={formatUnitPriceOrDashText(holding.currentPrice, portfolio.valuation.currency, holding.displayPriceUnit)} />
+                <Info label="Value" value={formatMoneyOrUnavailableText(holding.currentValue, portfolio.valuation.currency)} />
+                <Info label="P&L" value={<PnlIndicator value={holding.netPnl} format="currency" currency={portfolio.valuation.currency} unavailableLabel="Price unavailable" size="sm" variant="text" />} />
+                <Info label="Weight" value={holding.portfolioWeight ? `${holding.portfolioWeight}%` : "Unavailable"} />
+                <Info label="Avg net cost" value={formatUnitPriceOrDashText(holding.averageNetCost, portfolio.valuation.currency, holding.displayPriceUnit)} />
+                <Info label="Price status" value={priceStatusText(holding)} />
+              </dl>
+              <button
+                type="button"
+                onClick={() => toggleHoldingTransactions(holding)}
+                aria-expanded={expanded}
+                aria-controls={panelId}
+                className="mt-4 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border border-border px-3 text-sm font-medium text-muted transition hover:border-primary/50 hover:text-foreground"
+              >
+                <History className="h-4 w-4" aria-hidden="true" />
+                {expanded ? "Hide transactions" : "Show transactions"}
               </button>
+              {expanded ? (
+                <div id={panelId} className="mt-4">
+                  <HoldingTransactionsCard transactions={transactions} holding={holding} onEditTransaction={onEditTransaction} />
+                </div>
+              ) : null}
             </div>
-            <p className="mt-3 text-xs text-muted">{holding.quantityLabel}</p>
-            <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-              <Info label="Price" value={formatUnitPriceOrDashText(holding.currentPrice, portfolio.valuation.currency, holding.displayPriceUnit)} />
-              <Info label="Value" value={formatMoneyOrUnavailableText(holding.currentValue, portfolio.valuation.currency)} />
-              <Info label="P&L" value={<PnlIndicator value={holding.netPnl} format="currency" currency={portfolio.valuation.currency} unavailableLabel="Price unavailable" size="sm" variant="text" />} />
-              <Info label="Weight" value={holding.portfolioWeight ? `${holding.portfolioWeight}%` : "Unavailable"} />
-              <Info label="Avg net cost" value={formatUnitPriceOrDashText(holding.averageNetCost, portfolio.valuation.currency, holding.displayPriceUnit)} />
-              <Info label="Price status" value={priceStatusText(holding)} />
-            </dl>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </Card>
+  );
+}
+
+function HoldingTransactionsCard({
+  transactions,
+  holding,
+  onEditTransaction,
+}: {
+  transactions: PortfolioReadModel["transactions"];
+  holding: PortfolioReadModel["holdings"][number];
+  onEditTransaction: (transactionId: string) => void;
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-4 shadow-sm shadow-black/10">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Transactions for {holding.symbol} · {holding.accountName}</h3>
+          <p className="text-xs text-muted">{transactions.length} matching {transactions.length === 1 ? "operation" : "operations"}</p>
+        </div>
+      </div>
+
+      {transactions.length === 0 ? (
+        <p className="mt-4 rounded-lg border border-border bg-surface p-3 text-sm text-muted">No transactions for this holding yet.</p>
+      ) : (
+        <div className="mt-4 divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
+          {transactions.map((transaction) => (
+            <div key={`${holding.accountId}:${holding.assetId}:${transaction.id}`} className="grid gap-3 px-3 py-3 text-sm md:grid-cols-[7rem_9rem_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center">
+              <p className="text-muted">{formatUtcDate(transaction.executedAt)}</p>
+              <div className="flex flex-wrap gap-1">
+                <TransactionTypePill type={transaction.type} />
+                {transaction.basisMethod ? <Badge tone="primary">{formatType(transaction.basisMethod)}</Badge> : null}
+              </div>
+              <div className="min-w-0">
+                <p className="truncate font-medium text-foreground">{transaction.assetName}</p>
+                <p className="mt-1 text-xs text-muted">{transaction.symbol}{transaction.destination ? ` → ${transaction.destination.symbol}` : ""}</p>
+              </div>
+              <div className="min-w-0 md:text-right">
+                <p className="text-foreground">{transaction.quantityLabel}{transaction.destination ? ` → ${transaction.destination.quantityLabel}` : ""}</p>
+                <p className="mt-1 text-xs text-muted">{transaction.accountName}{transaction.destination ? ` → ${transaction.destination.accountName}` : ""}</p>
+                <p className="mt-1 text-xs text-muted">{holdingTransactionPriceText(transaction)}</p>
+                {transaction.note ? <p className="mt-1 truncate text-xs text-muted">{transaction.note}</p> : null}
+              </div>
+              <TransactionActions transaction={transaction} onEditTransaction={onEditTransaction} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1180,6 +1297,17 @@ function priceStatusText(holding: PortfolioReadModel["holdings"][number]) {
   if (!holding.currentPrice) return "Price unavailable";
   const source = holding.priceSource ? formatType(holding.priceSource) : "Market price";
   return holding.isPriceStale ? `${source} - stale` : source;
+}
+
+function holdingTransactionPanelId(holding: PortfolioReadModel["holdings"][number], surface: "desktop" | "mobile") {
+  return `holding-transactions-${surface}-${holding.accountId}-${holding.assetId}`;
+}
+
+function holdingTransactionPriceText(transaction: PortfolioReadModel["transactions"][number]) {
+  if (transaction.operationKind !== "TRANSACTION") {
+    return transaction.fee ? `Fee ${formatDecimalCurrency(transaction.fee, transaction.currency)}` : "Internal";
+  }
+  return transaction.displayPricePerUnit ? `${formatDecimalCurrency(transaction.displayPricePerUnit, transaction.currency)} / ${transaction.displayPriceUnit}` : "No price";
 }
 
 function moneyTone(value: string | null): "default" | "positive" | "negative" {
