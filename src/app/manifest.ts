@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Portfolio Manager",
     short_name: "Portfolio",
     description: "Personal investment portfolio manager and wealth copilot.",
-    start_url: "/dashboard",
+    start_url: "/portfolio",
     scope: "/",
     display: "standalone",
     background_color: "#0f1117",

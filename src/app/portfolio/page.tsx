@@ -20,7 +20,7 @@ export default async function PortfolioPage({
     <>
       <PageHeader
         title="Portfolio"
-        description="Real holdings, accounts, and transactions from PostgreSQL."
+        description="Portfolio value, strategy status, risk, contributions, holdings, accounts, and transactions."
         action={
           <>
             <PriceRefresh compact />

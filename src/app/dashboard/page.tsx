@@ -1,30 +1,7 @@
-import { DashboardClient } from "@/app/dashboard/_components/dashboard-client";
-import { PriceRefresh } from "@/components/market-data/price-refresh";
-import { PageHeader } from "@/components/ui/page-header";
-import { getDashboardReadModel } from "@/features/dashboard/read-model";
-import { formatUtcTimestamp } from "@/lib/format/date";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
-  const dashboard = await getDashboardReadModel();
-  return (
-    <>
-      <PageHeader
-        title="Dashboard"
-        description="Portfolio position, performance, allocation, and the next decision."
-        action={(
-          <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
-            <span className="text-xs text-muted">Last price update {formatTimestamp(dashboard.valuation.lastUpdated)}</span>
-            <PriceRefresh />
-          </div>
-        )}
-      />
-      <DashboardClient dashboard={dashboard} />
-    </>
-  );
-}
-
-function formatTimestamp(value: string | null) {
-  return formatUtcTimestamp(value);
+export default function DashboardPage() {
+  redirect("/portfolio");
 }

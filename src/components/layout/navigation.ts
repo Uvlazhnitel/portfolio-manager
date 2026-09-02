@@ -2,7 +2,6 @@ import {
   Bot,
   Brain,
   ChartNoAxesCombined,
-  Gauge,
   Landmark,
   PiggyBank,
   Settings,
@@ -10,9 +9,7 @@ import {
 } from "lucide-react";
 
 export const navigationItems = [
-  { label: "Dashboard", href: "/dashboard", icon: Gauge },
   { label: "Portfolio", href: "/portfolio", icon: Landmark },
-  { label: "Performance", href: "/performance", icon: ChartNoAxesCombined },
   {
     label: "Plan",
     href: "/plan",
@@ -28,8 +25,8 @@ export const navigationItems = [
 ] as const;
 
 export const mobileNavigationItems = [
-  { label: "Home", href: "/dashboard", icon: Gauge },
   { label: "Portfolio", href: "/portfolio", icon: Landmark },
+  { label: "Plan", href: "/plan", icon: Target },
   { label: "Assistant", href: "/assistant", icon: Bot },
   { label: "More", href: "/more", icon: Settings },
 ] as const;

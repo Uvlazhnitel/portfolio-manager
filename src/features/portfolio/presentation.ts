@@ -3,7 +3,7 @@ import { contributionClassLabels } from "@/features/contributions/presentation";
 import type { ContributionProjection } from "@/features/portfolio-engine";
 import { decimalSign, formatDecimalCurrency, formatDecimalPercent } from "@/lib/format/decimal";
 
-export type DashboardContributionItem = {
+export type PortfolioContributionItem = {
   key: string;
   symbol: string;
   name: string;
@@ -12,18 +12,18 @@ export type DashboardContributionItem = {
   percentOfContribution: string;
 };
 
-export function formatDashboardCurrency(value: string, currency: string) {
+export function formatPortfolioCurrency(value: string, currency: string) {
   return formatDecimalCurrency(value, currency);
 }
 
-export function formatDashboardSignedCurrency(value: string, currency: string) {
+export function formatPortfolioSignedCurrency(value: string, currency: string) {
   const sign = decimalSign(value);
   if (sign === null) return "—";
-  const formatted = formatDashboardCurrency(value.replace(/^-/, ""), currency);
+  const formatted = formatPortfolioCurrency(value.replace(/^-/, ""), currency);
   return `${sign >= 0 ? "+" : "−"}${formatted}`;
 }
 
-export function formatDashboardPercent(value: string) {
+export function formatPortfolioPercent(value: string) {
   return formatDecimalPercent(value, 1);
 }
 
@@ -33,10 +33,10 @@ export function strategyWarningText(warning: {
   currentPercent: string;
   limitPercent: string;
 }) {
-  return `${contributionClassLabels[warning.assetClass]} is ${formatDashboardPercent(warning.currentPercent)}, ${warning.code.endsWith("ABOVE_MAX") ? "above the configured maximum" : "below the configured minimum"} of ${formatDashboardPercent(warning.limitPercent)}.`;
+  return `${contributionClassLabels[warning.assetClass]} is ${formatPortfolioPercent(warning.currentPercent)}, ${warning.code.endsWith("ABOVE_MAX") ? "above the configured maximum" : "below the configured minimum"} of ${formatPortfolioPercent(warning.limitPercent)}.`;
 }
 
-export function dashboardContributionItems(projection: ContributionProjection): DashboardContributionItem[] {
+export function portfolioContributionItems(projection: ContributionProjection): PortfolioContributionItem[] {
   const recommendationsByClass = new Map<AssetClass, ContributionProjection["plan"]["assetRecommendations"]>();
   for (const recommendation of projection.plan.assetRecommendations) {
     const recommendations = recommendationsByClass.get(recommendation.assetClass) ?? [];

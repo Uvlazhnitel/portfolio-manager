@@ -13,7 +13,7 @@ import {
   useTransition,
   type ReactNode,
 } from "react";
-import { ArrowLeft, ArrowRight, ChevronRight, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, Pencil, Plus, Search, ShieldCheck, Trash2, TrendingUp, X } from "lucide-react";
 import { searchAssetsAction } from "@/features/asset-catalog/actions";
 import type { AssetCatalogResult } from "@/features/asset-catalog/types";
 import type { AssetCatalogKind } from "@/features/asset-catalog/types";
@@ -31,6 +31,7 @@ import {
   updateTransactionAction,
 } from "@/features/portfolio/actions";
 import type { PortfolioReadModel } from "@/features/portfolio/read-model";
+import { portfolioContributionItems } from "@/features/portfolio/presentation";
 import { portfolioValuationDisplayLabel } from "@/features/portfolio/valuation-presentation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,7 +40,7 @@ import { DataQualitySummary, type DataQualityItem } from "@/components/ui/data-q
 import { EmptyState } from "@/components/ui/empty-state";
 import { PnlIndicator } from "@/components/ui/pnl-indicator";
 import { cn } from "@/lib/utils";
-import { formatDecimalCurrency } from "@/lib/format/decimal";
+import { formatDecimalCurrency, formatDecimalPercent } from "@/lib/format/decimal";
 import { formatUtcDate, formatUtcTimestamp } from "@/lib/format/date";
 
 type PortfolioTab = "holdings" | "accounts" | "transactions";
@@ -90,6 +91,11 @@ export function PortfolioClient({ portfolio, initialDialog = null }: PortfolioCl
       <PortfolioOverview portfolio={portfolio} dataQualityItems={dataQualityItems} />
 
       {portfolio.strategyStatus ? <StrategySummary portfolio={portfolio} /> : null}
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <RiskSummary portfolio={portfolio} />
+        <NextContributionSummary portfolio={portfolio} />
+      </div>
 
       <div className="flex flex-wrap items-center gap-2">
         {(["holdings", "accounts", "transactions"] as const).map((tab) => (
@@ -229,6 +235,129 @@ function StrategySummary({ portfolio }: PortfolioClientProps) {
       </div>
       <Link href="/plan/strategy" className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-border px-3 text-sm font-medium text-muted transition hover:border-primary/50 hover:text-foreground">
         Strategy <ArrowRight className="h-4 w-4" aria-hidden="true" />
+      </Link>
+    </Card>
+  );
+}
+
+function RiskSummary({ portfolio }: PortfolioClientProps) {
+  const risk = portfolio.risk;
+  const violations = risk.violations.slice(0, 3);
+  const hasAvailableMetrics = risk.largestAsset.valuePercent || risk.largestCustodian.valuePercent || risk.exchangeExposure.valuePercent || risk.selfCustodyExposure.valuePercent;
+
+  return (
+    <Card className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted">
+            <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+            Risk summary
+          </p>
+          <p className="mt-1 text-lg font-semibold text-foreground">{riskStateText(risk.state)}</p>
+        </div>
+        <Badge tone={riskStateTone(risk.state)}>{risk.state}</Badge>
+      </div>
+
+      {risk.state === "PARTIAL" || risk.state === "UNAVAILABLE" ? (
+        <p className="rounded-lg border border-warning/25 bg-warning/10 p-3 text-sm leading-5 text-warning">
+          {riskUnavailableText(risk)}
+        </p>
+      ) : null}
+
+      {violations.length > 0 ? (
+        <div className="space-y-2">
+          {violations.map((violation) => (
+            <p key={`${violation.metric}-${violation.code}`} className="rounded-lg border border-destructive/25 bg-destructive/10 p-3 text-sm leading-5 text-destructive">
+              {formatType(violation.code)}: {formatPercent(violation.currentPercent)} vs limit {formatPercent(violation.limitPercent)}.
+            </p>
+          ))}
+        </div>
+      ) : (
+        <p className="rounded-lg border border-border bg-surface p-3 text-sm text-muted">
+          No independent risk limits are exceeded.
+        </p>
+      )}
+
+      {hasAvailableMetrics ? (
+        <dl className="grid gap-2 sm:grid-cols-2">
+          <RiskMetricRow label="Largest asset" metric={risk.largestAsset} />
+          <RiskMetricRow label="Largest custodian" metric={risk.largestCustodian} />
+          <RiskMetricRow label="Exchange exposure" metric={risk.exchangeExposure} />
+          <RiskMetricRow label="Self custody" metric={risk.selfCustodyExposure} />
+        </dl>
+      ) : null}
+    </Card>
+  );
+}
+
+function RiskMetricRow({ label, metric }: { label: string; metric: PortfolioReadModel["risk"]["largestAsset"] }) {
+  if (!metric.valuePercent) {
+    return (
+      <div className="rounded-lg border border-border bg-surface px-3 py-2">
+        <dt className="text-xs text-muted">{label}</dt>
+        <dd className="mt-1 text-sm font-medium text-muted">Unavailable</dd>
+      </div>
+    );
+  }
+
+  const subject = metric.subjectName ?? metric.subjectId;
+  return (
+    <div className="rounded-lg border border-border bg-surface px-3 py-2">
+      <dt className="text-xs text-muted">{label}</dt>
+      <dd className="mt-1 truncate text-sm font-medium text-foreground">
+        {subject ? `${formatType(subject)} · ` : ""}{formatPercent(metric.valuePercent)}
+      </dd>
+    </div>
+  );
+}
+
+function NextContributionSummary({ portfolio }: PortfolioClientProps) {
+  const { contribution, valuation } = portfolio;
+  const projection = contribution.projection;
+  const items = projection ? portfolioContributionItems(projection) : [];
+  const href = contribution.amount ? `/plan/contributions?amount=${encodeURIComponent(contribution.amount)}` : "/plan/contributions";
+
+  return (
+    <Card className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted">
+            <TrendingUp className="h-4 w-4" aria-hidden="true" />
+            Next contribution
+          </p>
+          <p className="mt-1 text-lg font-semibold text-foreground">
+            {projection ? formatCurrency(projection.plan.contributionAmount, valuation.currency) : "No saved plan"}
+          </p>
+        </div>
+        {projection ? <Badge tone={projection.isCustomized ? "primary" : "neutral"}>{projection.isCustomized ? "Saved custom" : "Saved plan"}</Badge> : null}
+      </div>
+
+      {projection ? (
+        <div className="space-y-2">
+          {items.slice(0, 4).map((item) => (
+            <div key={item.key} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-sm">
+              <div className="min-w-0">
+                <p className="truncate font-medium text-foreground">{item.symbol}</p>
+                <p className="truncate text-xs text-muted">{item.name}</p>
+              </div>
+              <div className="text-right">
+                <p className="font-semibold text-foreground">{formatCurrency(item.amount, valuation.currency)}</p>
+                <p className="text-xs text-muted">{formatPercent(item.percentOfContribution)}</p>
+              </div>
+            </div>
+          ))}
+          {items.length > 4 ? <p className="text-xs text-muted">+{items.length - 4} more allocation rows.</p> : null}
+        </div>
+      ) : (
+        <p className="rounded-lg border border-border bg-surface p-3 text-sm leading-5 text-muted">
+          {contribution.state === "UNAVAILABLE"
+            ? `Contribution planning is hidden until valuation is complete. Missing: ${contribution.missingPriceSymbols.join(", ") || "price data"}.`
+            : "Save a contribution plan to see the next split here."}
+        </p>
+      )}
+
+      <Link href={href} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border px-3 text-sm font-medium text-muted transition hover:border-primary/50 hover:text-foreground">
+        Contribution planner <ArrowRight className="h-4 w-4" aria-hidden="true" />
       </Link>
     </Card>
   );
@@ -1070,7 +1199,26 @@ function today() { return new Date().toISOString().slice(0, 10); }
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block text-sm"><span className="mb-2 block font-medium text-muted">{label}</span>{children}</label>; }
 function Info({ label, value }: { label: string; value: ReactNode }) { return <div><dt className="text-xs text-muted">{label}</dt><dd className="mt-1 break-words text-foreground">{value}</dd></div>; }
 function ActionMessage({ state }: { state: { ok: boolean; message: string } }) { return state.message ? <p className={cn("rounded-lg border p-3 text-sm", state.ok ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/10 text-destructive")}>{state.message}</p> : null; }
+function formatPercent(value: string) { return formatDecimalPercent(value, 1); }
 function formatPercentWithSign(value: string) { const numeric = Number(value); const sign = Number.isFinite(numeric) && numeric < 0 ? "−" : "+"; return `${sign}${value.replace(/^-/, "")}%`; }
+function riskStateText(state: PortfolioReadModel["risk"]["state"]) {
+  if (state === "OK") return "Risk checks look clear";
+  if (state === "WARNING") return "Risk needs attention";
+  if (state === "PARTIAL") return "Risk partially available";
+  return "Risk unavailable";
+}
+function riskUnavailableText(risk: PortfolioReadModel["risk"]) {
+  if (risk.state === "UNAVAILABLE") return "Risk metrics are unavailable until the portfolio has valued holdings.";
+  if (risk.missingPriceSymbols.length > 0) return `Risk metrics use only known valued holdings. Missing: ${risk.missingPriceSymbols.join(", ")}.`;
+  if (risk.unassignedCustodianAccountIds.length > 0) return "Custodian concentration is partial until every account has a custodian or custody category.";
+  return "Some risk metrics are partially available.";
+}
+function riskStateTone(state: PortfolioReadModel["risk"]["state"]): "neutral" | "success" | "warning" | "destructive" {
+  if (state === "OK") return "success";
+  if (state === "WARNING") return "destructive";
+  if (state === "PARTIAL") return "warning";
+  return "neutral";
+}
 function formatType(type: string) {
   if (type === "TRANSFER_OUT") return "Transfer out";
   if (type === "TRANSFER_IN") return "Transfer in";

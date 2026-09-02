@@ -70,7 +70,7 @@ export async function saveManualMarketPriceAction(
 
 function revalidateMarketDataPages() {
   revalidatePath("/portfolio");
-  revalidatePath("/dashboard");
+  revalidatePath("/portfolio");
   revalidatePath("/performance");
   revalidatePath("/settings");
 }

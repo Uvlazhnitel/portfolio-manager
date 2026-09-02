@@ -1,9 +1,22 @@
 import { AssetType, type Prisma } from "@prisma/client";
-import { calculateAssetNetCostBasis, calculateHoldingCostBasis, calculatePortfolio, calculatePortfolioAnalytics, compareAllocationToStrategy, getPortfolioValuationAvailability } from "@/features/portfolio-engine";
+import {
+  calculateAssetNetCostBasis,
+  calculateHoldingCostBasis,
+  calculatePortfolio,
+  calculatePortfolioAnalytics,
+  calculatePortfolioRisk,
+  compareAllocationToStrategy,
+  getPortfolioValuationAvailability,
+  type ContributionProjection,
+  type PortfolioRiskSnapshot,
+} from "@/features/portfolio-engine";
+import { buildSavedContributionProjection } from "@/features/contributions/saved-plan";
 import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 import { MarketDataService, toEngineMarketPrices } from "@/features/market-data/service";
 import { buildPortfolioValuationPresentation } from "@/features/portfolio/valuation-presentation";
+import { ContributionPlanRepository } from "@/features/contributions/repository";
 import { PortfolioRepository } from "@/features/portfolio/repository";
+import { riskThresholdsFromRules } from "@/features/risk/config";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { serializeDecimal, serializeNullableDecimal } from "@/lib/db/decimal";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
@@ -142,16 +155,26 @@ export type PortfolioReadModel = {
       status: "UNDERWEIGHT" | "IN_RANGE" | "OVERWEIGHT";
     }>;
   } | null;
+  risk: PortfolioRiskSnapshot;
+  contribution: {
+    amount: string;
+    projection: ContributionProjection | null;
+    state: "AVAILABLE" | "UNAVAILABLE";
+    reasonCodes: string[];
+    missingPriceSymbols: string[];
+  };
 };
 
 export async function getPortfolioReadModel({
   repository = new PortfolioRepository(),
   strategyRepository = new StrategyRepository(),
+  contributionPlanRepository = new ContributionPlanRepository(),
   marketDataService = new MarketDataService(),
   baseCurrency,
 }: {
   repository?: PortfolioRepository;
   strategyRepository?: StrategyRepository;
+  contributionPlanRepository?: ContributionPlanRepository;
   marketDataService?: MarketDataService;
   baseCurrency?: string;
 } = {}): Promise<PortfolioReadModel> {
@@ -163,7 +186,10 @@ export async function getPortfolioReadModel({
     strategyRepository.findActiveStrategy(),
   ]);
   const resolvedBaseCurrency = baseCurrency ?? strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
-  const marketData = await marketDataService.getCurrentPrices({ assets, baseCurrency: resolvedBaseCurrency });
+  const [marketData, savedPlan] = await Promise.all([
+    marketDataService.getCurrentPrices({ assets, baseCurrency: resolvedBaseCurrency }),
+    strategy ? contributionPlanRepository.findByStrategyId(strategy.id) : null,
+  ]);
   const portfolio = calculatePortfolio({
     assets,
     transactions,
@@ -176,6 +202,39 @@ export async function getPortfolioReadModel({
   const strategyComparisons = strategy && valuationAvailability.state === "AVAILABLE"
     ? compareAllocationToStrategy(portfolio, strategy.allocations)
     : [];
+  const risk = calculatePortfolioRisk({
+    portfolio,
+    assets,
+    accounts: accounts.map((account) => ({
+      id: account.id,
+      name: account.name,
+      type: account.type,
+      custodian: account.custodian
+        ? {
+            id: account.custodian.id,
+            name: account.custodian.name,
+            category: account.custodian.category,
+          }
+        : null,
+    })),
+    strategy: strategy?.allocations ?? null,
+    thresholds: riskThresholdsFromRules(strategy?.portfolioRules ?? []),
+    hasStalePrices: marketData.hasStalePrices,
+  });
+  const contributionAmount = savedPlan ? serializeDecimal(savedPlan.contributionAmount) : "";
+  let contributionProjection: ContributionProjection | null = null;
+  if (strategy && savedPlan && valuationAvailability.state === "AVAILABLE" && contributionAmount && contributionAmount !== "0") {
+    try {
+      contributionProjection = buildSavedContributionProjection({
+        portfolio,
+        assets,
+        strategy: strategy.allocations,
+        savedPlan,
+      });
+    } catch {
+      contributionProjection = null;
+    }
+  }
 
   return {
     custodians: custodians.map((custodian) => ({ id: custodian.id, name: custodian.name, category: custodian.category })),
@@ -243,6 +302,14 @@ export async function getPortfolioReadModel({
           })),
         }
       : null,
+    risk,
+    contribution: {
+      amount: contributionAmount,
+      projection: contributionProjection,
+      state: valuationAvailability.state === "AVAILABLE" ? "AVAILABLE" : "UNAVAILABLE",
+      reasonCodes: valuationAvailability.reasonCodes,
+      missingPriceSymbols: valuationAvailability.missingPriceSymbols,
+    },
   };
 }
 

@@ -26,7 +26,7 @@ export async function saveContributionPlanAction(input: SaveContributionPlanInpu
     }
     const saved = await new ContributionPlanService().save(input);
     revalidatePath("/plan/contributions");
-    revalidatePath("/dashboard");
+    revalidatePath("/portfolio");
     revalidatePath("/portfolio");
     return { ok: true as const, message: "Contribution plan saved.", savedAt: saved.updatedAt.toISOString() };
   } catch (error) {

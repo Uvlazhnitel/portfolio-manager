@@ -24,7 +24,7 @@ export default function OfflinePage() {
           </p>
         </div>
         <Link
-          href="/dashboard"
+          href="/portfolio"
           className="mt-6 inline-flex min-h-11 items-center justify-center rounded-lg bg-primary px-5 text-sm font-medium text-white shadow-sm shadow-primary/20 hover:bg-primary/90"
         >
           <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />

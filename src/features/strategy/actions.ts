@@ -30,7 +30,7 @@ export async function updateStrategyAction(
     const strategy = await new StrategyService().updateStrategy(payload);
 
     revalidatePath("/plan/strategy");
-    revalidatePath("/dashboard");
+    revalidatePath("/portfolio");
     revalidatePath("/portfolio");
     revalidatePath("/plan/contributions");
 

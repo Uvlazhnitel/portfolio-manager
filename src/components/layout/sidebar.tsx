@@ -7,10 +7,6 @@ import { navigationItems } from "@/components/layout/navigation";
 import { cn } from "@/lib/utils";
 
 function isActive(pathname: string, href: string) {
-  if (href === "/dashboard") {
-    return pathname === href;
-  }
-
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
@@ -20,7 +16,7 @@ export function Sidebar() {
   return (
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-[240px] border-r border-border bg-surface px-4 py-5 lg:flex lg:flex-col">
       <div className="mb-8 flex items-center justify-between">
-        <Link href="/dashboard" className="flex items-center gap-3">
+        <Link href="/portfolio" className="flex items-center gap-3">
           <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15 text-primary ring-1 ring-primary/25">
             <CircleDollarSign className="h-5 w-5" aria-hidden="true" />
           </span>

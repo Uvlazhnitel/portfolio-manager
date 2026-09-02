@@ -3,18 +3,18 @@ import { describe, expect, it } from "vitest";
 import { contributionReasonText } from "@/features/contributions/presentation";
 import { parseContributionQueryAmount } from "@/features/contributions/validation";
 import {
-  dashboardContributionItems,
-  formatDashboardCurrency,
-  formatDashboardSignedCurrency,
+  formatPortfolioCurrency,
+  formatPortfolioSignedCurrency,
+  portfolioContributionItems,
   strategyWarningText,
-} from "@/features/dashboard/presentation";
+} from "@/features/portfolio/presentation";
 import { portfolioValuationDisplayLabel } from "@/features/portfolio/valuation-presentation";
 
-describe("dashboard presentation helpers", () => {
+describe("portfolio presentation helpers", () => {
   it("formats small and very large portfolio values without losing finite output", () => {
-    expect(formatDashboardCurrency("0.01", "EUR")).toContain("0.01");
-    expect(formatDashboardCurrency("999999999999.99", "EUR")).toContain("999,999,999,999.99");
-    expect(formatDashboardSignedCurrency("-123.45", "EUR")).toContain("−");
+    expect(formatPortfolioCurrency("0.01", "EUR")).toContain("0.01");
+    expect(formatPortfolioCurrency("999999999999.99", "EUR")).toContain("999,999,999,999.99");
+    expect(formatPortfolioSignedCurrency("-123.45", "EUR")).toContain("−");
   });
 
   it("maps deterministic contribution and strategy reasons to readable text", () => {
@@ -22,7 +22,7 @@ describe("dashboard presentation helpers", () => {
     expect(strategyWarningText({ code: "CRYPTO_ABOVE_MAX", assetClass: AssetClass.CRYPTO, currentPercent: "16.8", limitPercent: "15" })).toBe("Crypto is 16.8%, above the configured maximum of 15.0%.");
   });
 
-  it("accepts only positive cent-safe dashboard query amounts", () => {
+  it("accepts only positive cent-safe portfolio query amounts", () => {
     expect(parseContributionQueryAmount("1000.25")).toBe("1000.25");
     expect(parseContributionQueryAmount("0")).toBeNull();
     expect(parseContributionQueryAmount("1.234")).toBeNull();
@@ -34,8 +34,8 @@ describe("dashboard presentation helpers", () => {
     expect(portfolioValuationDisplayLabel({ isPartial: true })).toBe("Known value");
   });
 
-  it("keeps class-only contribution allocations visible in the dashboard list", () => {
-    const items = dashboardContributionItems({
+  it("keeps class-only contribution allocations visible in the portfolio summary list", () => {
+    const items = portfolioContributionItems({
       plan: {
         contributionAmount: "1000.00",
         allocations: [

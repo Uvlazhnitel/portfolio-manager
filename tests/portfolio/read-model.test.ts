@@ -8,11 +8,9 @@ import {
   type CachedMarketPrice,
 } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getDashboardReadModel } from "@/features/dashboard/read-model";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
 import type { MarketDataStore } from "@/features/market-data/repository";
 import { MarketDataService, resetMarketDataRuntimeCacheForTests } from "@/features/market-data/service";
-import { DailyMarketPriceRepository } from "@/features/performance/repository";
 import { getPortfolioReadModel } from "@/features/portfolio/read-model";
 import { createTradeMutation, createTransferMutation, deleteTransactionGroupMutation } from "@/features/portfolio/mutations";
 import { PortfolioRepository } from "@/features/portfolio/repository";
@@ -95,7 +93,12 @@ afterAll(async () => {
 describe("priced portfolio read models", () => {
   it("exposes explicit basis methods in transaction history", async () => {
     resetMarketDataRuntimeCacheForTests();
-    const model = await getPortfolioReadModel({ repository: new PortfolioRepository(testDb.prisma), strategyRepository: new StrategyRepository(testDb.prisma), marketDataService });
+    const model = await getPortfolioReadModel({
+      repository: new PortfolioRepository(testDb.prisma),
+      strategyRepository: new StrategyRepository(testDb.prisma),
+      contributionPlanRepository: new ContributionPlanRepository(testDb.prisma),
+      marketDataService,
+    });
     expect(model.transactions.filter((row) => row.type === TransactionType.INITIAL_BALANCE)).not.toHaveLength(0);
     expect(model.transactions.filter((row) => row.type === TransactionType.INITIAL_BALANCE).every((row) => row.basisMethod === BasisMethod.KNOWN_COST)).toBe(true);
   });
@@ -110,7 +113,12 @@ describe("priced portfolio read models", () => {
     const groups = await testDb.prisma.transactionGroup.findMany({ where: { transactions: { some: { accountId: main.id, executedAt: { gte: new Date("2026-08-06") } } } } });
     try {
       resetMarketDataRuntimeCacheForTests();
-      const model = await getPortfolioReadModel({ repository: new PortfolioRepository(testDb.prisma), strategyRepository: new StrategyRepository(testDb.prisma), marketDataService });
+      const model = await getPortfolioReadModel({
+        repository: new PortfolioRepository(testDb.prisma),
+        strategyRepository: new StrategyRepository(testDb.prisma),
+        contributionPlanRepository: new ContributionPlanRepository(testDb.prisma),
+        marketDataService,
+      });
       const grouped = model.transactions.filter((row) => row.groupId && groups.some((group) => group.id === row.groupId));
       expect(grouped).toHaveLength(2);
       expect(grouped.map((row) => row.operationKind).sort()).toEqual(["TRADE", "TRANSFER"]);
@@ -125,6 +133,7 @@ describe("priced portfolio read models", () => {
     const model = await getPortfolioReadModel({
       repository: new PortfolioRepository(testDb.prisma),
       strategyRepository: new StrategyRepository(testDb.prisma),
+      contributionPlanRepository: new ContributionPlanRepository(testDb.prisma),
       marketDataService,
     });
     const btc = model.holdings.find((holding) => holding.symbol === "BTC");
@@ -179,6 +188,7 @@ describe("priced portfolio read models", () => {
     const model = await getPortfolioReadModel({
       repository: new PortfolioRepository(testDb.prisma),
       strategyRepository: new StrategyRepository(testDb.prisma),
+      contributionPlanRepository: new ContributionPlanRepository(testDb.prisma),
       marketDataService: partialMarketData,
     });
 
@@ -198,33 +208,39 @@ describe("priced portfolio read models", () => {
     }));
   });
 
-  it("builds dashboard totals and strategy comparison from engine results", async () => {
+  it("builds home portfolio totals, risk, and saved custom contribution projection from engine results", async () => {
     resetMarketDataRuntimeCacheForTests();
-    const dashboard = await getDashboardReadModel({
-      portfolioRepository: new PortfolioRepository(testDb.prisma),
+    const portfolio = await getPortfolioReadModel({
+      repository: new PortfolioRepository(testDb.prisma),
       strategyRepository: new StrategyRepository(testDb.prisma),
       contributionPlanRepository: new ContributionPlanRepository(testDb.prisma),
       marketDataService,
-      dailyPriceStore: new DailyMarketPriceRepository(testDb.prisma),
     });
 
-    expect(dashboard.valuation.totalValue).toBe("51000.00");
-    expect(dashboard.valuation.investmentGain).toBe("10202.00");
-    expect(dashboard.allocation.state).toBe("AVAILABLE");
-    expect(dashboard.allocation.rows).toHaveLength(4);
-    expect(dashboard.valuation.isPartial).toBe(false);
-    expect(dashboard.contribution.amount).toBe("1000");
-    expect(dashboard.contribution.projection?.plan.contributionAmount).toBe("1000.00");
-    expect(dashboard.contribution.projection?.isCustomized).toBe(true);
-    expect(dashboard.contribution.projection?.plan.allocations).toEqual(expect.arrayContaining([
+    expect(portfolio.valuation.totalValue).toBe("51000.00");
+    expect(portfolio.valuation.investmentGain).toBe("10202.00");
+    expect(portfolio.valuation.isPartial).toBe(false);
+    expect(portfolio.strategyStatus).toEqual(expect.objectContaining({
+      state: "AVAILABLE",
+      inRangeCount: 1,
+      totalCount: 4,
+    }));
+    expect(portfolio.risk.state).toBe("PARTIAL");
+    expect(portfolio.risk.largestAsset.subjectName).toBe("BTC");
+    expect(portfolio.risk.violations).toEqual([]);
+    expect(portfolio.risk.strategyViolations.map((violation) => violation.code)).toEqual(expect.arrayContaining([
+      "CRYPTO_ABOVE_MAX",
+      "ETF_BELOW_MIN",
+      "GOLD_BELOW_MIN",
+    ]));
+    expect(portfolio.contribution.amount).toBe("1000");
+    expect(portfolio.contribution.projection?.plan.contributionAmount).toBe("1000.00");
+    expect(portfolio.contribution.projection?.isCustomized).toBe(true);
+    expect(portfolio.contribution.projection?.plan.allocations).toEqual(expect.arrayContaining([
       expect.objectContaining({ assetClass: AssetClass.ETF, amount: "600.00" }),
       expect.objectContaining({ assetClass: AssetClass.CRYPTO, amount: "400.00" }),
     ]));
-    expect(dashboard.contribution.projection?.plan.assetRecommendations.length).toBeGreaterThan(0);
-    expect(dashboard.history.points).toEqual([]);
-    expect(dashboard.allocation.rows[0]).toEqual(expect.objectContaining({ assetClass: AssetClass.CRYPTO, driftPercent: "83.04" }));
-    expect(dashboard.strategyStatus.state).toBe("NEEDS_ATTENTION");
-    expect(dashboard.strategyStatus.attentionCount).toBe(3);
+    expect(portfolio.contribution.projection?.plan.assetRecommendations.length).toBeGreaterThan(0);
   });
 });
 

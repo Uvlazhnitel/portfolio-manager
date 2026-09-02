@@ -67,7 +67,7 @@ export async function deleteIntegrationApiKeyAction(
 function revalidateIntegrationPages() {
   revalidatePath("/settings");
   revalidatePath("/assistant");
-  revalidatePath("/dashboard");
+  revalidatePath("/portfolio");
   revalidatePath("/portfolio");
 }
 

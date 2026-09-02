@@ -1,9 +1,8 @@
 import { AccountType, AssetClass, AssetType, Prisma, TransactionType } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
-import { getDashboardReadModel } from "@/features/dashboard/read-model";
 import { MarketDataService } from "@/features/market-data/service";
-import type { DailyMarketPriceStore } from "@/features/performance/repository";
+import { getPortfolioReadModel } from "@/features/portfolio/read-model";
 import { PortfolioRepository } from "@/features/portfolio/repository";
 import { StrategyRepository } from "@/features/strategy/repository";
 
@@ -14,32 +13,20 @@ const allocations = [
   { assetClass: AssetClass.CASH, targetPercent: new Prisma.Decimal(5), minPercent: new Prisma.Decimal(0), maxPercent: new Prisma.Decimal(10) },
 ];
 
-describe("dashboard read model edge states", () => {
-  it("returns a deliberate empty state without inventing a score or P&L", async () => {
-    const dashboard = await getDashboardReadModel({
-      portfolioRepository: fakePortfolio([], [], []),
-      strategyRepository: fakeStrategy(),
-      contributionPlanRepository: fakePlan(),
-      marketDataService: fakeMarketData([]),
-      dailyPriceStore: fakeDailyPrices([]),
-    });
-
-    expect(dashboard.valuation).toEqual(expect.objectContaining({ totalValue: "0.00", exactTotalValue: "0.00", knownValuedSubtotal: "0.00" }));
-    expect(dashboard.valuation.investmentGain).toBe("0.00");
-    expect(dashboard.strategyStatus.state).toBe("EMPTY");
-    expect(dashboard.history.points).toEqual([]);
-  });
-
-  it("supports a portfolio without ETF and preserves partial account value", async () => {
+describe("portfolio home read model edge states", () => {
+  it("preserves partial account value without allocation, risk, or contribution decisions", async () => {
     const now = new Date("2026-08-25T08:00:00Z");
-    const account = { id: "account", name: "Mixed", type: AccountType.OTHER, description: null, createdAt: now, updatedAt: now };
+    const account = { id: "account", name: "Mixed", type: AccountType.OTHER, description: null, custodianId: null, custodian: null, createdAt: now, updatedAt: now };
     const btc = { id: "btc", symbol: "BTC", name: "Bitcoin", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "BTC", externalId: null, metadata: null, createdAt: now, updatedAt: now };
     const gold = { id: "gold", symbol: "GOLD", name: "Gold", assetClass: AssetClass.GOLD, assetType: AssetType.PHYSICAL_GOLD, currency: "XAU", externalId: null, metadata: null, createdAt: now, updatedAt: now };
     const transactions = [btc, gold].map((asset, index) => ({
       id: `transaction-${asset.id}`,
       assetId: asset.id,
       accountId: account.id,
+      groupId: null,
+      transactionGroupId: null,
       type: TransactionType.INITIAL_BALANCE,
+      basisMethod: null,
       quantity: new Prisma.Decimal(index === 0 ? 1 : 10),
       pricePerUnit: new Prisma.Decimal(index === 0 ? 5 : 50),
       fee: null,
@@ -50,60 +37,56 @@ describe("dashboard read model edge states", () => {
       updatedAt: now,
       asset,
       account,
+      transactionGroup: null,
     }));
-    const dashboard = await getDashboardReadModel({
-      portfolioRepository: fakePortfolio([btc, gold], [account], transactions),
+
+    const portfolio = await getPortfolioReadModel({
+      repository: fakePortfolio([btc, gold], [account], transactions),
       strategyRepository: fakeStrategy(),
       contributionPlanRepository: fakePlan(),
       marketDataService: fakeMarketData([{ assetId: btc.id, symbol: btc.symbol, price: "10.00", currency: "EUR", timestamp: now, fetchedAt: now, source: "TEST", isStale: false }]),
-      dailyPriceStore: fakeDailyPrices([
-        dailyPrice(btc.id, "2026-08-25", "9"),
-        dailyPrice(gold.id, "2026-08-25", "2"),
-        dailyPrice(btc.id, "2026-08-26", "10"),
-        dailyPrice(gold.id, "2026-08-26", "3", true),
-      ]),
     });
 
-    expect(dashboard.valuation).toEqual(expect.objectContaining({
+    expect(portfolio.valuation).toEqual(expect.objectContaining({
       totalValue: "10.00",
       exactTotalValue: null,
       knownValuedSubtotal: "10.00",
       isPartial: true,
+      missingPriceSymbols: ["GOLD"],
       investmentGain: "5.00",
       isCostBasisPartial: true,
     }));
-    expect(dashboard.allocation).toEqual({
-      state: "PARTIAL",
-      reasonCodes: ["INCOMPLETE_VALUATION", "MISSING_MARKET_PRICE"],
-      missingPriceSymbols: ["GOLD"],
-      rows: [],
-    });
-    expect(dashboard.strategyStatus).toEqual(expect.objectContaining({
+    expect(portfolio.holdings.every((holding) => holding.portfolioWeight === null)).toBe(true);
+    expect(portfolio.strategyStatus).toEqual(expect.objectContaining({
       state: "UNAVAILABLE",
-      attentionCount: null,
+      inRangeCount: null,
+      comparisons: [],
       missingPriceSymbols: ["GOLD"],
     }));
-    expect(dashboard.contribution).toEqual(expect.objectContaining({
+    expect(portfolio.risk).toEqual(expect.objectContaining({
+      state: "PARTIAL",
+      missingPriceSymbols: ["GOLD"],
+      violations: [],
+    }));
+    expect(portfolio.contribution).toEqual(expect.objectContaining({
       state: "UNAVAILABLE",
       projection: null,
       missingPriceSymbols: ["GOLD"],
     }));
-    expect(dashboard.history.points).toHaveLength(2);
-    expect(dashboard.history.points.map((point) => point.portfolioValue)).toEqual(["29.00", "40.00"]);
-    expect(dashboard.history.trackingStartedAt).toBe("2026-08-25");
-    expect(dashboard.history.incompleteDates).toBe(0);
-    expect(dashboard.history.staleDates).toBe(1);
   });
 
-  it("exposes stale prices and partial cost basis without hiding the portfolio value", async () => {
+  it("exposes stale prices and partial cost basis without hiding exact known valuation", async () => {
     const now = new Date("2026-08-26T08:00:00Z");
-    const account = { id: "account", name: "Wallet", type: AccountType.OTHER, description: null, createdAt: now, updatedAt: now };
+    const account = { id: "account", name: "Wallet", type: AccountType.OTHER, description: null, custodianId: null, custodian: null, createdAt: now, updatedAt: now };
     const btc = { id: "btc", symbol: "BTC", name: "Bitcoin", assetClass: AssetClass.CRYPTO, assetType: AssetType.CRYPTO, currency: "BTC", externalId: null, metadata: null, createdAt: now, updatedAt: now };
     const transaction = {
       id: "transaction",
       assetId: btc.id,
       accountId: account.id,
+      groupId: null,
+      transactionGroupId: null,
       type: TransactionType.INITIAL_BALANCE,
+      basisMethod: null,
       quantity: new Prisma.Decimal(1),
       pricePerUnit: null,
       fee: null,
@@ -114,24 +97,30 @@ describe("dashboard read model edge states", () => {
       updatedAt: now,
       asset: btc,
       account,
+      transactionGroup: null,
     };
-    const dashboard = await getDashboardReadModel({
-      portfolioRepository: fakePortfolio([btc], [account], [transaction]),
+
+    const portfolio = await getPortfolioReadModel({
+      repository: fakePortfolio([btc], [account], [transaction]),
       strategyRepository: fakeStrategy(),
       contributionPlanRepository: fakePlan(),
       marketDataService: fakeMarketData(
         [{ assetId: btc.id, symbol: btc.symbol, price: "100.00", currency: "EUR", timestamp: now, fetchedAt: now, source: "TEST", isStale: true }],
         { hasStalePrices: true, warning: "Cached price in use." },
       ),
-      dailyPriceStore: fakeDailyPrices([]),
     });
 
-    expect(dashboard.valuation).toEqual(expect.objectContaining({ totalValue: "100.00", exactTotalValue: "100.00", knownValuedSubtotal: "100.00" }));
-    expect(dashboard.valuation.isPartial).toBe(false);
-    expect(dashboard.valuation.isCostBasisPartial).toBe(true);
-    expect(dashboard.valuation.missingCostBasisSymbols).toEqual(["BTC"]);
-    expect(dashboard.valuation.hasStalePrices).toBe(true);
-    expect(dashboard.valuation.warning).toBe("Cached price in use.");
+    expect(portfolio.valuation).toEqual(expect.objectContaining({
+      totalValue: "100.00",
+      exactTotalValue: "100.00",
+      knownValuedSubtotal: "100.00",
+      isPartial: false,
+      isCostBasisPartial: true,
+      missingCostBasisSymbols: ["BTC"],
+      hasStalePrices: true,
+      warning: "Cached price in use.",
+    }));
+    expect(portfolio.risk.isStale).toBe(true);
   });
 });
 
@@ -139,6 +128,7 @@ function fakePortfolio(assets: unknown[], accounts: unknown[], transactions: unk
   return {
     listAssets: async () => assets,
     listAccounts: async () => accounts,
+    listCustodians: async () => [],
     listTransactions: async () => transactions,
   } as unknown as PortfolioRepository;
 }
@@ -152,7 +142,7 @@ function fakeStrategy() {
       baseCurrency: "EUR",
       createdAt: new Date(),
       updatedAt: new Date(),
-      allocations: allocations.map((allocation, index) => ({ id: `allocation-${index}`, strategyId: "strategy", ...allocation })),
+      allocations: allocations.map((allocation, index) => ({ id: `allocation-${index}`, strategyId: "strategy", ...allocation, assetAllocations: [] })),
       portfolioRules: [],
     }),
   } as unknown as StrategyRepository;
@@ -174,28 +164,4 @@ function fakeMarketData(prices: unknown[], options: { hasStalePrices?: boolean; 
       warning: options.warning ?? null,
     }),
   } as unknown as MarketDataService;
-}
-
-function fakeDailyPrices(rows: unknown[]) {
-  return {
-    listDailyPrices: async () => rows,
-    saveDailyPrices: async () => undefined,
-  } as unknown as DailyMarketPriceStore;
-}
-
-function dailyPrice(assetId: string, date: string, price: string, isStaleAtCapture = false) {
-  const timestamp = new Date(`${date}T20:00:00Z`);
-  return {
-    id: `${assetId}-${date}`,
-    assetId,
-    currency: "EUR",
-    date: new Date(`${date}T00:00:00Z`),
-    price: new Prisma.Decimal(price),
-    source: "TEST",
-    quoteTimestamp: timestamp,
-    capturedAt: timestamp,
-    isStaleAtCapture,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  };
 }
