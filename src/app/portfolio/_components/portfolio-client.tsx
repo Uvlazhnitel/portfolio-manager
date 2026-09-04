@@ -792,28 +792,43 @@ function AddTransactionDialog({ portfolio, initialAssetId, initialAccountId, onC
 
 function TradeForm({ portfolio, onDone, initialSourceAssetId, initialSourceAccountId }: PortfolioClientProps & { onDone: () => void; initialSourceAssetId?: string; initialSourceAccountId?: string }) {
   const [state, action, isPending] = useActionState(createTradeAction, { ok: false, message: "" });
-  const [sourceAssetId, setSourceAssetId] = useState(initialSourceAssetId ?? portfolio.assets[0]?.id ?? "");
+  const initialAssetId = initialSourceAssetId ?? portfolio.assets[0]?.id ?? "";
+  const initialAccountId = uniqueHoldingAccountId(portfolio.holdings, initialAssetId) ?? initialSourceAccountId ?? portfolio.accounts[0]?.id ?? "";
+  const [sourceAssetId, setSourceAssetId] = useState(initialAssetId);
+  const [sourceAccountId, setSourceAccountId] = useState(initialAccountId);
+  const [destinationAccountId, setDestinationAccountId] = useState(initialAccountId);
   const [destinationAssetId, setDestinationAssetId] = useState(portfolio.assets.find((asset) => asset.id !== sourceAssetId)?.id ?? "");
   if (state.ok) return <div className="space-y-4"><ActionMessage state={state} /><Button type="button" onClick={onDone} className="w-full">Done</Button></div>;
   return (
     <form action={action} className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Source account"><select name="sourceAccountId" required className={inputClassName} defaultValue={initialSourceAccountId ?? portfolio.accounts[0]?.id ?? ""}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
-        <Field label="Source asset"><select name="sourceAssetId" required className={inputClassName} value={sourceAssetId} onChange={(event) => { const value = event.target.value; setSourceAssetId(value); if (value === destinationAssetId) setDestinationAssetId(portfolio.assets.find((asset) => asset.id !== value)?.id ?? ""); }}>{portfolio.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field>
+        <Field label="Source account"><select name="sourceAccountId" required className={inputClassName} value={sourceAccountId} onChange={(event) => setSourceAccountId(event.target.value)}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
+        <Field label="Source asset"><select name="sourceAssetId" required className={inputClassName} value={sourceAssetId} onChange={(event) => {
+          const value = event.target.value;
+          const resolvedAccountId = uniqueHoldingAccountId(portfolio.holdings, value);
+          setSourceAssetId(value);
+          if (resolvedAccountId) setSourceAccountId(resolvedAccountId);
+          if (value === destinationAssetId) setDestinationAssetId(portfolio.assets.find((asset) => asset.id !== value)?.id ?? "");
+        }}>{portfolio.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field>
         <Field label="Source quantity"><input name="sourceQuantity" required className={inputClassName} inputMode="decimal" placeholder="500" /></Field>
         <div aria-hidden="true" className="hidden sm:block" />
-        <Field label="Destination account"><select name="destinationAccountId" required className={inputClassName} defaultValue={initialSourceAccountId ?? portfolio.accounts[0]?.id ?? ""}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
+        <Field label="Destination account"><select name="destinationAccountId" required className={inputClassName} value={destinationAccountId} onChange={(event) => setDestinationAccountId(event.target.value)}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
         <Field label="Destination asset"><select name="destinationAssetId" required className={inputClassName} value={destinationAssetId} onChange={(event) => setDestinationAssetId(event.target.value)}>{portfolio.assets.filter((asset) => asset.id !== sourceAssetId).map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field>
         <Field label="Destination quantity"><input name="destinationQuantity" required className={inputClassName} inputMode="decimal" placeholder="0.0045" /></Field>
         <Field label={`Fee in ${portfolio.valuation.currency} (optional)`}><input name="fee" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
         <Field label="Date"><input name="executedAt" required type="date" className={inputClassName} defaultValue={today()} /></Field>
       </div>
-      <p className="text-xs text-muted">The source asset&apos;s proportional acquisition cost is carried to the destination. This is an internal reallocation, not a contribution or withdrawal.</p>
+      <p className="text-xs text-muted">The source asset&apos;s proportional acquisition cost is carried to the destination when available. If the source basis is unknown, the trade is still saved and gain/return stay partial until you correct the basis. This is an internal reallocation, not a contribution or withdrawal.</p>
       <Field label="Note (optional)"><textarea name="note" className={textareaClassName} rows={3} /></Field>
       <ActionMessage state={state} />
       <Button type="submit" disabled={isPending || portfolio.accounts.length === 0 || portfolio.assets.length < 2}>{isPending ? "Saving…" : "Save trade"}</Button>
     </form>
   );
+}
+
+function uniqueHoldingAccountId(holdings: PortfolioReadModel["holdings"], assetId: string) {
+  const accountIds = [...new Set(holdings.filter((holding) => holding.assetId === assetId).map((holding) => holding.accountId))];
+  return accountIds.length === 1 ? accountIds[0] : null;
 }
 
 function EditTransactionDialog({ portfolio, transactionId, onClose }: PortfolioClientProps & { transactionId: string; onClose: () => void }) {

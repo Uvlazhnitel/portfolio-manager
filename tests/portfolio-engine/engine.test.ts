@@ -698,6 +698,27 @@ describe("portfolio engine dashboard analytics", () => {
     expect(analytics.priceCoverage).toEqual({ pricedHoldings: 1, totalHoldings: 1, percent: "100.00" });
   });
 
+  it("values unknown-basis trades while keeping cost basis and return partial", () => {
+    const transactions: EngineTransaction[] = [
+      { assetId: "usdt", accountId: "bybit", type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.UNKNOWN, quantity: "1000", pricePerUnit: null, currency: "EUR", executedAt: "2026-01-01" },
+      { assetId: "usdt", accountId: "bybit", type: TransactionType.SELL, quantity: "100", pricePerUnit: null, currency: "EUR", executedAt: "2026-01-02", transactionGroupId: "trade-1", transactionGroup: { kind: TransactionGroupKind.TRADE } },
+      { assetId: "btc", accountId: "ledger", type: TransactionType.BUY, quantity: "0.01", pricePerUnit: null, currency: "EUR", fee: null, executedAt: "2026-01-02", transactionGroupId: "trade-1", transactionGroup: { kind: TransactionGroupKind.TRADE } },
+    ];
+    const portfolio = calculatePortfolio({ assets, transactions, marketPrices: prices });
+    const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency: "EUR" });
+
+    expect(portfolio.holdings).toEqual(expect.arrayContaining([
+      { accountId: "bybit", assetId: "usdt", quantity: "900" },
+      { accountId: "ledger", assetId: "btc", quantity: "0.01" },
+    ]));
+    expect(portfolio.totalValue).toBe("1000.00");
+    expect(analytics.totalUnrealizedPnl).toBeNull();
+    expect(analytics.trackedCapitalReturnPercent).toBeNull();
+    expect(analytics.isCostBasisPartial).toBe(true);
+    expect(analytics.externalContributions).toBe("0.00");
+    expect(analytics.externalWithdrawals).toBe("0.00");
+  });
+
   it("returns a negative unrealized P&L without changing its sign", () => {
     const transactions: EngineTransaction[] = [
       { assetId: "etf", accountId: "broker", type: TransactionType.BUY, quantity: "10", pricePerUnit: "20", currency: "EUR" },

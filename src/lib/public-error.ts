@@ -17,6 +17,7 @@ const safeMessagePrefixes = [
   "Price ",
   "Quantity ",
   "Selected ",
+  "Source ",
   "Strategy ",
   "This transaction ",
   "Transaction ",

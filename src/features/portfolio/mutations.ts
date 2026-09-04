@@ -335,8 +335,9 @@ export async function createTradeMutation(
       executedAt: parsed.executedAt,
       baseCurrency: parsed.currency,
     });
-    const carriedCost = decimal(sourcePrice).mul(parsed.sourceQuantity);
-    const destinationPrice = carriedCost.div(parsed.destinationQuantity).toDecimalPlaces(8).toString();
+    const destinationPrice = sourcePrice
+      ? decimal(sourcePrice).mul(parsed.sourceQuantity).div(parsed.destinationQuantity).toDecimalPlaces(8).toString()
+      : null;
 
     const group = await transaction.transactionGroup.create({ data: { kind: TransactionGroupKind.TRADE } });
     await transaction.transaction.createMany({ data: [
@@ -346,7 +347,7 @@ export async function createTradeMutation(
         accountId: sourceAccount.id,
         type: TransactionType.SELL,
         quantity: parsed.sourceQuantity,
-        pricePerUnit: decimal(sourcePrice).toDecimalPlaces(8).toString(),
+        pricePerUnit: sourcePrice ? decimal(sourcePrice).toDecimalPlaces(8).toString() : null,
         fee: null,
         currency: parsed.currency,
         executedAt: parsed.executedAt,
@@ -502,7 +503,9 @@ export async function updateTradeMutation(
     if (!destinationAsset) throw new PortfolioMutationError("Destination asset does not exist.");
     await assertEnoughQuantityForSell({ db: transaction, accountId: sourceAccount.id, assetId: sourceAsset.id, quantity: parsed.sourceQuantity, executedAt: parsed.executedAt, excludedGroupId: group.id });
     const sourcePrice = await sourceAverageAcquisitionPrice({ db: transaction, accountId: sourceAccount.id, asset: sourceAsset, executedAt: parsed.executedAt, excludedGroupId: group.id, baseCurrency: parsed.currency });
-    const destinationPrice = decimal(sourcePrice).mul(parsed.sourceQuantity).div(parsed.destinationQuantity).toDecimalPlaces(8).toString();
+    const destinationPrice = sourcePrice
+      ? decimal(sourcePrice).mul(parsed.sourceQuantity).div(parsed.destinationQuantity).toDecimalPlaces(8).toString()
+      : null;
     const sell = group.transactions.find((leg) => leg.type === TransactionType.SELL);
     const buy = group.transactions.find((leg) => leg.type === TransactionType.BUY);
     if (!sell || !buy) throw new PortfolioMutationError("Trade group is incomplete.");
@@ -516,7 +519,7 @@ export async function updateTradeMutation(
         assetId: sourceAsset.id,
         type: TransactionType.SELL,
         quantity: parsed.sourceQuantity,
-        pricePerUnit: decimal(sourcePrice).toDecimalPlaces(8).toString(),
+        pricePerUnit: sourcePrice ? decimal(sourcePrice).toDecimalPlaces(8).toString() : null,
         fee: null,
         replacesTransactionId: sell.id,
       },
@@ -857,7 +860,7 @@ async function assertEnoughQuantityForSell({
   const currentQuantity = currentHolding ? decimal(currentHolding.quantity) : ZERO;
 
   if (decimal(quantity).greaterThan(currentQuantity)) {
-    throw new PortfolioMutationError("Add a starting balance or earlier buy first. You cannot sell more than was held in this account on the sale date.");
+    throw new PortfolioMutationError("Source account does not hold enough of this asset on the transaction date. Add a starting balance or earlier buy first, or choose the account that holds the source asset.");
   }
 }
 
@@ -925,7 +928,7 @@ async function sourceAverageAcquisitionPrice({
   const basis = calculateHoldingCostBasis({ portfolio, assets: [asset], transactions, baseCurrency })
     .find((row) => row.accountId === accountId && row.assetId === asset.id);
   if (!basis || basis.status !== "AVAILABLE" || !basis.averageAcquisitionPrice) {
-    throw new PortfolioMutationError("Source cost basis is unavailable. Fix the earlier acquisition data before recording this trade.");
+    return null;
   }
   return basis.averageAcquisitionPrice;
 }
