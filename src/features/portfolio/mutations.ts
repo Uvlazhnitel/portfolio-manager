@@ -5,6 +5,7 @@ import {
   BasisMethod,
   MarketPriceUnit,
   Prisma,
+  TransactionStatus,
   TransactionGroupKind,
   TransactionType,
   type PrismaClient,
@@ -36,6 +37,8 @@ const implementedTransactionTypes = [
   TransactionType.DEPOSIT,
   TransactionType.WITHDRAWAL,
 ] as const;
+
+const auditReasonSchema = z.string().trim().max(500).optional();
 
 export type PortfolioMutationResult = {
   ok: boolean;
@@ -78,7 +81,7 @@ export const updateTransactionSchema = transactionMutationSchema.pick({
   fee: true,
   executedAt: true,
   note: true,
-}).extend({ id: z.string().min(1) });
+}).extend({ id: z.string().min(1), auditReason: auditReasonSchema });
 
 export type UpdateTransactionInput = z.input<typeof updateTransactionSchema>;
 
@@ -95,7 +98,7 @@ export const transferMutationSchema = z.object({
 
 export type TransferMutationInput = z.input<typeof transferMutationSchema>;
 
-export const updateTransferSchema = transferMutationSchema.extend({ groupId: z.string().min(1) });
+export const updateTransferSchema = transferMutationSchema.extend({ groupId: z.string().min(1), auditReason: auditReasonSchema });
 export type UpdateTransferInput = z.input<typeof updateTransferSchema>;
 
 export const tradeMutationSchema = z.object({
@@ -111,7 +114,7 @@ export const tradeMutationSchema = z.object({
   note: z.string().trim().optional(),
 });
 export type TradeMutationInput = z.input<typeof tradeMutationSchema>;
-export const updateTradeSchema = tradeMutationSchema.extend({ groupId: z.string().min(1) });
+export const updateTradeSchema = tradeMutationSchema.extend({ groupId: z.string().min(1), auditReason: auditReasonSchema });
 export type UpdateTradeInput = z.input<typeof updateTradeSchema>;
 
 export type AssetQuoteLinkInput = z.input<typeof assetQuoteLinkSchema>;
@@ -377,9 +380,11 @@ export async function createTradeMutation(
 }
 
 export async function deleteTransactionMutation(
-  id: string,
+  input: string | { id: string; auditReason?: string | null },
   db: PrismaClient = prisma,
 ): Promise<PortfolioMutationResult> {
+  const id = typeof input === "string" ? input : input.id;
+  const auditReason = typeof input === "string" ? null : input.auditReason ?? null;
   if (!id) {
     throw new Error("Transaction id is required.");
   }
@@ -387,37 +392,32 @@ export async function deleteTransactionMutation(
   await withSerializableRetry(db, async (transaction) => {
     const target = await transaction.transaction.findUnique({ where: { id } });
     if (!target) throw new PortfolioMutationError("Transaction was not found.");
-    if (target.transactionGroupId) throw new PortfolioMutationError("Grouped operations must be deleted as one operation.");
+    assertActiveTransaction(target, "void");
+    if (target.transactionGroupId) throw new PortfolioMutationError("Grouped operations must be voided as one operation.");
     if (target.type === TransactionType.TRANSFER_IN || target.type === TransactionType.TRANSFER_OUT) {
       throw new PortfolioMutationError("Legacy ungrouped transfer rows are read-only.");
     }
 
-    const remaining = await transaction.transaction.findMany({
-      where: { accountId: target.accountId, assetId: target.assetId, id: { not: id } },
-      orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }],
-    });
-    assertNonNegativeChronology(remaining);
-    await transaction.transaction.delete({ where: { id } });
+    await voidTransactions(transaction, [target.id], auditReason);
+    await assertAffectedChronologies(transaction, [{ accountId: target.accountId, assetId: target.assetId }]);
   });
-  return { ok: true, message: "Transaction deleted." };
+  return { ok: true, message: "Transaction voided." };
 }
 
 export async function deleteTransactionGroupMutation(
-  groupId: string,
+  input: string | { groupId: string; auditReason?: string | null },
   db: PrismaClient = prisma,
 ): Promise<PortfolioMutationResult> {
+  const groupId = typeof input === "string" ? input : input.groupId;
+  const auditReason = typeof input === "string" ? null : input.auditReason ?? null;
   if (!groupId) throw new Error("Transaction group id is required.");
   await withSerializableRetry(db, async (transaction) => {
-    const group = await transaction.transactionGroup.findUnique({
-      where: { id: groupId },
-      include: { transactions: true },
-    });
-    if (!group) throw new PortfolioMutationError("Transaction group was not found.");
+    const group = await requireAnyActiveGroup(transaction, groupId);
     const affected = group.transactions.map((leg) => ({ accountId: leg.accountId, assetId: leg.assetId }));
-    await transaction.transactionGroup.delete({ where: { id: group.id } });
+    await voidTransactions(transaction, group.transactions.map((leg) => leg.id), auditReason);
     await assertAffectedChronologies(transaction, affected);
   });
-  return { ok: true, message: "Operation deleted." };
+  return { ok: true, message: "Operation voided." };
 }
 
 export async function updateTransferMutation(
@@ -451,15 +451,35 @@ export async function updateTransferMutation(
     const incoming = group.transactions.find((leg) => leg.type === TransactionType.TRANSFER_IN);
     if (!outgoing || !incoming) throw new PortfolioMutationError("Transfer group is incomplete.");
     const shared = { assetId: asset.id, quantity: normalized.quantity, currency: parsed.currency, executedAt: parsed.executedAt, note: parsed.note || null };
-    await transaction.transaction.update({ where: { id: outgoing.id }, data: { ...shared, accountId: fromAccount.id } });
-    await transaction.transaction.update({ where: { id: incoming.id }, data: { ...shared, accountId: toAccount.id } });
+    const replacementGroup = await transaction.transactionGroup.create({ data: { kind: TransactionGroupKind.TRANSFER } });
+    await transaction.transaction.createMany({ data: [
+      {
+        ...shared,
+        transactionGroupId: replacementGroup.id,
+        accountId: fromAccount.id,
+        type: TransactionType.TRANSFER_OUT,
+        pricePerUnit: null,
+        fee: null,
+        replacesTransactionId: outgoing.id,
+      },
+      {
+        ...shared,
+        transactionGroupId: replacementGroup.id,
+        accountId: toAccount.id,
+        type: TransactionType.TRANSFER_IN,
+        pricePerUnit: null,
+        fee: null,
+        replacesTransactionId: incoming.id,
+      },
+    ] });
+    await replaceTransactions(transaction, [outgoing.id, incoming.id], parsed.auditReason ?? null);
     await assertAffectedChronologies(transaction, [
       ...group.transactions.map((leg) => ({ accountId: leg.accountId, assetId: leg.assetId })),
       { accountId: fromAccount.id, assetId: asset.id },
       { accountId: toAccount.id, assetId: asset.id },
     ]);
   });
-  return { ok: true, message: "Transfer updated." };
+  return { ok: true, message: "Transfer corrected." };
 }
 
 export async function updateTradeMutation(
@@ -487,15 +507,39 @@ export async function updateTradeMutation(
     const buy = group.transactions.find((leg) => leg.type === TransactionType.BUY);
     if (!sell || !buy) throw new PortfolioMutationError("Trade group is incomplete.");
     const shared = { currency: parsed.currency, executedAt: parsed.executedAt, note: parsed.note || null };
-    await transaction.transaction.update({ where: { id: sell.id }, data: { ...shared, accountId: sourceAccount.id, assetId: sourceAsset.id, quantity: parsed.sourceQuantity, pricePerUnit: decimal(sourcePrice).toDecimalPlaces(8).toString(), fee: null } });
-    await transaction.transaction.update({ where: { id: buy.id }, data: { ...shared, accountId: destinationAccount.id, assetId: destinationAsset.id, quantity: parsed.destinationQuantity, pricePerUnit: destinationPrice, fee: parsed.fee ?? null } });
+    const replacementGroup = await transaction.transactionGroup.create({ data: { kind: TransactionGroupKind.TRADE } });
+    await transaction.transaction.createMany({ data: [
+      {
+        ...shared,
+        transactionGroupId: replacementGroup.id,
+        accountId: sourceAccount.id,
+        assetId: sourceAsset.id,
+        type: TransactionType.SELL,
+        quantity: parsed.sourceQuantity,
+        pricePerUnit: decimal(sourcePrice).toDecimalPlaces(8).toString(),
+        fee: null,
+        replacesTransactionId: sell.id,
+      },
+      {
+        ...shared,
+        transactionGroupId: replacementGroup.id,
+        accountId: destinationAccount.id,
+        assetId: destinationAsset.id,
+        type: TransactionType.BUY,
+        quantity: parsed.destinationQuantity,
+        pricePerUnit: destinationPrice,
+        fee: parsed.fee ?? null,
+        replacesTransactionId: buy.id,
+      },
+    ] });
+    await replaceTransactions(transaction, [sell.id, buy.id], parsed.auditReason ?? null);
     await assertAffectedChronologies(transaction, [
       ...group.transactions.map((leg) => ({ accountId: leg.accountId, assetId: leg.assetId })),
       { accountId: sourceAccount.id, assetId: sourceAsset.id },
       { accountId: destinationAccount.id, assetId: destinationAsset.id },
     ]);
   });
-  return { ok: true, message: "Trade updated." };
+  return { ok: true, message: "Trade corrected." };
 }
 
 export async function updateTransactionMutation(
@@ -510,6 +554,7 @@ export async function updateTransactionMutation(
       include: { asset: true },
     });
     if (!target) throw new PortfolioMutationError("Transaction was not found.");
+    assertActiveTransaction(target, "correct");
     if (target.transactionGroupId) throw new PortfolioMutationError("Grouped operations must be edited as one operation.");
     if (target.type === TransactionType.TRANSFER_IN || target.type === TransactionType.TRANSFER_OUT) throw new PortfolioMutationError("Legacy ungrouped transfer rows are read-only.");
 
@@ -529,25 +574,26 @@ export async function updateTransactionMutation(
       currency: target.currency,
     }, target.asset);
 
-    await transaction.transaction.update({
-      where: { id: target.id },
+    await transaction.transaction.create({
       data: {
+        assetId: target.assetId,
+        accountId: target.accountId,
+        type: target.type,
         basisMethod: normalized.basisMethod,
         quantity: normalized.quantity,
         pricePerUnit: normalized.pricePerUnit,
         fee: normalized.fee,
+        currency: target.currency,
         executedAt: parsed.executedAt,
         note: parsed.note || null,
+        replacesTransactionId: target.id,
       },
     });
-    const chronology = await transaction.transaction.findMany({
-      where: { accountId: target.accountId, assetId: target.assetId },
-      orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }],
-    });
-    assertNonNegativeChronology(chronology);
+    await replaceTransactions(transaction, [target.id], parsed.auditReason ?? null);
+    await assertAffectedChronologies(transaction, [{ accountId: target.accountId, assetId: target.assetId }]);
   });
 
-  return { ok: true, message: "Transaction updated." };
+  return { ok: true, message: "Transaction corrected." };
 }
 
 async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, db: Prisma.TransactionClient) {
@@ -727,6 +773,59 @@ function normalizeTransfer(parsed: z.infer<typeof transferMutationSchema>, asset
   };
 }
 
+function activeTransactionFilter(): Prisma.TransactionWhereInput {
+  return { status: TransactionStatus.ACTIVE };
+}
+
+function auditReasonOrNull(reason: string | null | undefined) {
+  const value = reason?.trim();
+  return value ? value : null;
+}
+
+function assertActiveTransaction(transaction: { status: TransactionStatus }, action: "void" | "correct") {
+  if (transaction.status !== TransactionStatus.ACTIVE) {
+    throw new PortfolioMutationError(`Only active transactions can be ${action === "void" ? "voided" : "corrected"}.`);
+  }
+}
+
+async function voidTransactions(
+  db: Prisma.TransactionClient,
+  ids: string[],
+  reason: string | null | undefined,
+) {
+  if (ids.length === 0) throw new PortfolioMutationError("No active transaction rows were found.");
+  const changed = await db.transaction.updateMany({
+    where: { id: { in: ids }, status: TransactionStatus.ACTIVE },
+    data: {
+      status: TransactionStatus.VOIDED,
+      statusChangedAt: new Date(),
+      statusReason: auditReasonOrNull(reason),
+    },
+  });
+  if (changed.count !== ids.length) {
+    throw new PortfolioMutationError("Only active transactions can be voided.");
+  }
+}
+
+async function replaceTransactions(
+  db: Prisma.TransactionClient,
+  ids: string[],
+  reason: string | null | undefined,
+) {
+  if (ids.length === 0) throw new PortfolioMutationError("No active transaction rows were found.");
+  const changed = await db.transaction.updateMany({
+    where: { id: { in: ids }, status: TransactionStatus.ACTIVE },
+    data: {
+      status: TransactionStatus.REPLACED,
+      statusChangedAt: new Date(),
+      statusReason: auditReasonOrNull(reason),
+    },
+  });
+  if (changed.count !== ids.length) {
+    throw new PortfolioMutationError("Only active transactions can be corrected.");
+  }
+}
+
 async function assertEnoughQuantityForSell({
   db,
   accountId,
@@ -744,6 +843,7 @@ async function assertEnoughQuantityForSell({
 }) {
   const transactions = await db.transaction.findMany({
     where: {
+      ...activeTransactionFilter(),
       accountId,
       assetId,
       executedAt: { lte: executedAt },
@@ -772,11 +872,26 @@ async function requireGroup(
   groupId: string,
   kind: TransactionGroupKind,
 ) {
+  const group = await requireAnyActiveGroup(db, groupId);
+  if (group.kind !== kind) throw new PortfolioMutationError(`${kind === TransactionGroupKind.TRADE ? "Trade" : "Transfer"} group was not found.`);
+  return group;
+}
+
+async function requireAnyActiveGroup(
+  db: Prisma.TransactionClient,
+  groupId: string,
+) {
   const group = await db.transactionGroup.findUnique({
     where: { id: groupId },
-    include: { transactions: true },
+    include: {
+      transactions: {
+        where: activeTransactionFilter(),
+        orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+      },
+    },
   });
-  if (!group || group.kind !== kind) throw new PortfolioMutationError(`${kind === TransactionGroupKind.TRADE ? "Trade" : "Transfer"} group was not found.`);
+  if (!group) throw new PortfolioMutationError("Transaction group was not found.");
+  if (group.transactions.length === 0) throw new PortfolioMutationError("Only active grouped operations can be changed.");
   if (group.transactions.length !== 2) throw new PortfolioMutationError("Transaction group is incomplete.");
   return group;
 }
@@ -798,6 +913,7 @@ async function sourceAverageAcquisitionPrice({
 }) {
   const transactions = await db.transaction.findMany({
     where: {
+      ...activeTransactionFilter(),
       assetId: asset.id,
       executedAt: { lte: executedAt },
       ...(excludedGroupId ? { OR: [{ transactionGroupId: null }, { transactionGroupId: { not: excludedGroupId } }] } : {}),
@@ -821,7 +937,7 @@ async function assertAffectedChronologies(
   const keys = new Map(affected.map((item) => [`${item.accountId}:${item.assetId}`, item]));
   for (const { accountId, assetId } of keys.values()) {
     const chronology = await db.transaction.findMany({
-      where: { accountId, assetId },
+      where: { ...activeTransactionFilter(), accountId, assetId },
       orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }],
     });
     assertNonNegativeChronology(chronology);
@@ -836,7 +952,7 @@ function assertNonNegativeChronology(transactions: Array<{ type: TransactionType
       transaction.type === TransactionType.TRANSFER_OUT;
     quantity = decreases ? quantity.minus(transaction.quantity) : quantity.plus(transaction.quantity);
     if (quantity.lessThan(ZERO)) {
-      throw new PortfolioMutationError("This transaction is required by a later sale or withdrawal. Delete or adjust the later transaction first.");
+      throw new PortfolioMutationError("This transaction is required by a later sale or withdrawal. Void or adjust the later transaction first.");
     }
   }
 }

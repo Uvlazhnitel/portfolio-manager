@@ -1,5 +1,7 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
+import { TransactionStatus, type Prisma, type PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
+
+const activeTransactionWhere = { status: TransactionStatus.ACTIVE } satisfies Prisma.TransactionWhereInput;
 
 export class PortfolioRepository {
   constructor(private readonly db: PrismaClient | Prisma.TransactionClient = prisma) {}
@@ -18,6 +20,7 @@ export class PortfolioRepository {
 
   listTransactions() {
     return this.db.transaction.findMany({
+      where: activeTransactionWhere,
       include: {
         account: true,
         asset: true,
@@ -29,6 +32,7 @@ export class PortfolioRepository {
 
   listTransactionsChronological() {
     return this.db.transaction.findMany({
+      where: activeTransactionWhere,
       include: {
         account: true,
         asset: true,
@@ -50,8 +54,37 @@ export class PortfolioRepository {
     return this.db.transaction.create({ data });
   }
 
-  deleteTransaction(id: string) {
-    return this.db.transaction.delete({ where: { id } });
+  findTransactionForAudit(id: string) {
+    return this.db.transaction.findUnique({
+      where: { id },
+      include: {
+        account: true,
+        asset: true,
+        transactionGroup: true,
+        replacesTransaction: { include: { account: true, asset: true, transactionGroup: true } },
+        replacementTransactions: {
+          include: { account: true, asset: true, transactionGroup: true },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        },
+      },
+    });
+  }
+
+  listGroupTransactionsForAudit(groupId: string) {
+    return this.db.transaction.findMany({
+      where: { transactionGroupId: groupId },
+      include: {
+        account: true,
+        asset: true,
+        transactionGroup: true,
+        replacesTransaction: { include: { account: true, asset: true, transactionGroup: true } },
+        replacementTransactions: {
+          include: { account: true, asset: true, transactionGroup: true },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        },
+      },
+      orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+    });
   }
 
   findAsset(id: string) {

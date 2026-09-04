@@ -1,6 +1,7 @@
-import { AccountType, AssetClass, AssetQuoteProvider, AssetType, BasisMethod, PortfolioRuleType, TransactionGroupKind, TransactionType } from "@prisma/client";
+import { AccountType, AssetClass, AssetQuoteProvider, AssetType, BasisMethod, PortfolioRuleType, TransactionGroupKind, TransactionStatus, TransactionType } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { calculateHoldings } from "@/features/portfolio-engine";
+import { getTransactionAuditReadModel, getTransactionGroupAuditReadModel } from "@/features/portfolio/audit-read-model";
 import {
   createAccountMutation,
   createPhysicalGoldInitialBalanceInput,
@@ -14,6 +15,7 @@ import {
   updateTransferMutation,
   updateTransactionMutation,
 } from "@/features/portfolio/mutations";
+import { PortfolioRepository } from "@/features/portfolio/repository";
 import { createTestDatabase, type TestDatabase } from "../helpers/test-db";
 
 let testDb: TestDatabase;
@@ -134,7 +136,7 @@ describe("portfolio mutations", () => {
     expect(gifts[1].pricePerUnit?.toString()).toBe("150");
   });
 
-  it("edits a gift basis method without changing transaction identity", async () => {
+  it("corrects a gift by replacing the financial row and preserving audit history", async () => {
     const gift = await testDb.prisma.transaction.findFirstOrThrow({ where: { type: TransactionType.GIFT, basisMethod: BasisMethod.ZERO_COST } });
     await updateTransactionMutation({
       id: gift.id,
@@ -143,11 +145,19 @@ describe("portfolio mutations", () => {
       totalAmount: "250",
       executedAt: gift.executedAt,
       note: "Basis documented",
+      auditReason: "Statement confirmed fair value",
     }, testDb.prisma);
 
-    const updated = await testDb.prisma.transaction.findUniqueOrThrow({ where: { id: gift.id } });
-    expect(updated).toEqual(expect.objectContaining({ id: gift.id, basisMethod: BasisMethod.FAIR_VALUE, note: "Basis documented" }));
-    expect(updated.pricePerUnit?.toString()).toBe("500");
+    const old = await testDb.prisma.transaction.findUniqueOrThrow({ where: { id: gift.id } });
+    const replacement = await testDb.prisma.transaction.findFirstOrThrow({ where: { replacesTransactionId: gift.id } });
+    expect(old.status).toBe(TransactionStatus.REPLACED);
+    expect(old.statusReason).toBe("Statement confirmed fair value");
+    expect(replacement.id).not.toBe(gift.id);
+    expect(replacement).toEqual(expect.objectContaining({ basisMethod: BasisMethod.FAIR_VALUE, note: "Basis documented", status: TransactionStatus.ACTIVE }));
+    expect(replacement.pricePerUnit?.toString()).toBe("500");
+
+    const audit = await getTransactionAuditReadModel(gift.id, new PortfolioRepository(testDb.prisma));
+    expect(audit?.events.map((event) => event.action)).toEqual(expect.arrayContaining(["CREATED", "REPLACED", "CORRECTED"]));
   });
 
   it("rejects missing or malformed opening and gift basis choices", async () => {
@@ -385,7 +395,21 @@ describe("portfolio mutations", () => {
     await createTransactionMutation({ type: TransactionType.SELL, accountId: account.id, assetMode: "existing", assetId: btc.id, quantity: "0.75", totalAmount: "900", currency: "USD", executedAt: new Date("2025-02-01") }, testDb.prisma);
     const buy = await testDb.prisma.transaction.findFirstOrThrow({ where: { accountId: account.id, type: TransactionType.BUY } });
     await expect(deleteTransactionMutation(buy.id, testDb.prisma)).rejects.toThrow("required by a later sale");
-    expect(await testDb.prisma.transaction.count({ where: { id: buy.id } })).toBe(1);
+    expect(await testDb.prisma.transaction.count({ where: { id: buy.id, status: TransactionStatus.ACTIVE } })).toBe(1);
+  });
+
+  it("voided SELL no longer decreases active holdings", async () => {
+    const account = await testDb.prisma.account.create({ data: { name: "Voided Sell Wallet", type: AccountType.WALLET } });
+    const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
+    await createTransactionMutation({ type: TransactionType.BUY, accountId: account.id, assetMode: "existing", assetId: btc.id, quantity: "2", pricePerUnit: "100", currency: "EUR", executedAt: new Date("2026-02-01") }, testDb.prisma);
+    await createTransactionMutation({ type: TransactionType.SELL, accountId: account.id, assetMode: "existing", assetId: btc.id, quantity: "0.75", pricePerUnit: "120", currency: "EUR", executedAt: new Date("2026-02-02") }, testDb.prisma);
+    const sell = await testDb.prisma.transaction.findFirstOrThrow({ where: { accountId: account.id, assetId: btc.id, type: TransactionType.SELL } });
+
+    await deleteTransactionMutation(sell.id, testDb.prisma);
+
+    const rows = await testDb.prisma.transaction.findMany({ where: { accountId: account.id, assetId: btc.id } });
+    expect(rows.find((row) => row.id === sell.id)?.status).toBe(TransactionStatus.VOIDED);
+    expect(calculateHoldings(rows)).toEqual([{ accountId: account.id, assetId: btc.id, quantity: "2" }]);
   });
 
   it("rejects selling more than account quantity without override", async () => {
@@ -479,11 +503,18 @@ describe("portfolio mutations", () => {
       { accountId: destination.id, assetId: btc.id, quantity: "0.0045" },
     ]));
 
-    await updateTradeMutation({ groupId: sell.transactionGroupId!, sourceAccountId: source.id, sourceAssetId: usdt.id, sourceQuantity: "400", destinationAccountId: destination.id, destinationAssetId: btc.id, destinationQuantity: "0.005", fee: "1", currency: "USD", executedAt: new Date("2026-06-02"), note: "edited trade" }, testDb.prisma);
-    const updated = await testDb.prisma.transaction.findMany({ where: { transactionGroupId: sell.transactionGroupId } });
-    expect(updated.find((leg) => leg.type === TransactionType.SELL)?.quantity.toString()).toBe("400");
-    expect(updated.find((leg) => leg.type === TransactionType.BUY)?.quantity.toString()).toBe("0.005");
-    expect(updated.every((leg) => leg.note === "edited trade")).toBe(true);
+    await updateTradeMutation({ groupId: sell.transactionGroupId!, sourceAccountId: source.id, sourceAssetId: usdt.id, sourceQuantity: "400", destinationAccountId: destination.id, destinationAssetId: btc.id, destinationQuantity: "0.005", fee: "1", currency: "USD", executedAt: new Date("2026-06-02"), note: "edited trade", auditReason: "Correct exchange fill" }, testDb.prisma);
+    const oldLegs = await testDb.prisma.transaction.findMany({ where: { transactionGroupId: sell.transactionGroupId } });
+    expect(oldLegs.every((leg) => leg.status === TransactionStatus.REPLACED && leg.statusReason === "Correct exchange fill")).toBe(true);
+    const replacements = await testDb.prisma.transaction.findMany({ where: { replacesTransactionId: { in: oldLegs.map((leg) => leg.id) } }, orderBy: { type: "asc" } });
+    expect(new Set(replacements.map((leg) => leg.transactionGroupId)).size).toBe(1);
+    expect(replacements.find((leg) => leg.type === TransactionType.SELL)?.quantity.toString()).toBe("400");
+    expect(replacements.find((leg) => leg.type === TransactionType.BUY)?.quantity.toString()).toBe("0.005");
+    expect(replacements.every((leg) => leg.note === "edited trade" && leg.status === TransactionStatus.ACTIVE)).toBe(true);
+
+    await deleteTransactionGroupMutation(replacements[0].transactionGroupId!, testDb.prisma);
+    const voidedTradeLegs = await testDb.prisma.transaction.findMany({ where: { transactionGroupId: replacements[0].transactionGroupId } });
+    expect(voidedTradeLegs.every((leg) => leg.status === TransactionStatus.VOIDED)).toBe(true);
   });
 
   it("rolls back an insufficient trade without saving a group or either leg", async () => {
@@ -507,28 +538,42 @@ describe("portfolio mutations", () => {
     await createTransferMutation({ assetId: btc.id, fromAccountId: source.id, toAccountId: destination.id, quantity: "0.4", currency: "USD", executedAt: new Date("2026-07-02") }, testDb.prisma);
     const group = await testDb.prisma.transactionGroup.findFirstOrThrow({ where: { kind: TransactionGroupKind.TRANSFER, transactions: { some: { accountId: source.id } } } });
     await updateTransferMutation({ groupId: group.id, assetId: btc.id, fromAccountId: source.id, toAccountId: destination.id, quantity: "0.5", currency: "USD", executedAt: new Date("2026-07-02"), note: "edited" }, testDb.prisma);
-    expect((await testDb.prisma.transaction.findMany({ where: { transactionGroupId: group.id } })).map((leg) => leg.quantity.toString())).toEqual(["0.5", "0.5"]);
+    const oldLegs = await testDb.prisma.transaction.findMany({ where: { transactionGroupId: group.id } });
+    expect(oldLegs.every((leg) => leg.status === TransactionStatus.REPLACED)).toBe(true);
+    const activeReplacementLegs = await testDb.prisma.transaction.findMany({
+      where: { replacesTransactionId: { in: oldLegs.map((leg) => leg.id) } },
+      orderBy: { type: "asc" },
+    });
+    const activeGroupId = activeReplacementLegs[0].transactionGroupId!;
+    expect(new Set(activeReplacementLegs.map((leg) => leg.transactionGroupId)).size).toBe(1);
+    expect(activeReplacementLegs.map((leg) => leg.quantity.toString())).toEqual(["0.5", "0.5"]);
     await createTransactionMutation({ type: TransactionType.SELL, accountId: destination.id, assetMode: "existing", assetId: btc.id, quantity: "0.5", pricePerUnit: "120", currency: "USD", executedAt: new Date("2026-07-03") }, testDb.prisma);
-    await expect(updateTransferMutation({ groupId: group.id, assetId: btc.id, fromAccountId: source.id, toAccountId: destination.id, quantity: "0.25", currency: "USD", executedAt: new Date("2026-07-02") }, testDb.prisma)).rejects.toThrow("required by a later sale");
-    expect((await testDb.prisma.transaction.findMany({ where: { transactionGroupId: group.id } })).map((leg) => leg.quantity.toString())).toEqual(["0.5", "0.5"]);
+    await expect(updateTransferMutation({ groupId: activeGroupId, assetId: btc.id, fromAccountId: source.id, toAccountId: destination.id, quantity: "0.25", currency: "USD", executedAt: new Date("2026-07-02") }, testDb.prisma)).rejects.toThrow("required by a later sale");
+    expect((await testDb.prisma.transaction.findMany({ where: { transactionGroupId: activeGroupId }, orderBy: { type: "asc" } })).map((leg) => leg.quantity.toString())).toEqual(["0.5", "0.5"]);
+    expect(await testDb.prisma.transaction.count({ where: { transactionGroupId: activeGroupId, status: TransactionStatus.ACTIVE } })).toBe(2);
   });
 
-  it("deletes a complete group atomically and rejects one-legged groups at commit", async () => {
+  it("voids a complete group atomically and rejects one-legged groups at commit", async () => {
     const source = await testDb.prisma.account.create({ data: { name: "Delete Group Source", type: AccountType.EXCHANGE } });
     const destination = await testDb.prisma.account.create({ data: { name: "Delete Group Destination", type: AccountType.WALLET } });
     const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
     await createTransactionMutation({ type: TransactionType.BUY, accountId: source.id, assetMode: "existing", assetId: btc.id, quantity: "1", pricePerUnit: "100", currency: "USD", executedAt: new Date("2026-08-01") }, testDb.prisma);
     await createTransferMutation({ assetId: btc.id, fromAccountId: source.id, toAccountId: destination.id, quantity: "0.2", currency: "USD", executedAt: new Date("2026-08-02") }, testDb.prisma);
     const group = await testDb.prisma.transactionGroup.findFirstOrThrow({ where: { kind: TransactionGroupKind.TRANSFER, transactions: { some: { accountId: source.id } } } });
-    await deleteTransactionGroupMutation(group.id, testDb.prisma);
-    expect(await testDb.prisma.transaction.count({ where: { transactionGroupId: group.id } })).toBe(0);
-    expect(await testDb.prisma.transactionGroup.findUnique({ where: { id: group.id } })).toBeNull();
+    await deleteTransactionGroupMutation({ groupId: group.id, auditReason: "Duplicate transfer" }, testDb.prisma);
+    const voidedLegs = await testDb.prisma.transaction.findMany({ where: { transactionGroupId: group.id } });
+    expect(voidedLegs).toHaveLength(2);
+    expect(voidedLegs.every((leg) => leg.status === TransactionStatus.VOIDED && leg.statusReason === "Duplicate transfer")).toBe(true);
+    expect(await testDb.prisma.transactionGroup.findUnique({ where: { id: group.id } })).not.toBeNull();
+    const audit = await getTransactionGroupAuditReadModel(group.id, new PortfolioRepository(testDb.prisma));
+    expect(audit?.events.filter((event) => event.action === "VOIDED")).toHaveLength(2);
 
     await createTransferMutation({ assetId: btc.id, fromAccountId: source.id, toAccountId: destination.id, quantity: "0.3", currency: "USD", executedAt: new Date("2026-08-04") }, testDb.prisma);
     const requiredGroup = await testDb.prisma.transactionGroup.findFirstOrThrow({ where: { kind: TransactionGroupKind.TRANSFER, transactions: { some: { accountId: source.id, executedAt: new Date("2026-08-04") } } } });
     await createTransactionMutation({ type: TransactionType.SELL, accountId: destination.id, assetMode: "existing", assetId: btc.id, quantity: "0.3", pricePerUnit: "120", currency: "USD", executedAt: new Date("2026-08-05") }, testDb.prisma);
     await expect(deleteTransactionGroupMutation(requiredGroup.id, testDb.prisma)).rejects.toThrow("required by a later sale");
     expect(await testDb.prisma.transaction.count({ where: { transactionGroupId: requiredGroup.id } })).toBe(2);
+    expect(await testDb.prisma.transaction.count({ where: { transactionGroupId: requiredGroup.id, status: TransactionStatus.ACTIVE } })).toBe(2);
 
     await expect(testDb.prisma.transaction.create({ data: { accountId: source.id, assetId: btc.id, type: TransactionType.TRANSFER_OUT, quantity: "0.1", currency: "USD", executedAt: new Date("2026-08-03") } })).rejects.toThrow("must belong to a transaction group");
 
@@ -544,9 +589,12 @@ describe("portfolio mutations", () => {
     const row = await testDb.prisma.transaction.create({ data: { accountId: account.id, assetId: btc.id, type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.KNOWN_COST, quantity: "1", pricePerUnit: "10", currency: "USD", executedAt: new Date("2025-01-01") } });
     expect(row.transactionGroupId).toBeNull();
     await updateTransactionMutation({ id: row.id, quantity: "2", pricePerUnit: "10", executedAt: new Date("2025-01-01") }, testDb.prisma);
-    expect((await testDb.prisma.transaction.findUniqueOrThrow({ where: { id: row.id } })).quantity.toString()).toBe("2");
-    await deleteTransactionMutation(row.id, testDb.prisma);
-    expect(await testDb.prisma.transaction.findUnique({ where: { id: row.id } })).toBeNull();
+    expect((await testDb.prisma.transaction.findUniqueOrThrow({ where: { id: row.id } })).status).toBe(TransactionStatus.REPLACED);
+    const replacement = await testDb.prisma.transaction.findFirstOrThrow({ where: { replacesTransactionId: row.id } });
+    expect(replacement.quantity.toString()).toBe("2");
+    await expect(deleteTransactionMutation(row.id, testDb.prisma)).rejects.toThrow("Only active transactions can be voided");
+    await deleteTransactionMutation(replacement.id, testDb.prisma);
+    expect((await testDb.prisma.transaction.findUniqueOrThrow({ where: { id: replacement.id } })).status).toBe(TransactionStatus.VOIDED);
   });
 
   it("rejects invalid transfers", async () => {
@@ -617,7 +665,7 @@ describe("portfolio mutations", () => {
     expect(transaction.pricePerUnit?.mul(transaction.quantity).toDecimalPlaces(2).toString()).toBe("1600");
   });
 
-  it("deletes transactions and lets holdings recalculate", async () => {
+  it("voids transactions and lets active holdings recalculate", async () => {
     const account = await testDb.prisma.account.create({ data: { name: "Deletion Test", type: AccountType.OTHER } });
     const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
     const transaction = await testDb.prisma.transaction.create({
@@ -635,7 +683,9 @@ describe("portfolio mutations", () => {
     await deleteTransactionMutation(transaction.id, testDb.prisma);
 
     const transactions = await testDb.prisma.transaction.findMany({ where: { id: transaction.id } });
-    expect(transactions).toHaveLength(0);
+    expect(transactions).toHaveLength(1);
+    expect(transactions[0].status).toBe(TransactionStatus.VOIDED);
+    expect(calculateHoldings(transactions)).toEqual([]);
   });
 
   it("creates a new asset and transaction together", async () => {
@@ -729,7 +779,7 @@ describe("portfolio mutations", () => {
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
   });
 
-  it("updates acquisition data while keeping transaction identity fixed", async () => {
+  it("corrects acquisition data by creating one active replacement", async () => {
     const account = await testDb.prisma.account.create({ data: { name: "Editable Wallet", type: AccountType.WALLET } });
     const asset = await testDb.prisma.asset.create({
       data: { symbol: "EDITABLE", name: "Editable Asset", assetClass: AssetClass.OTHER, assetType: AssetType.OTHER, currency: "EUR" },
@@ -748,18 +798,23 @@ describe("portfolio mutations", () => {
       note: "Cost basis restored",
     }, testDb.prisma);
 
-    const updated = await testDb.prisma.transaction.findUniqueOrThrow({ where: { id: original.id } });
+    const replaced = await testDb.prisma.transaction.findUniqueOrThrow({ where: { id: original.id } });
+    const updated = await testDb.prisma.transaction.findFirstOrThrow({ where: { replacesTransactionId: original.id } });
+    expect(replaced.status).toBe(TransactionStatus.REPLACED);
     expect(updated).toEqual(expect.objectContaining({
-      id: original.id,
       accountId: account.id,
       assetId: asset.id,
       type: TransactionType.INITIAL_BALANCE,
       currency: "EUR",
       note: "Cost basis restored",
+      status: TransactionStatus.ACTIVE,
     }));
+    expect(updated.id).not.toBe(original.id);
     expect(updated.quantity.toString()).toBe("1.5");
     expect(updated.pricePerUnit?.toString()).toBe("200");
     expect(updated.fee?.toString()).toBe("2");
+    const activeTransactions = await testDb.prisma.transaction.findMany({ where: { accountId: account.id, assetId: asset.id, status: TransactionStatus.ACTIVE } });
+    expect(calculateHoldings(activeTransactions)).toEqual([{ accountId: account.id, assetId: asset.id, quantity: "1.5" }]);
   });
 
   it("rolls back an edit that would invalidate later holdings", async () => {
@@ -781,7 +836,10 @@ describe("portfolio mutations", () => {
       executedAt: new Date("2026-01-01"),
     }, testDb.prisma)).rejects.toThrow("required by a later sale");
 
-    expect((await testDb.prisma.transaction.findUniqueOrThrow({ where: { id: buy.id } })).quantity.toString()).toBe("1");
+    const persisted = await testDb.prisma.transaction.findUniqueOrThrow({ where: { id: buy.id } });
+    expect(persisted.quantity.toString()).toBe("1");
+    expect(persisted.status).toBe(TransactionStatus.ACTIVE);
+    expect(await testDb.prisma.transaction.count({ where: { replacesTransactionId: buy.id } })).toBe(0);
   });
 
   it("enforces database constraints and relation delete policies", async () => {
@@ -796,6 +854,10 @@ describe("portfolio mutations", () => {
     })).rejects.toThrow();
     await expect(testDb.prisma.asset.delete({ where: { id: btc.id } })).rejects.toThrow();
     await expect(testDb.prisma.account.delete({ where: { id: account.id } })).rejects.toThrow();
+
+    const immutable = await testDb.prisma.transaction.findFirstOrThrow({ where: { accountId: account.id, assetId: btc.id } });
+    await expect(testDb.prisma.transaction.update({ where: { id: immutable.id }, data: { quantity: "999" } })).rejects.toThrow();
+    await expect(testDb.prisma.transaction.delete({ where: { id: immutable.id } })).rejects.toThrow();
 
     const disposable = await testDb.prisma.asset.create({
       data: { symbol: "DISPOSABLE", name: "Disposable", assetClass: AssetClass.OTHER, assetType: AssetType.OTHER, currency: "EUR" },

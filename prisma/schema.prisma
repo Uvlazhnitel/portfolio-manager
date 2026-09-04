@@ -65,6 +65,12 @@ enum TransactionGroupKind {
   TRADE
 }
 
+enum TransactionStatus {
+  ACTIVE
+  VOIDED
+  REPLACED
+}
+
 enum PortfolioRuleType {
   PREFER_CONTRIBUTIONS_OVER_SELLING
   CHALLENGE_STRATEGY_VIOLATIONS
@@ -123,7 +129,7 @@ model Asset {
   dailyPrices              DailyMarketPrice[]
   manualPrices             ManualMarketPrice[]
   strategyAssetAllocations StrategyAssetAllocation[]
-  benchmarkStrategies      Strategy[]                  @relation("StrategyBenchmark")
+  benchmarkStrategies      Strategy[]                @relation("StrategyBenchmark")
 
   @@index([quoteProvider, quoteSymbol, quoteMicCode])
 }
@@ -206,29 +212,38 @@ model Account {
 }
 
 model Transaction {
-  id                 String          @id @default(cuid())
-  assetId            String
-  accountId          String
-  type               TransactionType
-  basisMethod        BasisMethod?
-  quantity           Decimal         @db.Decimal(36, 18)
-  pricePerUnit       Decimal?        @db.Decimal(28, 8)
-  fee                Decimal?        @db.Decimal(28, 8)
-  currency           String
-  executedAt         DateTime
-  note               String?
-  transactionGroupId String?
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
+  id                    String            @id @default(cuid())
+  assetId               String
+  accountId             String
+  type                  TransactionType
+  basisMethod           BasisMethod?
+  quantity              Decimal           @db.Decimal(36, 18)
+  pricePerUnit          Decimal?          @db.Decimal(28, 8)
+  fee                   Decimal?          @db.Decimal(28, 8)
+  currency              String
+  executedAt            DateTime
+  note                  String?
+  transactionGroupId    String?
+  status                TransactionStatus @default(ACTIVE)
+  statusChangedAt       DateTime?
+  statusReason          String?           @db.Text
+  replacesTransactionId String?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
 
-  asset            Asset             @relation(fields: [assetId], references: [id], onDelete: Restrict)
-  account          Account           @relation(fields: [accountId], references: [id], onDelete: Restrict)
-  transactionGroup TransactionGroup? @relation(fields: [transactionGroupId], references: [id], onDelete: Cascade)
+  asset                   Asset             @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  account                 Account           @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  transactionGroup        TransactionGroup? @relation(fields: [transactionGroupId], references: [id], onDelete: Cascade)
+  replacesTransaction     Transaction?      @relation("TransactionReplacement", fields: [replacesTransactionId], references: [id], onDelete: Restrict)
+  replacementTransactions Transaction[]     @relation("TransactionReplacement")
 
   @@index([assetId])
   @@index([accountId])
   @@index([executedAt])
   @@index([transactionGroupId])
+  @@index([status])
+  @@index([replacesTransactionId])
+  @@index([status, accountId, assetId, executedAt, createdAt])
 }
 
 model TransactionGroup {
@@ -327,12 +342,12 @@ model AssistantConversation {
 }
 
 model AssistantMessage {
-  id             String               @id @default(cuid())
+  id             String                 @id @default(cuid())
   conversationId String
   role           AssistantMessageRole
   status         AssistantMessageStatus @default(COMPLETED)
-  content        String               @db.Text
-  createdAt      DateTime             @default(now())
+  content        String                 @db.Text
+  createdAt      DateTime               @default(now())
 
   conversation AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 

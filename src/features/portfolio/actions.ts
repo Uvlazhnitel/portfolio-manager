@@ -226,11 +226,17 @@ function parseImplementedTransactionType(value: string) {
 }
 
 export async function deleteTransactionAction(formData: FormData): Promise<void> {
-  await withPortfolioRevalidation(deleteTransactionMutation(String(formData.get("id") ?? "")));
+  await withPortfolioRevalidation(deleteTransactionMutation({
+    id: String(formData.get("id") ?? ""),
+    auditReason: nullableString(formData.get("auditReason")),
+  }));
 }
 
 export async function deleteTransactionGroupAction(formData: FormData): Promise<void> {
-  await withPortfolioRevalidation(deleteTransactionGroupMutation(String(formData.get("groupId") ?? "")));
+  await withPortfolioRevalidation(deleteTransactionGroupMutation({
+    groupId: String(formData.get("groupId") ?? ""),
+    auditReason: nullableString(formData.get("auditReason")),
+  }));
 }
 
 export async function updateTransferAction(
@@ -251,6 +257,7 @@ export async function updateTransferAction(
       currency: baseCurrency,
       executedAt: String(formData.get("executedAt") ?? ""),
       note: nullableString(formData.get("note")) ?? undefined,
+      auditReason: nullableString(formData.get("auditReason")) ?? undefined,
     }));
   } catch (error) {
     return toActionError(error);
@@ -277,6 +284,7 @@ export async function updateTradeAction(
       currency: baseCurrency,
       executedAt: String(formData.get("executedAt") ?? ""),
       note: nullableString(formData.get("note")) ?? undefined,
+      auditReason: nullableString(formData.get("auditReason")) ?? undefined,
     }));
   } catch (error) {
     return toActionError(error);
@@ -299,6 +307,7 @@ export async function updateTransactionAction(
       fee: nullableString(formData.get("fee")) ?? undefined,
       executedAt: String(formData.get("executedAt") ?? ""),
       note: nullableString(formData.get("note")) ?? undefined,
+      auditReason: nullableString(formData.get("auditReason")) ?? undefined,
     }));
   } catch (error) {
     return toActionError(error);
@@ -335,7 +344,6 @@ function toActionError(error: unknown): PortfolioActionState {
 
 async function withPortfolioRevalidation<T extends PortfolioMutationResult>(mutation: Promise<T>) {
   const result = await mutation;
-  revalidatePath("/portfolio");
   revalidatePath("/portfolio");
   revalidatePath("/performance");
   return result;

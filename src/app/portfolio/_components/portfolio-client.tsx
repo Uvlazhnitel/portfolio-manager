@@ -848,10 +848,11 @@ function EditStandaloneTransactionDialog({ transaction, onClose }: { transaction
             {transaction.type !== "GIFT" && basisMethod !== "UNKNOWN" ? <Field label="Fee"><input name="fee" className={inputClassName} inputMode="decimal" defaultValue={transaction.fee ?? ""} placeholder="0.00" /></Field> : null}
             <Field label="Date"><input name="executedAt" required type="date" className={inputClassName} defaultValue={transaction.executedAt.slice(0, 10)} /></Field>
           </div>
-          <p className="text-xs text-muted">Asset, account, currency, and operation type stay unchanged. Clear the unit price before entering a total amount instead.</p>
+          <p className="text-xs text-muted">Saving creates an auditable correction. The original financial row is kept as replaced history. Asset, account, currency, and operation type stay unchanged.</p>
           <Field label="Note (optional)"><textarea name="note" className={textareaClassName} rows={3} defaultValue={transaction.note ?? ""} /></Field>
+          <Field label="Correction reason (optional)"><textarea name="auditReason" className={textareaClassName} rows={2} placeholder="Example: fixed quantity from broker statement" /></Field>
           <ActionMessage state={state} />
-          <Button type="submit" disabled={isPending}>{isPending ? "Saving…" : "Save changes"}</Button>
+          <Button type="submit" disabled={isPending}>{isPending ? "Saving…" : "Save correction"}</Button>
         </form>
       )}
     </DialogShell>
@@ -884,8 +885,9 @@ function EditGroupedOperationDialog({ portfolio, transaction, onClose }: Portfol
             <Field label="Date"><input name="executedAt" required type="date" className={inputClassName} defaultValue={transaction.executedAt.slice(0, 10)} /></Field>
           </div>
           <Field label="Note (optional)"><textarea name="note" className={textareaClassName} rows={3} defaultValue={transaction.note ?? ""} /></Field>
+          <Field label="Correction reason (optional)"><textarea name="auditReason" className={textareaClassName} rows={2} placeholder="Example: corrected transfer amount" /></Field>
           <ActionMessage state={state} />
-          <Button type="submit" disabled={isTrade ? isTradePending : isTransferPending}>{(isTrade ? isTradePending : isTransferPending) ? "Saving…" : "Save changes"}</Button>
+          <Button type="submit" disabled={isTrade ? isTradePending : isTransferPending}>{(isTrade ? isTradePending : isTransferPending) ? "Saving…" : "Save correction"}</Button>
         </form>
       )}
     </DialogShell>
@@ -1250,9 +1252,22 @@ function TransactionActions({ transaction, onEditTransaction }: { transaction: P
           <Pencil className="h-4 w-4" aria-hidden="true" />
         </Button>
       ) : null}
-      {!isLegacyTransfer ? <form action={transaction.groupId ? deleteTransactionGroupAction : deleteTransactionAction} onSubmit={(event) => { if (!window.confirm(`Delete this ${transaction.operationKind.toLowerCase()}? Holdings will be recalculated.`)) event.preventDefault(); }}>
+      {!isLegacyTransfer ? <form action={transaction.groupId ? deleteTransactionGroupAction : deleteTransactionAction} onSubmit={(event) => {
+        if (!window.confirm(`Void this ${transaction.operationKind.toLowerCase()}? Holdings will be recalculated, and the original financial row will remain in audit history.`)) {
+          event.preventDefault();
+          return;
+        }
+        const reason = window.prompt("Reason for voiding (optional)", "");
+        if (reason === null) {
+          event.preventDefault();
+          return;
+        }
+        const input = event.currentTarget.elements.namedItem("auditReason");
+        if (input instanceof HTMLInputElement) input.value = reason;
+      }}>
         {transaction.groupId ? <input type="hidden" name="groupId" value={transaction.groupId} /> : <input type="hidden" name="id" value={transaction.id} />}
-        <Button type="submit" variant="ghost" title="Delete operation" aria-label={`Delete ${transaction.assetName} operation`}><Trash2 className="h-4 w-4" aria-hidden="true" /></Button>
+        <input type="hidden" name="auditReason" />
+        <Button type="submit" variant="ghost" title="Void operation" aria-label={`Void ${transaction.assetName} operation`}><Trash2 className="h-4 w-4" aria-hidden="true" /></Button>
       </form> : null}
     </div>
   );

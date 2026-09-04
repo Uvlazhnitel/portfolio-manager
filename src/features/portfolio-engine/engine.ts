@@ -8,6 +8,7 @@ import {
   toQuantityString,
   ZERO,
 } from "@/features/portfolio-engine/decimal";
+import { activeEngineTransactions } from "@/features/portfolio-engine/transactions";
 import type {
   AllocationComparison,
   AssetClassAllocation,
@@ -71,7 +72,7 @@ const negativeQuantityTypes = new Set<TransactionType>([
 export function calculateHoldings(transactions: EngineTransaction[]): Holding[] {
   const quantities = new Map<string, Prisma.Decimal>();
 
-  for (const transaction of transactions) {
+  for (const transaction of activeEngineTransactions(transactions)) {
     const key = `${transaction.accountId}:${transaction.assetId}`;
     const current = quantities.get(key) ?? ZERO;
     const quantity = decimal(transaction.quantity);
@@ -168,11 +169,12 @@ export function requireCompletePortfolioValuation(portfolio: PortfolioSnapshot) 
 }
 
 export function calculatePortfolioAnalytics(input: CalculatePortfolioAnalyticsInput): PortfolioAnalytics {
+  const activeInput = { ...input, transactions: activeEngineTransactions(input.transactions) };
   const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
-  const missingSymbols = new Set(input.portfolio.missingPriceSymbols);
-  const positiveHoldings = input.portfolio.holdings.filter((holding) => decimal(holding.quantity).greaterThan(ZERO));
+  const missingSymbols = new Set(activeInput.portfolio.missingPriceSymbols);
+  const positiveHoldings = activeInput.portfolio.holdings.filter((holding) => decimal(holding.quantity).greaterThan(ZERO));
   const valuedByHolding = new Map(
-    input.portfolio.valuedHoldings.map((holding) => [`${holding.accountId}:${holding.assetId}`, holding]),
+    activeInput.portfolio.valuedHoldings.map((holding) => [`${holding.accountId}:${holding.assetId}`, holding]),
   );
   const accountValues = new Map<string, { value: Prisma.Decimal; isPartial: boolean }>();
   let pricedHoldings = 0;
@@ -191,8 +193,8 @@ export function calculatePortfolioAnalytics(input: CalculatePortfolioAnalyticsIn
   }
 
   const totalHoldings = positiveHoldings.length;
-  const totalUnrealizedPnl = calculateStrictUnrealizedPnl(input, assetById, missingSymbols);
-  const performance = calculatePerformanceSummary(input, assetById);
+  const totalUnrealizedPnl = calculateStrictUnrealizedPnl(activeInput, assetById, missingSymbols);
+  const performance = calculatePerformanceSummary(activeInput, assetById);
 
   return {
     totalUnrealizedPnl: totalUnrealizedPnl ? toDecimalString(totalUnrealizedPnl) : null,
@@ -231,6 +233,7 @@ export function calculatePortfolioAnalytics(input: CalculatePortfolioAnalyticsIn
 export function calculateHistoricalPerformance(
   input: CalculateHistoricalPerformanceInput,
 ): PortfolioPerformancePoint[] {
+  const allTransactions = activeEngineTransactions(input.transactions);
   const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
   const snapshots = [...input.snapshots].sort((left, right) => left.date.localeCompare(right.date));
 
@@ -238,7 +241,7 @@ export function calculateHistoricalPerformance(
     .map((snapshot) => {
       const dayEnd = Date.parse(`${snapshot.date}T23:59:59.999Z`);
       if (!Number.isFinite(dayEnd)) throw new Error(`Invalid historical snapshot date ${snapshot.date}.`);
-      const transactions = transactionsThrough(input.transactions, dayEnd);
+      const transactions = transactionsThrough(allTransactions, dayEnd);
       const portfolio = calculatePortfolio({
         assets: input.assets,
         transactions,
@@ -528,7 +531,7 @@ export function simulateTransaction(input: SimulatedTransactionInput) {
   return calculatePortfolio({
     assets: input.assets,
     marketPrices: input.marketPrices,
-    transactions: [...input.transactions, input.transaction],
+    transactions: [...activeEngineTransactions(input.transactions), input.transaction],
   });
 }
 
@@ -944,7 +947,7 @@ export function calculateHoldingCostBasis(input: CalculateHoldingCostBasisInput)
 export function calculateAssetNetCostBasis(input: CalculateHoldingCostBasisInput): AssetNetCostBasis[] {
   const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
   const transactionsByAsset = new Map<string, EngineTransaction[]>();
-  for (const transaction of input.transactions) {
+  for (const transaction of activeEngineTransactions(input.transactions)) {
     const transactions = transactionsByAsset.get(transaction.assetId) ?? [];
     transactions.push(transaction);
     transactionsByAsset.set(transaction.assetId, transactions);
@@ -1041,7 +1044,7 @@ function calculateCostPools(
   const transferLotsByAsset = new Map<string, TransferLot[]>();
   const transferLotsByGroup = new Map<string, TransferLot>();
   const affectedAssetIds = new Set<string>();
-  const transactions = input.transactions
+  const transactions = activeEngineTransactions(input.transactions)
     .map((transaction, index) => ({ transaction, index }))
     .sort((left, right) => {
       const timeCompare = transactionTime(left.transaction, left.index) - transactionTime(right.transaction, right.index);

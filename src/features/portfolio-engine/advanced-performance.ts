@@ -1,6 +1,7 @@
 import { TransactionType, type Prisma } from "@prisma/client";
 import { decimal, ONE_HUNDRED, toDecimalString, ZERO } from "@/features/portfolio-engine/decimal";
 import { calculateTransactionCashValue } from "@/features/portfolio-engine/engine";
+import { activeEngineTransactions } from "@/features/portfolio-engine/transactions";
 import type {
   AdvancedMetricUnavailableReason,
   AdvancedPerformance,
@@ -23,6 +24,7 @@ const XIRR_SCAN_STEPS = 1600;
 const XIRR_BISECTION_STEPS = 200;
 
 export function calculateAdvancedPerformance(input: CalculateAdvancedPerformanceInput): AdvancedPerformance {
+  input = { ...input, transactions: activeEngineTransactions(input.transactions) };
   const observations = mergeCurrentObservation(input.history, input.current);
   const fullHistory = observations;
   const ytdHistory = observationsForYtd(observations, parseDate(input.current.date));

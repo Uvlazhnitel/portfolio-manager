@@ -1,4 +1,5 @@
 import { decimal, ONE_HUNDRED, toDecimalString, ZERO } from "@/features/portfolio-engine/decimal";
+import { activeEngineTransactions } from "@/features/portfolio-engine/transactions";
 import { calculatePortfolioRisk } from "@/features/portfolio-engine/risk";
 import {
   calculatePortfolio,
@@ -20,6 +21,7 @@ import type {
 } from "@/features/portfolio-engine/types";
 
 export function calculateDailyBrief(input: CalculateDailyBriefInput): DailyBriefResult {
+  const allTransactions = activeEngineTransactions(input.transactions);
   const asOf = new Date(input.asOf);
   if (!Number.isFinite(asOf.getTime())) throw new Error("Daily Brief requires a valid as-of date.");
 
@@ -27,7 +29,7 @@ export function calculateDailyBrief(input: CalculateDailyBriefInput): DailyBrief
   const previousObservation = [...input.history]
     .filter((snapshot) => snapshot.date < currentDate)
     .sort((left, right) => right.date.localeCompare(left.date))[0] ?? null;
-  const currentTransactions = transactionsThrough(input.transactions, asOf.getTime());
+  const currentTransactions = transactionsThrough(allTransactions, asOf.getTime());
   const currentPortfolio = calculatePortfolio({
     assets: input.assets,
     transactions: currentTransactions,
@@ -41,7 +43,7 @@ export function calculateDailyBrief(input: CalculateDailyBriefInput): DailyBrief
   });
 
   const previousTransactions = previousObservation
-    ? transactionsThrough(input.transactions, Date.parse(`${previousObservation.date}T23:59:59.999Z`))
+    ? transactionsThrough(allTransactions, Date.parse(`${previousObservation.date}T23:59:59.999Z`))
     : [];
   const previousPortfolio = previousObservation
     ? calculatePortfolio({

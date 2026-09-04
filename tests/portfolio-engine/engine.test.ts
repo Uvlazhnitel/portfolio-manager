@@ -1,4 +1,4 @@
-import { AssetClass, AssetType, BasisMethod, TransactionGroupKind, TransactionType } from "@prisma/client";
+import { AssetClass, AssetType, BasisMethod, TransactionGroupKind, TransactionStatus, TransactionType } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import {
   calculateAssetNetCostBasis,
@@ -154,6 +154,20 @@ describe("portfolio engine holdings", () => {
       { accountId: "bybit", assetId: "btc", quantity: "1.1" },
       { accountId: "wallet", assetId: "btc", quantity: "0.4" },
     ]);
+  });
+
+  it("ignores voided and replaced financial rows at engine entrypoints", () => {
+    const transactions: EngineTransaction[] = [
+      transaction({ assetId: "btc", accountId: "bybit", type: TransactionType.BUY, quantity: "1", pricePerUnit: "100", currency: "EUR", status: TransactionStatus.VOIDED }),
+      transaction({ assetId: "btc", accountId: "bybit", type: TransactionType.BUY, quantity: "2", pricePerUnit: "100", currency: "EUR", status: TransactionStatus.REPLACED }),
+      transaction({ assetId: "btc", accountId: "bybit", type: TransactionType.BUY, quantity: "3", pricePerUnit: "100", currency: "EUR", status: TransactionStatus.ACTIVE }),
+    ];
+    const portfolio = calculatePortfolio({ assets, transactions, marketPrices: prices });
+    const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency: "EUR" });
+
+    expect(portfolio.holdings).toEqual([{ accountId: "bybit", assetId: "btc", quantity: "3" }]);
+    expect(portfolio.totalValue).toBe("30000.00");
+    expect(analytics.netInvested).toBe("300.00");
   });
 
   it("does not change global allocation for transfers between accounts", () => {

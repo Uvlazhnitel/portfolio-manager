@@ -1,5 +1,6 @@
 import { TransactionType, type Prisma } from "@prisma/client";
 import { decimal, toDecimalString, toQuantityString, ZERO } from "@/features/portfolio-engine/decimal";
+import { activeEngineTransactions } from "@/features/portfolio-engine/transactions";
 import {
   calculatePortfolio,
   compareAllocationToStrategy,
@@ -14,6 +15,7 @@ import type {
 } from "@/features/portfolio-engine/types";
 
 export function calculatePortfolioScenario(input: CalculatePortfolioScenarioInput): PortfolioScenarioResult {
+  input = { ...input, transactions: activeEngineTransactions(input.transactions) };
   if (input.kind === "TRADE") return calculateTradeScenario(input);
 
   const amount = requirePositiveMoney(input.amount, "Scenario amount");

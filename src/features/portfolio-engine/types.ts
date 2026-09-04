@@ -1,4 +1,4 @@
-import { AssetClass, AssetType, BasisMethod, TransactionGroupKind, TransactionType, type Prisma } from "@prisma/client";
+import { AssetClass, AssetType, BasisMethod, TransactionGroupKind, TransactionStatus, TransactionType, type Prisma } from "@prisma/client";
 
 export type DecimalLike = Prisma.Decimal | string | number;
 
@@ -16,6 +16,7 @@ export type EngineTransaction = {
   assetId: string;
   accountId: string;
   type: TransactionType;
+  status?: TransactionStatus | keyof typeof TransactionStatus | null;
   basisMethod?: BasisMethod | null;
   quantity: DecimalLike;
   pricePerUnit?: DecimalLike | null;
