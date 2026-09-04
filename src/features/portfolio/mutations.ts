@@ -11,7 +11,7 @@ import {
   type PrismaClient,
 } from "@prisma/client";
 import { z } from "zod";
-import { calculateHoldingCostBasis, calculateHoldings, calculatePortfolio } from "@/features/portfolio-engine";
+import { calculateHoldings } from "@/features/portfolio-engine";
 import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 import { PortfolioRepository } from "@/features/portfolio/repository";
 import {
@@ -20,6 +20,7 @@ import {
   assetInputSchema,
   nonNegativeDecimalStringSchema,
   positiveDecimalStringSchema,
+  positiveMarketPriceStringSchema,
 } from "@/features/portfolio/validation";
 import { prisma } from "@/lib/db/client";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
@@ -105,6 +106,8 @@ export const tradeMutationSchema = z.object({
   sourceAccountId: z.string().min(1),
   sourceAssetId: z.string().min(1),
   sourceQuantity: positiveDecimalStringSchema,
+  sourcePricePerUnit: positiveMarketPriceStringSchema.optional(),
+  sourceTotalAmount: positiveMarketPriceStringSchema.optional(),
   destinationAccountId: z.string().min(1),
   destinationAssetId: z.string().min(1),
   destinationQuantity: positiveDecimalStringSchema,
@@ -328,16 +331,7 @@ export async function createTradeMutation(
       quantity: parsed.sourceQuantity,
       executedAt: parsed.executedAt,
     });
-    const sourcePrice = await sourceAverageAcquisitionPrice({
-      db: transaction,
-      accountId: sourceAccount.id,
-      asset: sourceAsset,
-      executedAt: parsed.executedAt,
-      baseCurrency: parsed.currency,
-    });
-    const destinationPrice = sourcePrice
-      ? decimal(sourcePrice).mul(parsed.sourceQuantity).div(parsed.destinationQuantity).toDecimalPlaces(8).toString()
-      : null;
+    const tradeExecution = normalizeTradeExecution(parsed);
 
     const group = await transaction.transactionGroup.create({ data: { kind: TransactionGroupKind.TRADE } });
     await transaction.transaction.createMany({ data: [
@@ -347,7 +341,7 @@ export async function createTradeMutation(
         accountId: sourceAccount.id,
         type: TransactionType.SELL,
         quantity: parsed.sourceQuantity,
-        pricePerUnit: sourcePrice ? decimal(sourcePrice).toDecimalPlaces(8).toString() : null,
+        pricePerUnit: tradeExecution.sourcePricePerUnit,
         fee: null,
         currency: parsed.currency,
         executedAt: parsed.executedAt,
@@ -359,7 +353,7 @@ export async function createTradeMutation(
         accountId: destinationAccount.id,
         type: TransactionType.BUY,
         quantity: parsed.destinationQuantity,
-        pricePerUnit: destinationPrice,
+        pricePerUnit: tradeExecution.destinationPricePerUnit,
         fee: parsed.fee ?? null,
         currency: parsed.currency,
         executedAt: parsed.executedAt,
@@ -502,10 +496,7 @@ export async function updateTradeMutation(
     if (!sourceAsset) throw new PortfolioMutationError("Source asset does not exist.");
     if (!destinationAsset) throw new PortfolioMutationError("Destination asset does not exist.");
     await assertEnoughQuantityForSell({ db: transaction, accountId: sourceAccount.id, assetId: sourceAsset.id, quantity: parsed.sourceQuantity, executedAt: parsed.executedAt, excludedGroupId: group.id });
-    const sourcePrice = await sourceAverageAcquisitionPrice({ db: transaction, accountId: sourceAccount.id, asset: sourceAsset, executedAt: parsed.executedAt, excludedGroupId: group.id, baseCurrency: parsed.currency });
-    const destinationPrice = sourcePrice
-      ? decimal(sourcePrice).mul(parsed.sourceQuantity).div(parsed.destinationQuantity).toDecimalPlaces(8).toString()
-      : null;
+    const tradeExecution = normalizeTradeExecution(parsed);
     const sell = group.transactions.find((leg) => leg.type === TransactionType.SELL);
     const buy = group.transactions.find((leg) => leg.type === TransactionType.BUY);
     if (!sell || !buy) throw new PortfolioMutationError("Trade group is incomplete.");
@@ -519,7 +510,7 @@ export async function updateTradeMutation(
         assetId: sourceAsset.id,
         type: TransactionType.SELL,
         quantity: parsed.sourceQuantity,
-        pricePerUnit: sourcePrice ? decimal(sourcePrice).toDecimalPlaces(8).toString() : null,
+        pricePerUnit: tradeExecution.sourcePricePerUnit,
         fee: null,
         replacesTransactionId: sell.id,
       },
@@ -530,7 +521,7 @@ export async function updateTradeMutation(
         assetId: destinationAsset.id,
         type: TransactionType.BUY,
         quantity: parsed.destinationQuantity,
-        pricePerUnit: destinationPrice,
+        pricePerUnit: tradeExecution.destinationPricePerUnit,
         fee: parsed.fee ?? null,
         replacesTransactionId: buy.id,
       },
@@ -870,6 +861,45 @@ function validateTradeIdentity(input: { sourceAssetId: string; destinationAssetI
   }
 }
 
+function normalizeTradeExecution(parsed: z.infer<typeof tradeMutationSchema>) {
+  if (!parsed.sourcePricePerUnit && !parsed.sourceTotalAmount) {
+    throw new PortfolioMutationError("Enter either source execution price or gross source proceeds for this trade.");
+  }
+
+  let sourcePricePerUnit = parsed.sourcePricePerUnit ?? null;
+  const sourceQuantity = decimal(parsed.sourceQuantity);
+  const fee = parsed.fee ? decimal(parsed.fee) : ZERO;
+
+  if (parsed.sourceTotalAmount) {
+    const derivedPrice = decimal(parsed.sourceTotalAmount).div(sourceQuantity).toDecimalPlaces(8).toString();
+    if (sourcePricePerUnit) {
+      const calculatedTotal = decimal(sourcePricePerUnit).mul(sourceQuantity).toDecimalPlaces(2);
+      const suppliedTotal = decimal(parsed.sourceTotalAmount).toDecimalPlaces(2);
+      if (calculatedTotal.minus(suppliedTotal).abs().greaterThan("0.01")) {
+        throw new PortfolioMutationError("Source execution price and gross source proceeds do not match within one cent.");
+      }
+    } else {
+      sourcePricePerUnit = derivedPrice;
+    }
+  }
+
+  if (!sourcePricePerUnit) {
+    throw new PortfolioMutationError("Enter either source execution price or gross source proceeds for this trade.");
+  }
+
+  const grossProceeds = parsed.sourceTotalAmount
+    ? decimal(parsed.sourceTotalAmount)
+    : decimal(sourcePricePerUnit).mul(sourceQuantity);
+  if (fee.greaterThanOrEqualTo(grossProceeds)) {
+    throw new PortfolioMutationError("Trade fee must be less than gross source proceeds.");
+  }
+
+  return {
+    sourcePricePerUnit: decimal(sourcePricePerUnit).toDecimalPlaces(8).toString(),
+    destinationPricePerUnit: grossProceeds.minus(fee).div(parsed.destinationQuantity).toDecimalPlaces(8).toString(),
+  };
+}
+
 async function requireGroup(
   db: Prisma.TransactionClient,
   groupId: string,
@@ -897,40 +927,6 @@ async function requireAnyActiveGroup(
   if (group.transactions.length === 0) throw new PortfolioMutationError("Only active grouped operations can be changed.");
   if (group.transactions.length !== 2) throw new PortfolioMutationError("Transaction group is incomplete.");
   return group;
-}
-
-async function sourceAverageAcquisitionPrice({
-  db,
-  accountId,
-  asset,
-  executedAt,
-  excludedGroupId,
-  baseCurrency,
-}: {
-  db: Prisma.TransactionClient;
-  accountId: string;
-  asset: Prisma.AssetGetPayload<Record<string, never>>;
-  executedAt: Date;
-  excludedGroupId?: string;
-  baseCurrency: string;
-}) {
-  const transactions = await db.transaction.findMany({
-    where: {
-      ...activeTransactionFilter(),
-      assetId: asset.id,
-      executedAt: { lte: executedAt },
-      ...(excludedGroupId ? { OR: [{ transactionGroupId: null }, { transactionGroupId: { not: excludedGroupId } }] } : {}),
-    },
-    include: { transactionGroup: true },
-    orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }],
-  });
-  const portfolio = calculatePortfolio({ assets: [asset], transactions, marketPrices: {} });
-  const basis = calculateHoldingCostBasis({ portfolio, assets: [asset], transactions, baseCurrency })
-    .find((row) => row.accountId === accountId && row.assetId === asset.id);
-  if (!basis || basis.status !== "AVAILABLE" || !basis.averageAcquisitionPrice) {
-    return null;
-  }
-  return basis.averageAcquisitionPrice;
 }
 
 async function assertAffectedChronologies(

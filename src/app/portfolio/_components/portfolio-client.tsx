@@ -811,14 +811,15 @@ function TradeForm({ portfolio, onDone, initialSourceAssetId, initialSourceAccou
           if (value === destinationAssetId) setDestinationAssetId(portfolio.assets.find((asset) => asset.id !== value)?.id ?? "");
         }}>{portfolio.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field>
         <Field label="Source quantity"><input name="sourceQuantity" required className={inputClassName} inputMode="decimal" placeholder="500" /></Field>
-        <div aria-hidden="true" className="hidden sm:block" />
+        <Field label="Source execution price"><input name="sourcePricePerUnit" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
+        <Field label="Gross source proceeds (alternative)"><input name="sourceTotalAmount" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
         <Field label="Destination account"><select name="destinationAccountId" required className={inputClassName} value={destinationAccountId} onChange={(event) => setDestinationAccountId(event.target.value)}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
         <Field label="Destination asset"><select name="destinationAssetId" required className={inputClassName} value={destinationAssetId} onChange={(event) => setDestinationAssetId(event.target.value)}>{portfolio.assets.filter((asset) => asset.id !== sourceAssetId).map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field>
         <Field label="Destination quantity"><input name="destinationQuantity" required className={inputClassName} inputMode="decimal" placeholder="0.0045" /></Field>
         <Field label={`Fee in ${portfolio.valuation.currency} (optional)`}><input name="fee" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
         <Field label="Date"><input name="executedAt" required type="date" className={inputClassName} defaultValue={today()} /></Field>
       </div>
-      <p className="text-xs text-muted">The source asset&apos;s proportional acquisition cost is carried to the destination when available. If the source basis is unknown, the trade is still saved and gain/return stay partial until you correct the basis. This is an internal reallocation, not a contribution or withdrawal.</p>
+      <p className="text-xs text-muted">Use the actual execution price or gross proceeds for the source sale. Cost basis is calculated separately from ledger history; if the source basis is unknown, gain/return stay partial until you correct it. This is an internal reallocation, not a contribution or withdrawal.</p>
       <Field label="Note (optional)"><textarea name="note" className={textareaClassName} rows={3} /></Field>
       <ActionMessage state={state} />
       <Button type="submit" disabled={isPending || portfolio.accounts.length === 0 || portfolio.assets.length < 2}>{isPending ? "Saving…" : "Save trade"}</Button>
@@ -893,12 +894,15 @@ function EditGroupedOperationDialog({ portfolio, transaction, onClose }: Portfol
             <Field label="Source account"><select name={isTrade ? "sourceAccountId" : "fromAccountId"} required className={inputClassName} defaultValue={transaction.accountId}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
             <Field label="Source asset"><select name={isTrade ? "sourceAssetId" : "assetId"} required className={inputClassName} value={sourceAssetId} onChange={(event) => setSourceAssetId(event.target.value)}>{portfolio.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field>
             <Field label={isPhysicalTransfer ? "Weight (troy oz)" : "Source quantity"}><input name={isTrade ? "sourceQuantity" : isPhysicalTransfer ? "physicalGoldWeightTroyOunces" : "quantity"} required className={inputClassName} inputMode="decimal" defaultValue={transaction.inputQuantity} /></Field>
+            {isTrade ? <Field label="Source execution price"><input name="sourcePricePerUnit" className={inputClassName} inputMode="decimal" defaultValue={transaction.displayPricePerUnit ?? ""} placeholder="0.00" /></Field> : null}
+            {isTrade ? <Field label="Gross source proceeds (alternative)"><input name="sourceTotalAmount" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
             <Field label="Destination account"><select name={isTrade ? "destinationAccountId" : "toAccountId"} required className={inputClassName} defaultValue={destination.accountId}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
             {isTrade ? <Field label="Destination asset"><select name="destinationAssetId" required className={inputClassName} defaultValue={destination.assetId}>{portfolio.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field> : null}
             {isTrade ? <Field label="Destination quantity"><input name="destinationQuantity" required className={inputClassName} inputMode="decimal" defaultValue={destination.inputQuantity} /></Field> : null}
             {isTrade ? <Field label={`Fee in ${portfolio.valuation.currency} (optional)`}><input name="fee" className={inputClassName} inputMode="decimal" defaultValue={transaction.fee ?? ""} /></Field> : null}
             <Field label="Date"><input name="executedAt" required type="date" className={inputClassName} defaultValue={transaction.executedAt.slice(0, 10)} /></Field>
           </div>
+          {isTrade ? <p className="text-xs text-muted">Trade corrections use the actual source execution price/proceeds. Historical cost basis remains derived from the active ledger rows.</p> : null}
           <Field label="Note (optional)"><textarea name="note" className={textareaClassName} rows={3} defaultValue={transaction.note ?? ""} /></Field>
           <Field label="Correction reason (optional)"><textarea name="auditReason" className={textareaClassName} rows={2} placeholder="Example: corrected transfer amount" /></Field>
           <ActionMessage state={state} />

@@ -109,7 +109,7 @@ describe("priced portfolio read models", () => {
     const btc = await testDb.prisma.asset.findUniqueOrThrow({ where: { symbol: "BTC" } });
     const eur = await testDb.prisma.asset.findUniqueOrThrow({ where: { symbol: "EUR" } });
     await createTransferMutation({ assetId: btc.id, fromAccountId: main.id, toAccountId: empty.id, quantity: "0.1", currency: "EUR", executedAt: new Date("2026-08-06") }, testDb.prisma);
-    await createTradeMutation({ sourceAccountId: main.id, sourceAssetId: btc.id, sourceQuantity: "0.1", destinationAccountId: empty.id, destinationAssetId: eur.id, destinationQuantity: "5000", fee: "1", currency: "EUR", executedAt: new Date("2026-08-07") }, testDb.prisma);
+    await createTradeMutation({ sourceAccountId: main.id, sourceAssetId: btc.id, sourceQuantity: "0.1", sourceTotalAmount: "5000", destinationAccountId: empty.id, destinationAssetId: eur.id, destinationQuantity: "5000", fee: "1", currency: "EUR", executedAt: new Date("2026-08-07") }, testDb.prisma);
     const groups = await testDb.prisma.transactionGroup.findMany({ where: { transactions: { some: { accountId: main.id, executedAt: { gte: new Date("2026-08-06") } } } } });
     try {
       resetMarketDataRuntimeCacheForTests();

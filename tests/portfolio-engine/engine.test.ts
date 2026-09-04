@@ -698,11 +698,11 @@ describe("portfolio engine dashboard analytics", () => {
     expect(analytics.priceCoverage).toEqual({ pricedHoldings: 1, totalHoldings: 1, percent: "100.00" });
   });
 
-  it("values unknown-basis trades while keeping cost basis and return partial", () => {
+  it("values unknown-basis trades with execution prices while keeping cost basis and return partial", () => {
     const transactions: EngineTransaction[] = [
       { assetId: "usdt", accountId: "bybit", type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.UNKNOWN, quantity: "1000", pricePerUnit: null, currency: "EUR", executedAt: "2026-01-01" },
-      { assetId: "usdt", accountId: "bybit", type: TransactionType.SELL, quantity: "100", pricePerUnit: null, currency: "EUR", executedAt: "2026-01-02", transactionGroupId: "trade-1", transactionGroup: { kind: TransactionGroupKind.TRADE } },
-      { assetId: "btc", accountId: "ledger", type: TransactionType.BUY, quantity: "0.01", pricePerUnit: null, currency: "EUR", fee: null, executedAt: "2026-01-02", transactionGroupId: "trade-1", transactionGroup: { kind: TransactionGroupKind.TRADE } },
+      { assetId: "usdt", accountId: "bybit", type: TransactionType.SELL, quantity: "100", pricePerUnit: "1", currency: "EUR", executedAt: "2026-01-02", transactionGroupId: "trade-1", transactionGroup: { kind: TransactionGroupKind.TRADE } },
+      { assetId: "btc", accountId: "ledger", type: TransactionType.BUY, quantity: "0.01", pricePerUnit: "10000", currency: "EUR", fee: null, executedAt: "2026-01-02", transactionGroupId: "trade-1", transactionGroup: { kind: TransactionGroupKind.TRADE } },
     ];
     const portfolio = calculatePortfolio({ assets, transactions, marketPrices: prices });
     const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency: "EUR" });

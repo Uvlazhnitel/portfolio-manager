@@ -481,14 +481,14 @@ describe("portfolio mutations", () => {
     ].sort((left, right) => left.accountId.localeCompare(right.accountId)));
   });
 
-  it("creates a linked trade with carried basis and no external cashflow", async () => {
+  it("creates a linked trade with execution prices and no external cashflow", async () => {
     const source = await testDb.prisma.account.create({ data: { name: "Trade Source", type: AccountType.EXCHANGE } });
     const destination = await testDb.prisma.account.create({ data: { name: "Trade Destination", type: AccountType.WALLET } });
     const usdt = await testDb.prisma.asset.create({ data: { symbol: "USDT_TRADE", name: "Trade USDT", assetClass: AssetClass.CASH, assetType: AssetType.STABLECOIN, currency: "USD" } });
     const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
     await createTransactionMutation({ type: TransactionType.BUY, accountId: source.id, assetMode: "existing", assetId: usdt.id, quantity: "1000", pricePerUnit: "1", currency: "USD", executedAt: new Date("2026-06-01") }, testDb.prisma);
 
-    await createTradeMutation({ sourceAccountId: source.id, sourceAssetId: usdt.id, sourceQuantity: "500", destinationAccountId: destination.id, destinationAssetId: btc.id, destinationQuantity: "0.0045", fee: "2", currency: "USD", executedAt: new Date("2026-06-02"), note: "USDT to BTC" }, testDb.prisma);
+    await createTradeMutation({ sourceAccountId: source.id, sourceAssetId: usdt.id, sourceQuantity: "500", sourcePricePerUnit: "1", destinationAccountId: destination.id, destinationAssetId: btc.id, destinationQuantity: "0.0045", fee: "2", currency: "USD", executedAt: new Date("2026-06-02"), note: "USDT to BTC" }, testDb.prisma);
 
     const legs = await testDb.prisma.transaction.findMany({ where: { transactionGroup: { kind: TransactionGroupKind.TRADE }, accountId: { in: [source.id, destination.id] } }, orderBy: { type: "asc" } });
     expect(legs).toHaveLength(2);
@@ -496,20 +496,24 @@ describe("portfolio mutations", () => {
     const sell = legs.find((leg) => leg.type === TransactionType.SELL)!;
     const buy = legs.find((leg) => leg.type === TransactionType.BUY)!;
     expect(sell.pricePerUnit?.toString()).toBe("1");
-    expect(buy.pricePerUnit?.mul(buy.quantity).toDecimalPlaces(2).toString()).toBe("500");
+    expect(buy.pricePerUnit?.mul(buy.quantity).toDecimalPlaces(2).toString()).toBe("498");
     expect(buy.fee?.toString()).toBe("2");
     expect(calculateHoldings(await testDb.prisma.transaction.findMany({ where: { accountId: { in: [source.id, destination.id] }, assetId: { in: [usdt.id, btc.id] } } }))).toEqual(expect.arrayContaining([
       { accountId: source.id, assetId: usdt.id, quantity: "500" },
       { accountId: destination.id, assetId: btc.id, quantity: "0.0045" },
     ]));
 
-    await updateTradeMutation({ groupId: sell.transactionGroupId!, sourceAccountId: source.id, sourceAssetId: usdt.id, sourceQuantity: "400", destinationAccountId: destination.id, destinationAssetId: btc.id, destinationQuantity: "0.005", fee: "1", currency: "USD", executedAt: new Date("2026-06-02"), note: "edited trade", auditReason: "Correct exchange fill" }, testDb.prisma);
+    await updateTradeMutation({ groupId: sell.transactionGroupId!, sourceAccountId: source.id, sourceAssetId: usdt.id, sourceQuantity: "400", sourceTotalAmount: "400", destinationAccountId: destination.id, destinationAssetId: btc.id, destinationQuantity: "0.005", fee: "1", currency: "USD", executedAt: new Date("2026-06-02"), note: "edited trade", auditReason: "Correct exchange fill" }, testDb.prisma);
     const oldLegs = await testDb.prisma.transaction.findMany({ where: { transactionGroupId: sell.transactionGroupId } });
     expect(oldLegs.every((leg) => leg.status === TransactionStatus.REPLACED && leg.statusReason === "Correct exchange fill")).toBe(true);
     const replacements = await testDb.prisma.transaction.findMany({ where: { replacesTransactionId: { in: oldLegs.map((leg) => leg.id) } }, orderBy: { type: "asc" } });
     expect(new Set(replacements.map((leg) => leg.transactionGroupId)).size).toBe(1);
-    expect(replacements.find((leg) => leg.type === TransactionType.SELL)?.quantity.toString()).toBe("400");
-    expect(replacements.find((leg) => leg.type === TransactionType.BUY)?.quantity.toString()).toBe("0.005");
+    const replacementSell = replacements.find((leg) => leg.type === TransactionType.SELL)!;
+    const replacementBuy = replacements.find((leg) => leg.type === TransactionType.BUY)!;
+    expect(replacementSell.quantity.toString()).toBe("400");
+    expect(replacementSell.pricePerUnit?.toString()).toBe("1");
+    expect(replacementBuy.quantity.toString()).toBe("0.005");
+    expect(replacementBuy.pricePerUnit?.mul(replacementBuy.quantity).toDecimalPlaces(2).toString()).toBe("399");
     expect(replacements.every((leg) => leg.note === "edited trade" && leg.status === TransactionStatus.ACTIVE)).toBe(true);
 
     await deleteTransactionGroupMutation(replacements[0].transactionGroupId!, testDb.prisma);
@@ -517,14 +521,33 @@ describe("portfolio mutations", () => {
     expect(voidedTradeLegs.every((leg) => leg.status === TransactionStatus.VOIDED)).toBe(true);
   });
 
-  it("creates a trade with nullable leg prices when source cost basis is unknown", async () => {
+  it("records the source sale at execution price instead of acquisition basis", async () => {
+    const account = await testDb.prisma.account.create({ data: { name: "BTC Trade Execution Source", type: AccountType.EXCHANGE } });
+    const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
+    const usdt = await testDb.prisma.asset.create({ data: { symbol: "USDT_BTC_EXECUTION", name: "BTC Execution USDT", assetClass: AssetClass.CASH, assetType: AssetType.STABLECOIN, currency: "USD" } });
+    await createTransactionMutation({ type: TransactionType.BUY, accountId: account.id, assetMode: "existing", assetId: btc.id, quantity: "0.02", pricePerUnit: "40000", currency: "USD", executedAt: new Date("2026-06-01") }, testDb.prisma);
+
+    await createTradeMutation({ sourceAccountId: account.id, sourceAssetId: btc.id, sourceQuantity: "0.01", sourcePricePerUnit: "60000", destinationAccountId: account.id, destinationAssetId: usdt.id, destinationQuantity: "598", fee: "2", currency: "USD", executedAt: new Date("2026-06-02"), note: "BTC to USDT execution" }, testDb.prisma);
+
+    const legs = await testDb.prisma.transaction.findMany({
+      where: { transactionGroup: { kind: TransactionGroupKind.TRADE }, note: "BTC to USDT execution" },
+      orderBy: { type: "asc" },
+    });
+    const sell = legs.find((leg) => leg.type === TransactionType.SELL)!;
+    const buy = legs.find((leg) => leg.type === TransactionType.BUY)!;
+    expect(sell.pricePerUnit?.toString()).toBe("60000");
+    expect(buy.pricePerUnit?.toString()).toBe("1");
+    expect(buy.fee?.toString()).toBe("2");
+  });
+
+  it("creates a trade with execution prices when source cost basis is unknown", async () => {
     const source = await testDb.prisma.account.create({ data: { name: "Unknown Basis Trade Source", type: AccountType.EXCHANGE } });
     const destination = await testDb.prisma.account.create({ data: { name: "Unknown Basis Trade Destination", type: AccountType.WALLET } });
     const usdt = await testDb.prisma.asset.create({ data: { symbol: "USDT_UNKNOWN_BASIS", name: "Unknown Basis USDT", assetClass: AssetClass.CASH, assetType: AssetType.STABLECOIN, currency: "USDT" } });
     const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
     await createTransactionMutation({ type: TransactionType.INITIAL_BALANCE, basisMethod: BasisMethod.UNKNOWN, accountId: source.id, assetMode: "existing", assetId: usdt.id, quantity: "1000", currency: "USD", executedAt: new Date("2026-09-01") }, testDb.prisma);
 
-    await createTradeMutation({ sourceAccountId: source.id, sourceAssetId: usdt.id, sourceQuantity: "250", destinationAccountId: destination.id, destinationAssetId: btc.id, destinationQuantity: "0.0025", currency: "USD", executedAt: new Date("2026-09-02"), note: "Unknown basis trade" }, testDb.prisma);
+    await createTradeMutation({ sourceAccountId: source.id, sourceAssetId: usdt.id, sourceQuantity: "250", sourcePricePerUnit: "1", destinationAccountId: destination.id, destinationAssetId: btc.id, destinationQuantity: "0.0025", currency: "USD", executedAt: new Date("2026-09-02"), note: "Unknown basis trade" }, testDb.prisma);
 
     const legs = await testDb.prisma.transaction.findMany({
       where: { transactionGroup: { kind: TransactionGroupKind.TRADE }, note: "Unknown basis trade" },
@@ -532,11 +555,28 @@ describe("portfolio mutations", () => {
     });
     expect(legs).toHaveLength(2);
     expect(new Set(legs.map((leg) => leg.transactionGroupId)).size).toBe(1);
-    expect(legs.every((leg) => leg.status === TransactionStatus.ACTIVE && leg.pricePerUnit === null)).toBe(true);
+    expect(legs.every((leg) => leg.status === TransactionStatus.ACTIVE && leg.pricePerUnit !== null)).toBe(true);
+    expect(legs.find((leg) => leg.type === TransactionType.SELL)?.pricePerUnit?.toString()).toBe("1");
+    expect(legs.find((leg) => leg.type === TransactionType.BUY)?.pricePerUnit?.mul(legs.find((leg) => leg.type === TransactionType.BUY)!.quantity).toDecimalPlaces(2).toString()).toBe("250");
     expect(calculateHoldings(await testDb.prisma.transaction.findMany({ where: { accountId: { in: [source.id, destination.id] }, assetId: { in: [usdt.id, btc.id] } } }))).toEqual(expect.arrayContaining([
       { accountId: source.id, assetId: usdt.id, quantity: "750" },
       { accountId: destination.id, assetId: btc.id, quantity: "0.0025" },
     ]));
+  });
+
+  it("validates trade execution price/proceeds and fee", async () => {
+    const source = await testDb.prisma.account.create({ data: { name: "Trade Execution Validation Source", type: AccountType.EXCHANGE } });
+    const destination = await testDb.prisma.account.create({ data: { name: "Trade Execution Validation Destination", type: AccountType.WALLET } });
+    const usdt = await testDb.prisma.asset.create({ data: { symbol: "USDT_TRADE_VALIDATION", name: "Trade Validation USDT", assetClass: AssetClass.CASH, assetType: AssetType.STABLECOIN, currency: "USD" } });
+    const btc = await testDb.prisma.asset.findFirstOrThrow({ where: { symbol: "BTC" } });
+    await createTransactionMutation({ type: TransactionType.BUY, accountId: source.id, assetMode: "existing", assetId: usdt.id, quantity: "1000", pricePerUnit: "1", currency: "USD", executedAt: new Date("2026-06-01") }, testDb.prisma);
+
+    await expect(createTradeMutation({ sourceAccountId: source.id, sourceAssetId: usdt.id, sourceQuantity: "100", destinationAccountId: destination.id, destinationAssetId: btc.id, destinationQuantity: "0.001", currency: "USD", executedAt: new Date("2026-06-02") }, testDb.prisma))
+      .rejects.toThrow("source execution price or gross source proceeds");
+    await expect(createTradeMutation({ sourceAccountId: source.id, sourceAssetId: usdt.id, sourceQuantity: "100", sourcePricePerUnit: "1", sourceTotalAmount: "101.02", destinationAccountId: destination.id, destinationAssetId: btc.id, destinationQuantity: "0.001", currency: "USD", executedAt: new Date("2026-06-02") }, testDb.prisma))
+      .rejects.toThrow("do not match within one cent");
+    await expect(createTradeMutation({ sourceAccountId: source.id, sourceAssetId: usdt.id, sourceQuantity: "100", sourceTotalAmount: "100", destinationAccountId: destination.id, destinationAssetId: btc.id, destinationQuantity: "0.001", fee: "100", currency: "USD", executedAt: new Date("2026-06-02") }, testDb.prisma))
+      .rejects.toThrow("fee must be less than gross source proceeds");
   });
 
   it("allows all-known and all-null trade prices at the database boundary but rejects mixed trade prices", async () => {
