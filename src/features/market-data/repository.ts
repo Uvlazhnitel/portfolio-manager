@@ -1,6 +1,8 @@
 import type { CachedMarketPrice, ManualMarketPrice, MarketPriceUnit, PrismaClient } from "@prisma/client";
 import type { MarketPrice } from "@/features/market-data/types";
 import { prisma } from "@/lib/db/client";
+import { runInTransaction } from "@/lib/db/transaction";
+import type { DbClient } from "@/lib/db/types";
 
 export type CachedPriceRecord = CachedMarketPrice;
 
@@ -11,7 +13,16 @@ export interface MarketDataStore {
 }
 
 export class MarketDataRepository implements MarketDataStore {
-  constructor(private readonly db: PrismaClient = prisma) {}
+  constructor(private readonly db: DbClient = prisma) {}
+
+  async withTransaction<T>(operation: (repository: MarketDataRepository) => Promise<T>) {
+    if (typeof (this.db as PrismaClient).$transaction !== "function") {
+      throw new Error("A root Prisma client is required to start a transaction.");
+    }
+    return runInTransaction(this.db as PrismaClient, (transaction) => (
+      operation(new MarketDataRepository(transaction))
+    ));
+  }
 
   listCachedPrices(assetIds: string[], currency: string) {
     return this.db.cachedMarketPrice.findMany({
@@ -27,8 +38,7 @@ export class MarketDataRepository implements MarketDataStore {
   }
 
   async saveCachedPrices(prices: MarketPrice[], fetchedAt: Date) {
-    await this.db.$transaction(
-      prices.map((price) => this.db.cachedMarketPrice.upsert({
+    const save = (price: MarketPrice) => this.db.cachedMarketPrice.upsert({
         where: {
           assetId_currency: { assetId: price.assetId, currency: price.currency },
         },
@@ -46,8 +56,12 @@ export class MarketDataRepository implements MarketDataStore {
           fetchedAt,
           source: price.source,
         },
-      })),
-    );
+      });
+    if (typeof (this.db as PrismaClient).$transaction === "function") {
+      await (this.db as PrismaClient).$transaction(prices.map(save));
+      return;
+    }
+    for (const price of prices) await save(price);
   }
 
   upsertManualPrice(input: {
@@ -71,5 +85,9 @@ export class MarketDataRepository implements MarketDataStore {
       },
       orderBy: { symbol: "asc" },
     });
+  }
+
+  findAsset(id: string) {
+    return this.db.asset.findUnique({ where: { id } });
   }
 }

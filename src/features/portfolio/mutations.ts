@@ -1,16 +1,14 @@
 import {
   AssetClass,
-  AssetQuoteProvider,
   AssetType,
   BasisMethod,
   MarketPriceUnit,
-  Prisma,
   TransactionStatus,
   TransactionGroupKind,
   TransactionType,
-  type PrismaClient,
 } from "@prisma/client";
 import { z } from "zod";
+import { AssetRepository } from "@/features/assets/repository";
 import { calculateHoldings } from "@/features/portfolio-engine";
 import { decimal, ZERO } from "@/features/portfolio-engine/decimal";
 import { PortfolioRepository } from "@/features/portfolio/repository";
@@ -22,7 +20,8 @@ import {
   positiveDecimalStringSchema,
   positiveMarketPriceStringSchema,
 } from "@/features/portfolio/validation";
-import { prisma } from "@/lib/db/client";
+import { isPrismaErrorCode } from "@/lib/db/transaction";
+import type { DecimalValue } from "@/lib/db/decimal";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 import {
   formatPhysicalGoldQuantity,
@@ -124,13 +123,12 @@ export type AssetQuoteLinkInput = z.input<typeof assetQuoteLinkSchema>;
 
 export async function createAccountMutation(
   input: z.input<typeof accountInputSchema>,
-  db: PrismaClient = prisma,
+  repository = new PortfolioRepository(),
 ): Promise<PortfolioMutationResult> {
   const parsed = accountInputSchema.parse(input);
-  const repository = new PortfolioRepository(db);
 
   try {
-    if (parsed.custodianId && !await db.custodian.findUnique({ where: { id: parsed.custodianId }, select: { id: true } })) {
+    if (parsed.custodianId && !await repository.findCustodian(parsed.custodianId)) {
       throw new PortfolioMutationError("Selected custodian does not exist.");
     }
     await repository.createAccount({
@@ -149,40 +147,37 @@ export async function createAccountMutation(
 
 export async function linkAssetQuoteMutation(
   input: AssetQuoteLinkInput,
-  db: PrismaClient = prisma,
+  repository = new PortfolioRepository(),
 ): Promise<PortfolioMutationResult> {
   const parsed = assetQuoteLinkSchema.parse(input);
-  await db.$transaction(async (transaction) => {
-    const asset = await transaction.asset.findUnique({ where: { id: parsed.assetId } });
+  await repository.withSerializableTransaction(async (transactionRepository) => {
+    const asset = await transactionRepository.assets.findById(parsed.assetId);
     if (!asset) throw new PortfolioMutationError("Selected asset does not exist.");
     if (asset.assetClass !== AssetClass.ETF || asset.assetType !== AssetType.ETF) {
       throw new PortfolioMutationError("Automatic exchange quotes are only available for ETF assets.");
     }
-    await transaction.asset.update({
-      where: { id: asset.id },
-      data: {
-        currency: parsed.currency,
-        quoteProvider: parsed.quoteProvider,
-        quoteSymbol: parsed.quoteSymbol,
-        quoteMicCode: parsed.quoteMicCode,
-      },
+    await transactionRepository.assets.updateQuoteLink({
+      id: asset.id,
+      currency: parsed.currency,
+      quoteProvider: parsed.quoteProvider,
+      quoteSymbol: parsed.quoteSymbol,
+      quoteMicCode: parsed.quoteMicCode,
     });
-    await transaction.cachedMarketPrice.deleteMany({ where: { assetId: asset.id } });
+    await transactionRepository.assets.clearCachedPrices(asset.id);
   });
   return { ok: true, message: "ETF market quote linked." };
 }
 
 export async function createTransactionMutation(
   input: TransactionMutationInput,
-  db: PrismaClient = prisma,
+  repository = new PortfolioRepository(),
 ): Promise<PortfolioMutationResult> {
   const parsed = transactionMutationSchema.parse(input);
-  const saved = await withSerializableRetry(db, async (transaction) => {
-    const repository = new PortfolioRepository(transaction);
+  const saved = await repository.withSerializableTransaction(async (repository) => {
     const account = await repository.findAccount(parsed.accountId);
     if (!account) throw new PortfolioMutationError("Selected account does not exist.");
 
-    const asset = await resolveAsset(parsed, transaction);
+    const asset = await resolveAsset(parsed, repository.assets);
     if ((parsed.type === TransactionType.DEPOSIT || parsed.type === TransactionType.WITHDRAWAL) && asset.assetClass !== AssetClass.CASH) {
       throw new PortfolioMutationError("Deposits and withdrawals are only available for CASH assets.");
     }
@@ -190,7 +185,7 @@ export async function createTransactionMutation(
 
     if (parsed.type === TransactionType.SELL || parsed.type === TransactionType.WITHDRAWAL) {
       await assertEnoughQuantityForSell({
-        db: transaction,
+        repository,
         accountId: parsed.accountId,
         assetId: asset.id,
         quantity: normalized.quantity,
@@ -229,19 +224,18 @@ export async function createTransactionMutation(
 
 export async function createTransferMutation(
   input: TransferMutationInput,
-  db: PrismaClient = prisma,
+  repository = new PortfolioRepository(),
 ): Promise<PortfolioMutationResult> {
   const parsed = transferMutationSchema.parse(input);
   if (parsed.fromAccountId === parsed.toAccountId) {
     throw new PortfolioMutationError("Transfer source and destination accounts must be different.");
   }
 
-  const saved = await withSerializableRetry(db, async (transaction) => {
-    const repository = new PortfolioRepository(transaction);
+  const saved = await repository.withSerializableTransaction(async (repository) => {
     const [fromAccount, toAccount, asset] = await Promise.all([
       repository.findAccount(parsed.fromAccountId),
       repository.findAccount(parsed.toAccountId),
-      repository.findAsset(parsed.assetId),
+      repository.assets.findById(parsed.assetId),
     ]);
     if (!fromAccount) throw new PortfolioMutationError("Source account does not exist.");
     if (!toAccount) throw new PortfolioMutationError("Destination account does not exist.");
@@ -249,16 +243,15 @@ export async function createTransferMutation(
 
     const normalized = normalizeTransfer(parsed, asset.assetType);
     await assertEnoughQuantityForSell({
-      db: transaction,
+      repository,
       accountId: fromAccount.id,
       assetId: asset.id,
       quantity: normalized.quantity,
       executedAt: parsed.executedAt,
     });
 
-    const group = await transaction.transactionGroup.create({ data: { kind: TransactionGroupKind.TRANSFER } });
-    await transaction.transaction.createMany({
-      data: [
+    const group = await repository.createTransactionGroup(TransactionGroupKind.TRANSFER);
+    await repository.createTransactions([
         {
           transactionGroupId: group.id,
           assetId: asset.id,
@@ -283,9 +276,8 @@ export async function createTransferMutation(
           executedAt: parsed.executedAt,
           note: parsed.note || null,
         },
-      ],
-    });
-    await assertAffectedChronologies(transaction, [
+      ]);
+    await assertAffectedChronologies(repository, [
       { accountId: fromAccount.id, assetId: asset.id },
       { accountId: toAccount.id, assetId: asset.id },
     ]);
@@ -307,17 +299,17 @@ export async function createTransferMutation(
 
 export async function createTradeMutation(
   input: TradeMutationInput,
-  db: PrismaClient = prisma,
+  repository = new PortfolioRepository(),
 ): Promise<PortfolioMutationResult> {
   const parsed = tradeMutationSchema.parse(input);
   validateTradeIdentity(parsed);
 
-  const saved = await withSerializableRetry(db, async (transaction) => {
+  const saved = await repository.withSerializableTransaction(async (repository) => {
     const [sourceAccount, destinationAccount, sourceAsset, destinationAsset] = await Promise.all([
-      transaction.account.findUnique({ where: { id: parsed.sourceAccountId } }),
-      transaction.account.findUnique({ where: { id: parsed.destinationAccountId } }),
-      transaction.asset.findUnique({ where: { id: parsed.sourceAssetId } }),
-      transaction.asset.findUnique({ where: { id: parsed.destinationAssetId } }),
+      repository.findAccount(parsed.sourceAccountId),
+      repository.findAccount(parsed.destinationAccountId),
+      repository.assets.findById(parsed.sourceAssetId),
+      repository.assets.findById(parsed.destinationAssetId),
     ]);
     if (!sourceAccount) throw new PortfolioMutationError("Source account does not exist.");
     if (!destinationAccount) throw new PortfolioMutationError("Destination account does not exist.");
@@ -325,7 +317,7 @@ export async function createTradeMutation(
     if (!destinationAsset) throw new PortfolioMutationError("Destination asset does not exist.");
 
     await assertEnoughQuantityForSell({
-      db: transaction,
+      repository,
       accountId: sourceAccount.id,
       assetId: sourceAsset.id,
       quantity: parsed.sourceQuantity,
@@ -333,8 +325,8 @@ export async function createTradeMutation(
     });
     const tradeExecution = normalizeTradeExecution(parsed);
 
-    const group = await transaction.transactionGroup.create({ data: { kind: TransactionGroupKind.TRADE } });
-    await transaction.transaction.createMany({ data: [
+    const group = await repository.createTransactionGroup(TransactionGroupKind.TRADE);
+    await repository.createTransactions([
       {
         transactionGroupId: group.id,
         assetId: sourceAsset.id,
@@ -359,8 +351,8 @@ export async function createTradeMutation(
         executedAt: parsed.executedAt,
         note: parsed.note || null,
       },
-    ] });
-    await assertAffectedChronologies(transaction, [
+    ]);
+    await assertAffectedChronologies(repository, [
       { accountId: sourceAccount.id, assetId: sourceAsset.id },
       { accountId: destinationAccount.id, assetId: destinationAsset.id },
     ]);
@@ -376,7 +368,7 @@ export async function createTradeMutation(
 
 export async function deleteTransactionMutation(
   input: string | { id: string; auditReason?: string | null },
-  db: PrismaClient = prisma,
+  repository = new PortfolioRepository(),
 ): Promise<PortfolioMutationResult> {
   const id = typeof input === "string" ? input : input.id;
   const auditReason = typeof input === "string" ? null : input.auditReason ?? null;
@@ -384,8 +376,8 @@ export async function deleteTransactionMutation(
     throw new Error("Transaction id is required.");
   }
 
-  await withSerializableRetry(db, async (transaction) => {
-    const target = await transaction.transaction.findUnique({ where: { id } });
+  await repository.withSerializableTransaction(async (repository) => {
+    const target = await repository.findTransaction(id);
     if (!target) throw new PortfolioMutationError("Transaction was not found.");
     assertActiveTransaction(target, "void");
     if (target.transactionGroupId) throw new PortfolioMutationError("Grouped operations must be voided as one operation.");
@@ -393,49 +385,49 @@ export async function deleteTransactionMutation(
       throw new PortfolioMutationError("Legacy ungrouped transfer rows are read-only.");
     }
 
-    await voidTransactions(transaction, [target.id], auditReason);
-    await assertAffectedChronologies(transaction, [{ accountId: target.accountId, assetId: target.assetId }]);
+    await voidTransactions(repository, [target.id], auditReason);
+    await assertAffectedChronologies(repository, [{ accountId: target.accountId, assetId: target.assetId }]);
   });
   return { ok: true, message: "Transaction voided." };
 }
 
 export async function deleteTransactionGroupMutation(
   input: string | { groupId: string; auditReason?: string | null },
-  db: PrismaClient = prisma,
+  repository = new PortfolioRepository(),
 ): Promise<PortfolioMutationResult> {
   const groupId = typeof input === "string" ? input : input.groupId;
   const auditReason = typeof input === "string" ? null : input.auditReason ?? null;
   if (!groupId) throw new Error("Transaction group id is required.");
-  await withSerializableRetry(db, async (transaction) => {
-    const group = await requireAnyActiveGroup(transaction, groupId);
+  await repository.withSerializableTransaction(async (repository) => {
+    const group = await requireAnyActiveGroup(repository, groupId);
     const affected = group.transactions.map((leg) => ({ accountId: leg.accountId, assetId: leg.assetId }));
-    await voidTransactions(transaction, group.transactions.map((leg) => leg.id), auditReason);
-    await assertAffectedChronologies(transaction, affected);
+    await voidTransactions(repository, group.transactions.map((leg) => leg.id), auditReason);
+    await assertAffectedChronologies(repository, affected);
   });
   return { ok: true, message: "Operation voided." };
 }
 
 export async function updateTransferMutation(
   input: UpdateTransferInput,
-  db: PrismaClient = prisma,
+  repository = new PortfolioRepository(),
 ): Promise<PortfolioMutationResult> {
   const parsed = updateTransferSchema.parse(input);
   if (parsed.fromAccountId === parsed.toAccountId) {
     throw new PortfolioMutationError("Transfer source and destination accounts must be different.");
   }
-  await withSerializableRetry(db, async (transaction) => {
-    const group = await requireGroup(transaction, parsed.groupId, TransactionGroupKind.TRANSFER);
+  await repository.withSerializableTransaction(async (repository) => {
+    const group = await requireGroup(repository, parsed.groupId, TransactionGroupKind.TRANSFER);
     const [fromAccount, toAccount, asset] = await Promise.all([
-      transaction.account.findUnique({ where: { id: parsed.fromAccountId } }),
-      transaction.account.findUnique({ where: { id: parsed.toAccountId } }),
-      transaction.asset.findUnique({ where: { id: parsed.assetId } }),
+      repository.findAccount(parsed.fromAccountId),
+      repository.findAccount(parsed.toAccountId),
+      repository.assets.findById(parsed.assetId),
     ]);
     if (!fromAccount) throw new PortfolioMutationError("Source account does not exist.");
     if (!toAccount) throw new PortfolioMutationError("Destination account does not exist.");
     if (!asset) throw new PortfolioMutationError("Selected asset does not exist.");
     const normalized = normalizeTransfer(parsed, asset.assetType);
     await assertEnoughQuantityForSell({
-      db: transaction,
+      repository,
       accountId: fromAccount.id,
       assetId: asset.id,
       quantity: normalized.quantity,
@@ -446,8 +438,8 @@ export async function updateTransferMutation(
     const incoming = group.transactions.find((leg) => leg.type === TransactionType.TRANSFER_IN);
     if (!outgoing || !incoming) throw new PortfolioMutationError("Transfer group is incomplete.");
     const shared = { assetId: asset.id, quantity: normalized.quantity, currency: parsed.currency, executedAt: parsed.executedAt, note: parsed.note || null };
-    const replacementGroup = await transaction.transactionGroup.create({ data: { kind: TransactionGroupKind.TRANSFER } });
-    await transaction.transaction.createMany({ data: [
+    const replacementGroup = await repository.createTransactionGroup(TransactionGroupKind.TRANSFER);
+    await repository.createTransactions([
       {
         ...shared,
         transactionGroupId: replacementGroup.id,
@@ -466,9 +458,9 @@ export async function updateTransferMutation(
         fee: null,
         replacesTransactionId: incoming.id,
       },
-    ] });
-    await replaceTransactions(transaction, [outgoing.id, incoming.id], parsed.auditReason ?? null);
-    await assertAffectedChronologies(transaction, [
+    ]);
+    await replaceTransactions(repository, [outgoing.id, incoming.id], parsed.auditReason ?? null);
+    await assertAffectedChronologies(repository, [
       ...group.transactions.map((leg) => ({ accountId: leg.accountId, assetId: leg.assetId })),
       { accountId: fromAccount.id, assetId: asset.id },
       { accountId: toAccount.id, assetId: asset.id },
@@ -479,30 +471,30 @@ export async function updateTransferMutation(
 
 export async function updateTradeMutation(
   input: UpdateTradeInput,
-  db: PrismaClient = prisma,
+  repository = new PortfolioRepository(),
 ): Promise<PortfolioMutationResult> {
   const parsed = updateTradeSchema.parse(input);
   validateTradeIdentity(parsed);
-  await withSerializableRetry(db, async (transaction) => {
-    const group = await requireGroup(transaction, parsed.groupId, TransactionGroupKind.TRADE);
+  await repository.withSerializableTransaction(async (repository) => {
+    const group = await requireGroup(repository, parsed.groupId, TransactionGroupKind.TRADE);
     const [sourceAccount, destinationAccount, sourceAsset, destinationAsset] = await Promise.all([
-      transaction.account.findUnique({ where: { id: parsed.sourceAccountId } }),
-      transaction.account.findUnique({ where: { id: parsed.destinationAccountId } }),
-      transaction.asset.findUnique({ where: { id: parsed.sourceAssetId } }),
-      transaction.asset.findUnique({ where: { id: parsed.destinationAssetId } }),
+      repository.findAccount(parsed.sourceAccountId),
+      repository.findAccount(parsed.destinationAccountId),
+      repository.assets.findById(parsed.sourceAssetId),
+      repository.assets.findById(parsed.destinationAssetId),
     ]);
     if (!sourceAccount) throw new PortfolioMutationError("Source account does not exist.");
     if (!destinationAccount) throw new PortfolioMutationError("Destination account does not exist.");
     if (!sourceAsset) throw new PortfolioMutationError("Source asset does not exist.");
     if (!destinationAsset) throw new PortfolioMutationError("Destination asset does not exist.");
-    await assertEnoughQuantityForSell({ db: transaction, accountId: sourceAccount.id, assetId: sourceAsset.id, quantity: parsed.sourceQuantity, executedAt: parsed.executedAt, excludedGroupId: group.id });
+    await assertEnoughQuantityForSell({ repository, accountId: sourceAccount.id, assetId: sourceAsset.id, quantity: parsed.sourceQuantity, executedAt: parsed.executedAt, excludedGroupId: group.id });
     const tradeExecution = normalizeTradeExecution(parsed);
     const sell = group.transactions.find((leg) => leg.type === TransactionType.SELL);
     const buy = group.transactions.find((leg) => leg.type === TransactionType.BUY);
     if (!sell || !buy) throw new PortfolioMutationError("Trade group is incomplete.");
     const shared = { currency: parsed.currency, executedAt: parsed.executedAt, note: parsed.note || null };
-    const replacementGroup = await transaction.transactionGroup.create({ data: { kind: TransactionGroupKind.TRADE } });
-    await transaction.transaction.createMany({ data: [
+    const replacementGroup = await repository.createTransactionGroup(TransactionGroupKind.TRADE);
+    await repository.createTransactions([
       {
         ...shared,
         transactionGroupId: replacementGroup.id,
@@ -525,9 +517,9 @@ export async function updateTradeMutation(
         fee: parsed.fee ?? null,
         replacesTransactionId: buy.id,
       },
-    ] });
-    await replaceTransactions(transaction, [sell.id, buy.id], parsed.auditReason ?? null);
-    await assertAffectedChronologies(transaction, [
+    ]);
+    await replaceTransactions(repository, [sell.id, buy.id], parsed.auditReason ?? null);
+    await assertAffectedChronologies(repository, [
       ...group.transactions.map((leg) => ({ accountId: leg.accountId, assetId: leg.assetId })),
       { accountId: sourceAccount.id, assetId: sourceAsset.id },
       { accountId: destinationAccount.id, assetId: destinationAsset.id },
@@ -538,15 +530,12 @@ export async function updateTradeMutation(
 
 export async function updateTransactionMutation(
   input: UpdateTransactionInput,
-  db: PrismaClient = prisma,
+  repository = new PortfolioRepository(),
 ): Promise<PortfolioMutationResult> {
   const parsed = updateTransactionSchema.parse(input);
 
-  await withSerializableRetry(db, async (transaction) => {
-    const target = await transaction.transaction.findUnique({
-      where: { id: parsed.id },
-      include: { asset: true },
-    });
+  await repository.withSerializableTransaction(async (repository) => {
+    const target = await repository.findTransactionWithAsset(parsed.id);
     if (!target) throw new PortfolioMutationError("Transaction was not found.");
     assertActiveTransaction(target, "correct");
     if (target.transactionGroupId) throw new PortfolioMutationError("Grouped operations must be edited as one operation.");
@@ -568,8 +557,7 @@ export async function updateTransactionMutation(
       currency: target.currency,
     }, target.asset);
 
-    await transaction.transaction.create({
-      data: {
+    await repository.createTransaction({
         assetId: target.assetId,
         accountId: target.accountId,
         type: target.type,
@@ -581,45 +569,41 @@ export async function updateTransactionMutation(
         executedAt: parsed.executedAt,
         note: parsed.note || null,
         replacesTransactionId: target.id,
-      },
     });
-    await replaceTransactions(transaction, [target.id], parsed.auditReason ?? null);
-    await assertAffectedChronologies(transaction, [{ accountId: target.accountId, assetId: target.assetId }]);
+    await replaceTransactions(repository, [target.id], parsed.auditReason ?? null);
+    await assertAffectedChronologies(repository, [{ accountId: target.accountId, assetId: target.assetId }]);
   });
 
   return { ok: true, message: "Transaction corrected." };
 }
 
-async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, db: Prisma.TransactionClient) {
+async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, repository: AssetRepository) {
   if (parsed.assetMode === "new") {
     if (!parsed.newAsset) {
       throw new PortfolioMutationError("New asset details are required.");
     }
 
     const existingByExternalId = parsed.newAsset.externalId
-      ? await db.asset.findFirst({ where: { externalId: parsed.newAsset.externalId } })
+      ? await repository.findByExternalId(parsed.newAsset.externalId)
       : null;
     if (existingByExternalId) return existingByExternalId;
 
     const existingByQuoteIdentity = parsed.newAsset.quoteProvider && parsed.newAsset.quoteSymbol
-      ? await db.asset.findFirst({
-          where: quoteIdentityWhere({
-            quoteProvider: parsed.newAsset.quoteProvider,
-            quoteSymbol: parsed.newAsset.quoteSymbol,
-            quoteMicCode: parsed.newAsset.quoteMicCode,
-          }),
+      ? await repository.findByQuoteIdentity({
+          quoteProvider: parsed.newAsset.quoteProvider,
+          quoteSymbol: parsed.newAsset.quoteSymbol,
+          quoteMicCode: parsed.newAsset.quoteMicCode,
         })
       : null;
     if (existingByQuoteIdentity) return existingByQuoteIdentity;
 
-    const existing = await db.asset.findUnique({ where: { symbol: parsed.newAsset.symbol } });
+    const existing = await repository.findBySymbol(parsed.newAsset.symbol);
     if (existing) {
       throw new PortfolioMutationError(`Asset symbol ${parsed.newAsset.symbol} already exists. Select the existing asset.`);
     }
 
     try {
-      return await db.asset.create({
-        data: {
+      return await repository.create({
           symbol: parsed.newAsset.symbol,
           name: parsed.newAsset.name,
           assetClass: parsed.newAsset.assetClass,
@@ -629,8 +613,7 @@ async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, d
           quoteProvider: parsed.newAsset.quoteProvider || null,
           quoteSymbol: parsed.newAsset.quoteSymbol || null,
           quoteMicCode: parsed.newAsset.quoteMicCode || null,
-          metadata: parsed.newAsset.metadata as Prisma.InputJsonValue | undefined,
-        },
+          metadata: parsed.newAsset.metadata,
       });
     } catch (error) {
       if (isPrismaError(error, "P2002")) {
@@ -644,23 +627,13 @@ async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, d
     throw new PortfolioMutationError("Asset is required.");
   }
 
-  const asset = await db.asset.findUnique({ where: { id: parsed.assetId } });
+  const asset = await repository.findById(parsed.assetId);
 
   if (!asset) {
     throw new PortfolioMutationError("Selected asset does not exist.");
   }
 
   return asset;
-}
-
-function quoteIdentityWhere(asset: {
-  quoteProvider: AssetQuoteProvider;
-  quoteSymbol: string;
-  quoteMicCode?: string | null;
-}) {
-  return asset.quoteProvider === AssetQuoteProvider.ALPHA_VANTAGE
-    ? { quoteProvider: asset.quoteProvider, quoteSymbol: asset.quoteSymbol }
-    : { quoteProvider: asset.quoteProvider, quoteSymbol: asset.quoteSymbol, quoteMicCode: asset.quoteMicCode ?? null };
 }
 
 function normalizeTransaction(parsed: z.infer<typeof transactionMutationSchema>, asset: { assetType: AssetType; currency: string }) {
@@ -767,10 +740,6 @@ function normalizeTransfer(parsed: z.infer<typeof transferMutationSchema>, asset
   };
 }
 
-function activeTransactionFilter(): Prisma.TransactionWhereInput {
-  return { status: TransactionStatus.ACTIVE };
-}
-
 function auditReasonOrNull(reason: string | null | undefined) {
   const value = reason?.trim();
   return value ? value : null;
@@ -783,18 +752,16 @@ function assertActiveTransaction(transaction: { status: TransactionStatus }, act
 }
 
 async function voidTransactions(
-  db: Prisma.TransactionClient,
+  repository: PortfolioRepository,
   ids: string[],
   reason: string | null | undefined,
 ) {
   if (ids.length === 0) throw new PortfolioMutationError("No active transaction rows were found.");
-  const changed = await db.transaction.updateMany({
-    where: { id: { in: ids }, status: TransactionStatus.ACTIVE },
-    data: {
-      status: TransactionStatus.VOIDED,
-      statusChangedAt: new Date(),
-      statusReason: auditReasonOrNull(reason),
-    },
+  const changed = await repository.updateActiveTransactionStatus({
+    ids,
+    status: TransactionStatus.VOIDED,
+    changedAt: new Date(),
+    reason: auditReasonOrNull(reason),
   });
   if (changed.count !== ids.length) {
     throw new PortfolioMutationError("Only active transactions can be voided.");
@@ -802,18 +769,16 @@ async function voidTransactions(
 }
 
 async function replaceTransactions(
-  db: Prisma.TransactionClient,
+  repository: PortfolioRepository,
   ids: string[],
   reason: string | null | undefined,
 ) {
   if (ids.length === 0) throw new PortfolioMutationError("No active transaction rows were found.");
-  const changed = await db.transaction.updateMany({
-    where: { id: { in: ids }, status: TransactionStatus.ACTIVE },
-    data: {
-      status: TransactionStatus.REPLACED,
-      statusChangedAt: new Date(),
-      statusReason: auditReasonOrNull(reason),
-    },
+  const changed = await repository.updateActiveTransactionStatus({
+    ids,
+    status: TransactionStatus.REPLACED,
+    changedAt: new Date(),
+    reason: auditReasonOrNull(reason),
   });
   if (changed.count !== ids.length) {
     throw new PortfolioMutationError("Only active transactions can be corrected.");
@@ -821,29 +786,25 @@ async function replaceTransactions(
 }
 
 async function assertEnoughQuantityForSell({
-  db,
+  repository,
   accountId,
   assetId,
   quantity,
   executedAt,
   excludedGroupId,
 }: {
-  db: Prisma.TransactionClient;
+  repository: PortfolioRepository;
   accountId: string;
   assetId: string;
   quantity: string;
   executedAt: Date;
   excludedGroupId?: string;
 }) {
-  const transactions = await db.transaction.findMany({
-    where: {
-      ...activeTransactionFilter(),
-      accountId,
-      assetId,
-      executedAt: { lte: executedAt },
-      ...(excludedGroupId ? { OR: [{ transactionGroupId: null }, { transactionGroupId: { not: excludedGroupId } }] } : {}),
-    },
-    orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }],
+  const transactions = await repository.listActiveTransactionsThroughDate({
+    accountId,
+    assetId,
+    executedAt,
+    excludedGroupId,
   });
   const currentHolding = calculateHoldings(transactions).find(
     (holding) => holding.accountId === accountId && holding.assetId === assetId,
@@ -901,28 +862,20 @@ function normalizeTradeExecution(parsed: z.infer<typeof tradeMutationSchema>) {
 }
 
 async function requireGroup(
-  db: Prisma.TransactionClient,
+  repository: PortfolioRepository,
   groupId: string,
   kind: TransactionGroupKind,
 ) {
-  const group = await requireAnyActiveGroup(db, groupId);
+  const group = await requireAnyActiveGroup(repository, groupId);
   if (group.kind !== kind) throw new PortfolioMutationError(`${kind === TransactionGroupKind.TRADE ? "Trade" : "Transfer"} group was not found.`);
   return group;
 }
 
 async function requireAnyActiveGroup(
-  db: Prisma.TransactionClient,
+  repository: PortfolioRepository,
   groupId: string,
 ) {
-  const group = await db.transactionGroup.findUnique({
-    where: { id: groupId },
-    include: {
-      transactions: {
-        where: activeTransactionFilter(),
-        orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
-      },
-    },
-  });
+  const group = await repository.findTransactionGroup(groupId);
   if (!group) throw new PortfolioMutationError("Transaction group was not found.");
   if (group.transactions.length === 0) throw new PortfolioMutationError("Only active grouped operations can be changed.");
   if (group.transactions.length !== 2) throw new PortfolioMutationError("Transaction group is incomplete.");
@@ -930,50 +883,33 @@ async function requireAnyActiveGroup(
 }
 
 async function assertAffectedChronologies(
-  db: Prisma.TransactionClient,
+  repository: PortfolioRepository,
   affected: Array<{ accountId: string; assetId: string }>,
 ) {
   const keys = new Map(affected.map((item) => [`${item.accountId}:${item.assetId}`, item]));
   for (const { accountId, assetId } of keys.values()) {
-    const chronology = await db.transaction.findMany({
-      where: { ...activeTransactionFilter(), accountId, assetId },
-      orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }],
-    });
+    const chronology = await repository.listActiveChronology(accountId, assetId);
     assertNonNegativeChronology(chronology);
   }
 }
 
-function assertNonNegativeChronology(transactions: Array<{ type: TransactionType; quantity: Prisma.Decimal }>) {
+function assertNonNegativeChronology(transactions: Array<{ type: TransactionType; quantity: DecimalValue }>) {
   let quantity = ZERO;
   for (const transaction of transactions) {
     const decreases = transaction.type === TransactionType.SELL ||
       transaction.type === TransactionType.WITHDRAWAL ||
       transaction.type === TransactionType.TRANSFER_OUT;
-    quantity = decreases ? quantity.minus(transaction.quantity) : quantity.plus(transaction.quantity);
+    quantity = decreases
+      ? quantity.minus(transaction.quantity.toString())
+      : quantity.plus(transaction.quantity.toString());
     if (quantity.lessThan(ZERO)) {
       throw new PortfolioMutationError("This transaction is required by a later sale or withdrawal. Void or adjust the later transaction first.");
     }
   }
 }
 
-async function withSerializableRetry<T>(
-  db: PrismaClient,
-  operation: (transaction: Prisma.TransactionClient) => Promise<T>,
-) {
-  const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      return await db.$transaction(operation, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-    } catch (error) {
-      if (attempt < maxAttempts && isPrismaError(error, "P2034")) continue;
-      throw error;
-    }
-  }
-  throw new PortfolioMutationError("Transaction could not be saved due to a concurrent update. Please retry.");
-}
-
 function isPrismaError(error: unknown, code: string) {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === code;
+  return isPrismaErrorCode(error, code);
 }
 
 export function createPhysicalGoldInitialBalanceInput(input: {

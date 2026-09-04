@@ -1,10 +1,26 @@
 import { TransactionStatus, type Prisma, type PrismaClient } from "@prisma/client";
+import { AssetRepository } from "@/features/assets/repository";
 import { prisma } from "@/lib/db/client";
+import { runInSerializableTransaction } from "@/lib/db/transaction";
+import type { DbClient } from "@/lib/db/types";
 
 const activeTransactionWhere = { status: TransactionStatus.ACTIVE } satisfies Prisma.TransactionWhereInput;
 
 export class PortfolioRepository {
-  constructor(private readonly db: PrismaClient | Prisma.TransactionClient = prisma) {}
+  readonly assets: AssetRepository;
+
+  constructor(private readonly db: DbClient = prisma) {
+    this.assets = new AssetRepository(db);
+  }
+
+  async withSerializableTransaction<T>(operation: (repository: PortfolioRepository) => Promise<T>) {
+    if (typeof (this.db as PrismaClient).$transaction !== "function") {
+      throw new Error("A root Prisma client is required to start a transaction.");
+    }
+    return runInSerializableTransaction(this.db as PrismaClient, (transaction) => (
+      operation(new PortfolioRepository(transaction))
+    ));
+  }
 
   listAssets() {
     return this.db.asset.findMany({ orderBy: { symbol: "asc" } });
@@ -54,6 +70,77 @@ export class PortfolioRepository {
     return this.db.transaction.create({ data });
   }
 
+  createTransactions(data: Prisma.TransactionCreateManyInput[]) {
+    return this.db.transaction.createMany({ data });
+  }
+
+  createTransactionGroup(kind: Prisma.TransactionGroupCreateInput["kind"]) {
+    return this.db.transactionGroup.create({ data: { kind } });
+  }
+
+  findTransaction(id: string) {
+    return this.db.transaction.findUnique({ where: { id } });
+  }
+
+  findTransactionWithAsset(id: string) {
+    return this.db.transaction.findUnique({ where: { id }, include: { asset: true } });
+  }
+
+  findTransactionGroup(id: string) {
+    return this.db.transactionGroup.findUnique({
+      where: { id },
+      include: {
+        transactions: {
+          where: activeTransactionWhere,
+          orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+        },
+      },
+    });
+  }
+
+  listActiveTransactionsThroughDate(input: {
+    accountId: string;
+    assetId: string;
+    executedAt: Date;
+    excludedGroupId?: string;
+  }) {
+    return this.db.transaction.findMany({
+      where: {
+        ...activeTransactionWhere,
+        accountId: input.accountId,
+        assetId: input.assetId,
+        executedAt: { lte: input.executedAt },
+        ...(input.excludedGroupId
+          ? { OR: [{ transactionGroupId: null }, { transactionGroupId: { not: input.excludedGroupId } }] }
+          : {}),
+      },
+      orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }],
+    });
+  }
+
+  listActiveChronology(accountId: string, assetId: string) {
+    return this.db.transaction.findMany({
+      where: { ...activeTransactionWhere, accountId, assetId },
+      orderBy: [{ executedAt: "asc" }, { createdAt: "asc" }],
+    });
+  }
+
+  updateActiveTransactionStatus(input: {
+    ids: string[];
+    status: typeof TransactionStatus.VOIDED | typeof TransactionStatus.REPLACED;
+    reason: string | null;
+    changedAt: Date;
+  }) {
+    return this.db.transaction.updateMany({
+      where: { id: { in: input.ids }, status: TransactionStatus.ACTIVE },
+      data: {
+        status: input.status,
+        statusChangedAt: input.changedAt,
+        statusReason: input.reason,
+      },
+    });
+  }
+
   findTransactionForAudit(id: string) {
     return this.db.transaction.findUnique({
       where: { id },
@@ -93,5 +180,9 @@ export class PortfolioRepository {
 
   findAccount(id: string) {
     return this.db.account.findUnique({ where: { id }, include: { custodian: true } });
+  }
+
+  findCustodian(id: string) {
+    return this.db.custodian.findUnique({ where: { id }, select: { id: true } });
   }
 }

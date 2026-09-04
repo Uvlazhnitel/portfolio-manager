@@ -1,8 +1,11 @@
 import "server-only";
 
-import type { IntegrationProvider as PrismaIntegrationProvider, Prisma } from "@prisma/client";
 import { decryptIntegrationSecret, encryptIntegrationSecret, isIntegrationEncryptionConfigured } from "@/features/integrations/crypto";
-import { IntegrationSettingsRepository, type IntegrationSettingsStore } from "@/features/integrations/repository";
+import {
+  IntegrationSettingsRepository,
+  type IntegrationConfig,
+  type IntegrationSettingsStore,
+} from "@/features/integrations/repository";
 import { openAIModelSchema, saveIntegrationSettingSchema, type SaveIntegrationSettingInput } from "@/features/integrations/validation";
 import { IntegrationProvider, type IntegrationProvider as IntegrationProviderName } from "@/lib/domain/enums";
 
@@ -38,7 +41,7 @@ export class IntegrationSettingsService {
   ) {}
 
   async resolve(provider: IntegrationProviderName): Promise<RuntimeConfiguration> {
-    const record = await this.store.find(provider as PrismaIntegrationProvider);
+    const record = await this.store.find(provider);
     const model = provider === IntegrationProvider.OPENAI
       ? configuredModel(record?.config, this.environment.OPENAI_MODEL)
       : null;
@@ -102,15 +105,15 @@ export class IntegrationSettingsService {
     if (parsed.apiKey && !isIntegrationEncryptionConfigured(this.environment.APP_ENCRYPTION_KEY)) {
       throw new Error("APP_ENCRYPTION_KEY is not configured correctly on the server.");
     }
-    const existing = await this.store.find(parsed.provider as PrismaIntegrationProvider);
-    const config: Prisma.InputJsonObject = parsed.provider === IntegrationProvider.OPENAI
+    const existing = await this.store.find(parsed.provider);
+    const config: IntegrationConfig = parsed.provider === IntegrationProvider.OPENAI
       ? { model: parsed.model ?? configuredModel(existing?.config, this.environment.OPENAI_MODEL) }
       : {};
     const encryptedApiKey = parsed.apiKey
       ? encryptIntegrationSecret(parsed.apiKey, parsed.provider, this.environment.APP_ENCRYPTION_KEY)
       : undefined;
     return this.store.upsert({
-      provider: parsed.provider as PrismaIntegrationProvider,
+      provider: parsed.provider,
       encryptedApiKey,
       apiKeySuffix: parsed.apiKey ? suffix(parsed.apiKey) : undefined,
       config,
@@ -118,7 +121,7 @@ export class IntegrationSettingsService {
   }
 
   clearApiKey(provider: IntegrationProviderName) {
-    return this.store.clearApiKey(provider as PrismaIntegrationProvider);
+    return this.store.clearApiKey(provider);
   }
 
   encryptionAvailable() {
@@ -150,7 +153,7 @@ function environmentApiKey(provider: IntegrationProviderName, environment: Integ
   return environment.TWELVE_DATA_API_KEY?.trim();
 }
 
-function configuredModel(config: Prisma.JsonValue | undefined, environmentModel: string | undefined) {
+function configuredModel(config: unknown, environmentModel: string | undefined) {
   const stored = config && typeof config === "object" && !Array.isArray(config) && "model" in config
     ? (config as { model?: unknown }).model
     : undefined;

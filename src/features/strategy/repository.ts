@@ -1,5 +1,7 @@
 import { PortfolioRuleType, type AssetClass, type PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
+import { runInTransaction } from "@/lib/db/transaction";
+import type { DbClient } from "@/lib/db/types";
 
 const strategyInclude = {
   allocations: {
@@ -15,7 +17,16 @@ const strategyInclude = {
 } as const;
 
 export class StrategyRepository {
-  constructor(private readonly db: PrismaClient = prisma) {}
+  constructor(private readonly db: DbClient = prisma) {}
+
+  async withTransaction<T>(operation: (repository: StrategyRepository) => Promise<T>) {
+    if (typeof (this.db as PrismaClient).$transaction !== "function") {
+      throw new Error("A root Prisma client is required to start a transaction.");
+    }
+    return runInTransaction(this.db as PrismaClient, (transaction) => (
+      operation(new StrategyRepository(transaction))
+    ));
+  }
 
   findActiveStrategy() {
     return this.db.strategy.findFirst({
@@ -31,19 +42,16 @@ export class StrategyRepository {
     });
   }
 
-  async updateBenchmark(strategyId: string, benchmarkAssetId: string | null) {
-    return this.db.$transaction(async (transaction) => {
-      if (benchmarkAssetId) {
-        const asset = await transaction.asset.findUnique({ where: { id: benchmarkAssetId }, select: { id: true } });
-        if (!asset) throw new Error("Benchmark asset does not exist.");
-      }
-
-      return transaction.strategy.update({
-        where: { id: strategyId },
-        data: { benchmarkAssetId },
-        include: strategyInclude,
-      });
+  updateBenchmark(strategyId: string, benchmarkAssetId: string | null) {
+    return this.db.strategy.update({
+      where: { id: strategyId },
+      data: { benchmarkAssetId },
+      include: strategyInclude,
     });
+  }
+
+  findAssets(ids: string[]) {
+    return this.db.asset.findMany({ where: { id: { in: ids } } });
   }
 
   updateStrategy(input: {
@@ -70,28 +78,14 @@ export class StrategyRepository {
       custodianMaxPercent?: string;
     };
   }) {
-    return this.db.$transaction(async (transaction) => {
-      const strategy = await transaction.strategy.update({
+    return (async () => {
+      const strategy = await this.db.strategy.update({
         where: { id: input.id },
         data: { name: input.name },
       });
 
-      const requestedAssetIds = [...new Set(input.allocations.flatMap((allocation) => allocation.assetTargets.map((target) => target.assetId)))];
-      const assets = await transaction.asset.findMany({ where: { id: { in: requestedAssetIds } } });
-      const assetById = new Map(assets.map((asset) => [asset.id, asset]));
-
       for (const allocation of input.allocations) {
-        for (const assetTarget of allocation.assetTargets) {
-          const asset = assetById.get(assetTarget.assetId);
-          if (!asset) {
-            throw new Error(`${allocation.assetClass} asset target references an unknown asset.`);
-          }
-          if (asset.assetClass !== allocation.assetClass) {
-            throw new Error(`${asset.symbol} must match parent ${allocation.assetClass} allocation.`);
-          }
-        }
-
-        const savedAllocation = await transaction.strategyAllocation.upsert({
+        const savedAllocation = await this.db.strategyAllocation.upsert({
           where: {
             strategyId_assetClass: {
               strategyId: strategy.id,
@@ -112,7 +106,7 @@ export class StrategyRepository {
           },
         });
 
-        await transaction.strategyAssetAllocation.deleteMany({
+        await this.db.strategyAssetAllocation.deleteMany({
           where: allocation.assetTargets.length === 0
             ? { strategyAllocationId: savedAllocation.id }
             : {
@@ -122,7 +116,7 @@ export class StrategyRepository {
         });
 
         for (const assetTarget of allocation.assetTargets) {
-          await transaction.strategyAssetAllocation.upsert({
+          await this.db.strategyAssetAllocation.upsert({
             where: {
               strategyAllocationId_assetId: {
                 strategyAllocationId: savedAllocation.id,
@@ -139,7 +133,7 @@ export class StrategyRepository {
         }
       }
 
-      await transaction.strategyAllocation.deleteMany({
+      await this.db.strategyAllocation.deleteMany({
         where: {
           strategyId: strategy.id,
           assetClass: { notIn: input.allocations.map((allocation) => allocation.assetClass) },
@@ -162,14 +156,14 @@ export class StrategyRepository {
       ];
 
       for (const rule of booleanRules) {
-        await transaction.portfolioRule.upsert({
+        await this.db.portfolioRule.upsert({
           where: { strategyId_type: { strategyId: strategy.id, type: rule.type } },
           update: { enabled: rule.enabled },
           create: { strategyId: strategy.id, type: rule.type, enabled: rule.enabled, config: {} },
         });
       }
 
-      await transaction.portfolioRule.upsert({
+      await this.db.portfolioRule.upsert({
         where: {
           strategyId_type: {
             strategyId: strategy.id,
@@ -192,21 +186,47 @@ export class StrategyRepository {
         { type: PortfolioRuleType.SINGLE_ASSET_MAX_ALLOCATION, enabled: input.rules.singleAssetLimitEnabled ?? false, maxPercent: input.rules.singleAssetMaxPercent ?? "100" },
         { type: PortfolioRuleType.CUSTODIAN_MAX_ALLOCATION, enabled: input.rules.custodianLimitEnabled ?? false, maxPercent: input.rules.custodianMaxPercent ?? "100" },
       ]) {
-        await transaction.portfolioRule.upsert({
+        await this.db.portfolioRule.upsert({
           where: { strategyId_type: { strategyId: strategy.id, type: rule.type } },
           update: { enabled: rule.enabled, config: { maxPercent: rule.maxPercent } },
           create: { strategyId: strategy.id, type: rule.type, enabled: rule.enabled, config: { maxPercent: rule.maxPercent } },
         });
       }
 
-      await transaction.portfolioRule.deleteMany({
+      await this.db.portfolioRule.deleteMany({
         where: { strategyId: strategy.id, type: PortfolioRuleType.CRYPTO_MAX_ALLOCATION },
       });
 
-      return transaction.strategy.findUniqueOrThrow({
+      return this.db.strategy.findUniqueOrThrow({
         where: { id: strategy.id },
         include: strategyInclude,
       });
-    });
+    })();
+  }
+
+  getAssetTargetBackfillSnapshot() {
+    return Promise.all([
+      this.db.strategy.findMany({
+        include: { allocations: { include: { assetAllocations: true } } },
+      }),
+      this.db.asset.findMany(),
+      this.db.transaction.findMany(),
+      this.db.cachedMarketPrice.findMany(),
+      this.db.manualMarketPrice.findMany(),
+    ]).then(([strategies, assets, transactions, cachedPrices, manualPrices]) => ({
+      strategies,
+      assets,
+      transactions,
+      cachedPrices,
+      manualPrices,
+    }));
+  }
+
+  createAssetTargets(input: Array<{
+    strategyAllocationId: string;
+    assetId: string;
+    targetPercent: string;
+  }>) {
+    return this.db.strategyAssetAllocation.createMany({ data: input, skipDuplicates: true });
   }
 }

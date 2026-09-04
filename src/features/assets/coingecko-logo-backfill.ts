@@ -1,6 +1,6 @@
-import { type Prisma, type PrismaClient } from "@prisma/client";
+import { type Prisma } from "@prisma/client";
+import { AssetRepository } from "@/features/assets/repository";
 import { resolveCoinGeckoApiKey } from "@/features/integrations/service";
-import { prisma } from "@/lib/db/client";
 
 type FetchLike = typeof fetch;
 type ApiKeyResolver = () => Promise<string | undefined>;
@@ -19,19 +19,15 @@ type CoinGeckoMarketCoin = {
 };
 
 export async function backfillCoinGeckoLogos({
-  db = prisma,
+  repository = new AssetRepository(),
   fetcher = fetch,
   apiKey = resolveCoinGeckoApiKey,
 }: {
-  db?: PrismaClient | Prisma.TransactionClient;
+  repository?: AssetRepository;
   fetcher?: FetchLike;
   apiKey?: string | ApiKeyResolver | undefined;
 } = {}): Promise<BackfillCoinGeckoLogosResult> {
-  const assets = await db.asset.findMany({
-    where: { externalId: { not: null } },
-    select: { id: true, symbol: true, externalId: true, metadata: true },
-    orderBy: { symbol: "asc" },
-  });
+  const assets = await repository.listWithExternalId();
   const candidates = assets.filter((asset) => !imageUrlFromMetadata(asset.metadata));
   const result: BackfillCoinGeckoLogosResult = {
     scanned: assets.length,
@@ -52,10 +48,7 @@ export async function backfillCoinGeckoLogos({
       continue;
     }
 
-    await db.asset.update({
-      where: { id: asset.id },
-      data: { metadata: metadataWithImageUrl(asset.metadata, imageUrl) },
-    });
+    await repository.updateMetadata(asset.id, metadataWithImageUrl(asset.metadata, imageUrl));
     result.updated += 1;
   }
 

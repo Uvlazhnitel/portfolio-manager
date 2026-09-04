@@ -1,12 +1,13 @@
 import { Prisma } from "@prisma/client";
 
 export type SerializedDecimal = string;
+export type DecimalValue = { toString(): string };
 
-export function serializeDecimal(value: Prisma.Decimal): SerializedDecimal {
+export function serializeDecimal(value: DecimalValue): SerializedDecimal {
   return value.toString();
 }
 
-export function serializeNullableDecimal(value: Prisma.Decimal | null): SerializedDecimal | null {
+export function serializeNullableDecimal(value: DecimalValue | null): SerializedDecimal | null {
   return value ? serializeDecimal(value) : null;
 }
 

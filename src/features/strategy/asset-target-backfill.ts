@@ -1,26 +1,13 @@
-import { AssetType, type Prisma, type PrismaClient } from "@prisma/client";
+import { AssetType, type Prisma } from "@prisma/client";
 import { calculatePortfolio } from "@/features/portfolio-engine";
 import { ZERO, decimal, toDecimalString } from "@/features/portfolio-engine/decimal";
+import { StrategyRepository } from "@/features/strategy/repository";
 
-type DbClient = PrismaClient | Prisma.TransactionClient;
-
-export async function backfillStrategyAssetAllocations(db: DbClient) {
-  const strategies = await db.strategy.findMany({
-    include: {
-      allocations: {
-        include: { assetAllocations: true },
-      },
-    },
-  });
+export async function backfillStrategyAssetAllocations(repository: StrategyRepository) {
+  const { strategies, assets, transactions, cachedPrices, manualPrices } =
+    await repository.getAssetTargetBackfillSnapshot();
 
   if (strategies.length === 0) return;
-
-  const [assets, transactions, cachedPrices, manualPrices] = await Promise.all([
-    db.asset.findMany(),
-    db.transaction.findMany(),
-    db.cachedMarketPrice.findMany(),
-    db.manualMarketPrice.findMany(),
-  ]);
 
   for (const strategy of strategies) {
     const marketPrices = new Map<string, Prisma.Decimal>();
@@ -61,14 +48,13 @@ export async function backfillStrategyAssetAllocations(db: DbClient) {
         ? percentageTargetsFromWeights(valuedAssets.map((item) => ({ assetId: item.asset.id, weight: item.value })))
         : evenPercentageTargets(classAssets.map((asset) => asset.id));
 
-      await db.strategyAssetAllocation.createMany({
-        data: targets.map((target) => ({
+      await repository.createAssetTargets(
+        targets.map((target) => ({
           strategyAllocationId: allocation.id,
           assetId: target.assetId,
           targetPercent: target.targetPercent,
         })),
-        skipDuplicates: true,
-      });
+      );
     }
   }
 }

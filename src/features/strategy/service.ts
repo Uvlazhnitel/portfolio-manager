@@ -1,4 +1,3 @@
-import type { Prisma } from "@prisma/client";
 import {
   validateStrategyAllocations,
   validateUpdateStrategyInput,
@@ -43,19 +42,43 @@ export class StrategyService {
 
   async updateStrategy(input: UpdateStrategyInput) {
     const parsed = validateUpdateStrategyInput(input);
-    return await this.repository.updateStrategy(parsed);
+    return this.repository.withTransaction(async (repository) => {
+      const requestedAssetIds = [...new Set(
+        parsed.allocations.flatMap((allocation) => allocation.assetTargets.map((target) => target.assetId)),
+      )];
+      const assets = await repository.findAssets(requestedAssetIds);
+      const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+
+      for (const allocation of parsed.allocations) {
+        for (const assetTarget of allocation.assetTargets) {
+          const asset = assetById.get(assetTarget.assetId);
+          if (!asset) throw new Error(`${allocation.assetClass} asset target references an unknown asset.`);
+          if (asset.assetClass !== allocation.assetClass) {
+            throw new Error(`${asset.symbol} must match parent ${allocation.assetClass} allocation.`);
+          }
+        }
+      }
+
+      return repository.updateStrategy(parsed);
+    });
   }
 
-  updateBenchmark(strategyId: string, benchmarkAssetId: string | null) {
+  async updateBenchmark(strategyId: string, benchmarkAssetId: string | null) {
     if (!strategyId.trim()) throw new Error("Strategy is required.");
-    return this.repository.updateBenchmark(strategyId, benchmarkAssetId?.trim() || null);
+    const normalizedAssetId = benchmarkAssetId?.trim() || null;
+    return this.repository.withTransaction(async (repository) => {
+      if (normalizedAssetId && (await repository.findAssets([normalizedAssetId])).length === 0) {
+        throw new Error("Benchmark asset does not exist.");
+      }
+      return repository.updateBenchmark(strategyId, normalizedAssetId);
+    });
   }
 }
 
 export function serializeStrategyAllocation(allocation: {
-  targetPercent: Prisma.Decimal;
-  minPercent: Prisma.Decimal;
-  maxPercent: Prisma.Decimal;
+  targetPercent: { toString(): string };
+  minPercent: { toString(): string };
+  maxPercent: { toString(): string };
 }) {
   return {
     ...allocation,

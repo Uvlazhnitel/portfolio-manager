@@ -1,4 +1,4 @@
-import { AssetType, type Prisma } from "@prisma/client";
+import { AssetType } from "@prisma/client";
 import {
   calculateAssetNetCostBasis,
   calculateHoldingCostBasis,
@@ -18,7 +18,7 @@ import { ContributionPlanRepository } from "@/features/contributions/repository"
 import { PortfolioRepository } from "@/features/portfolio/repository";
 import { riskThresholdsFromRules } from "@/features/risk/config";
 import { StrategyRepository } from "@/features/strategy/repository";
-import { serializeDecimal, serializeNullableDecimal } from "@/lib/db/decimal";
+import { serializeDecimal, serializeNullableDecimal, type DecimalValue } from "@/lib/db/decimal";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
 import {
   formatPhysicalGoldQuantity,
@@ -491,8 +491,8 @@ function serializeOperationLeg(transaction: TransactionWithRelations): Portfolio
   };
 }
 
-function displayUnitPrice(value: Prisma.Decimal | string, isPhysicalGold: boolean) {
-  return isPhysicalGold ? pricePerTroyOunce(value) : decimal(value);
+function displayUnitPrice(value: DecimalValue | string, isPhysicalGold: boolean) {
+  return isPhysicalGold ? pricePerTroyOunce(value.toString()) : decimal(value.toString());
 }
 
 export function holdingKey(accountId: string, assetId: string) {

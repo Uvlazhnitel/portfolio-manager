@@ -6,8 +6,31 @@ import { z } from "zod";
 import { publicErrorMessage } from "@/lib/public-error";
 
 const sourceRoot = path.join(process.cwd(), "src");
+const featureRoot = path.join(sourceRoot, "features");
 
 describe("server and client security boundaries", () => {
+  it("keeps direct database clients out of feature orchestration", () => {
+    const offenders = sourceFiles(featureRoot).flatMap((file) => (
+      persistenceBoundaryViolations(file, readFileSync(file, "utf8"))
+    ));
+    expect(offenders).toEqual([]);
+  });
+
+  it("allows Prisma in repositories but rejects client access from orchestration modules", () => {
+    expect(persistenceBoundaryViolations(
+      path.join(featureRoot, "portfolio", "repository.ts"),
+      'import type { PrismaClient } from "@prisma/client";\nimport { prisma } from "@/lib/db/client";',
+    )).toEqual([]);
+    expect(persistenceBoundaryViolations(
+      path.join(featureRoot, "portfolio", "mutations.ts"),
+      'import type { PrismaClient } from "@prisma/client";\nimport { prisma } from "@/lib/db/client";\ndb.asset.findUnique({ where: { id } });',
+    )).toEqual([
+      "src/features/portfolio/mutations.ts:1",
+      "src/features/portfolio/mutations.ts:2",
+      "src/features/portfolio/mutations.ts:3",
+    ]);
+  });
+
   it("does not import Prisma runtime from client components", () => {
     const offenders = sourceFiles(sourceRoot).filter((file) => {
       const content = readFileSync(file, "utf8");
@@ -91,4 +114,47 @@ function sourceFiles(directory: string): string[] {
 
 function hasModifier(node: ts.Node, modifier: ts.SyntaxKind) {
   return ts.canHaveModifiers(node) && Boolean(ts.getModifiers(node)?.some((item) => item.kind === modifier));
+}
+
+function persistenceBoundaryViolations(file: string, content: string) {
+  if (file.endsWith(`${path.sep}repository.ts`)) return [];
+  const relativeFile = path.relative(process.cwd(), file);
+  const sourceFile = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true);
+
+  const importViolations = sourceFile.statements.flatMap((statement) => {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) return [];
+    const moduleName = statement.moduleSpecifier.text;
+    const importsDbClient = moduleName === "@/lib/db/client";
+    const importsPrismaClient = moduleName === "@prisma/client"
+      && statement.importClause?.namedBindings
+      && ts.isNamedImports(statement.importClause.namedBindings)
+      && statement.importClause.namedBindings.elements.some((element) => element.name.text === "PrismaClient");
+    if (!importsDbClient && !importsPrismaClient) return [];
+
+    const line = sourceFile.getLineAndCharacterOfPosition(statement.getStart(sourceFile)).line + 1;
+    return [`${relativeFile}:${line}`];
+  });
+  const queryViolations: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const operation = node.expression.name.text;
+      const modelAccess = node.expression.expression;
+      if (
+        /^(?:find|create|update|delete|upsert|count|aggregate|groupBy)/.test(operation)
+        && ts.isPropertyAccessExpression(modelAccess)
+        && ts.isIdentifier(modelAccess.expression)
+        && ["prisma", "db", "transaction"].includes(modelAccess.expression.text)
+      ) {
+        const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+        queryViolations.push(`${relativeFile}:${line}`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  const transactionClientViolations = content.split("\n").flatMap((line, index) => (
+    /\bPrisma\s*\.\s*TransactionClient\b/.test(line) ? [`${relativeFile}:${index + 1}`] : []
+  ));
+  return [...new Set([...importViolations, ...transactionClientViolations, ...queryViolations])];
 }

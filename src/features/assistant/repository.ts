@@ -1,8 +1,10 @@
 import { AssistantMessageRole, AssistantMessageStatus, type PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
+import { runInTransaction } from "@/lib/db/transaction";
+import type { DbClient } from "@/lib/db/types";
 
 export class AssistantRepository {
-  constructor(private readonly db: PrismaClient = prisma) {}
+  constructor(private readonly db: DbClient = prisma) {}
 
   listConversations(limit = 10) {
     return this.db.assistantConversation.findMany({
@@ -38,7 +40,7 @@ export class AssistantRepository {
   }
 
   async createConversationWithPendingMessage(title: string, content: string) {
-    return this.db.$transaction(async (transaction) => {
+    return this.runAtomically(async (transaction) => {
       const conversation = await transaction.assistantConversation.create({ data: { title } });
       const message = await transaction.assistantMessage.create({
         data: { conversationId: conversation.id, role: AssistantMessageRole.USER, status: AssistantMessageStatus.PENDING, content },
@@ -69,7 +71,7 @@ export class AssistantRepository {
   }
 
   completeTurn(conversationId: string, userMessageId: string, content: string) {
-    return this.db.$transaction(async (transaction) => {
+    return this.runAtomically(async (transaction) => {
       const completed = await transaction.assistantMessage.updateMany({
         where: { id: userMessageId, conversationId, role: AssistantMessageRole.USER, status: AssistantMessageStatus.PENDING },
         data: { status: AssistantMessageStatus.COMPLETED },
@@ -85,6 +87,12 @@ export class AssistantRepository {
 
   deleteConversation(id: string) {
     return this.db.assistantConversation.delete({ where: { id } });
+  }
+
+  private runAtomically<T>(operation: (db: DbClient) => Promise<T>) {
+    return typeof (this.db as PrismaClient).$transaction === "function"
+      ? runInTransaction(this.db as PrismaClient, operation)
+      : operation(this.db);
   }
 
 }

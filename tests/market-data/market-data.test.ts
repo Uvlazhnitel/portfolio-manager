@@ -11,6 +11,7 @@ import {
 } from "@/features/market-data/gold";
 import { BaseCurrencyMarketDataProvider } from "@/features/market-data/providers/base-currency";
 import { CoinGeckoMarketDataProvider } from "@/features/market-data/providers/coingecko";
+import { FrankfurterMarketDataProvider } from "@/features/market-data/providers/frankfurter";
 import { ManualMarketDataProvider, normalizeManualPrice } from "@/features/market-data/providers/manual";
 import { AlphaVantageMarketDataProvider } from "@/features/market-data/providers/alpha-vantage";
 import { TwelveDataMarketDataProvider } from "@/features/market-data/providers/twelve-data";
@@ -21,6 +22,7 @@ import {
   MarketDataService,
   resetMarketDataRuntimeCacheForTests,
   shouldRefreshAlphaVantageCache,
+  shouldRefreshFrankfurterCache,
 } from "@/features/market-data/service";
 import type { MarketDataAsset, MarketDataProvider, MarketPrice } from "@/features/market-data/types";
 
@@ -73,6 +75,17 @@ const alphaVwce: MarketDataAsset = {
   ...vwce,
   quoteProvider: AssetQuoteProvider.ALPHA_VANTAGE,
   quoteSymbol: "VWCE.DEX",
+};
+const eur: MarketDataAsset = {
+  id: "eur-id",
+  symbol: "EUR",
+  name: "Euro",
+  assetType: AssetType.FIAT,
+  currency: "EUR",
+  externalId: null,
+  quoteProvider: null,
+  quoteSymbol: null,
+  quoteMicCode: null,
 };
 
 beforeEach(() => resetMarketDataRuntimeCacheForTests());
@@ -284,6 +297,60 @@ describe("market data providers", () => {
     expect(prices).toEqual([expect.objectContaining({ assetId: "usd-id", price: "1", source: "BASE_CURRENCY" })]);
   });
 
+  it("prices fiat assets in the portfolio base currency and deduplicates FX pairs", async () => {
+    const requestedUrls: URL[] = [];
+    const fetcher = vi.fn(async (input: URL | RequestInfo) => {
+      requestedUrls.push(new URL(String(input)));
+      return new Response(JSON.stringify({ date: "2026-08-24", base: "EUR", quote: "USD", rate: 1.17 }));
+    });
+    const provider = new FrankfurterMarketDataProvider(fetcher as typeof fetch);
+    const secondEuroBalance = { ...eur, id: "eur-second-id" };
+    const usd = { ...eur, id: "usd-id", symbol: "USD", currency: "USD" };
+    const usdt = { ...eur, id: "usdt-id", symbol: "USDT", currency: "USDT", assetType: AssetType.STABLECOIN };
+
+    const prices = await provider.getCurrentPrices({ assets: [eur, secondEuroBalance, usd, usdt], baseCurrency: "USD" });
+
+    expect(requestedUrls.map((url) => url.pathname)).toEqual(["/v2/rate/EUR/USD"]);
+    expect(prices).toEqual([
+      expect.objectContaining({ assetId: eur.id, price: "1.17", currency: "USD", source: "FRANKFURTER" }),
+      expect.objectContaining({ assetId: secondEuroBalance.id, price: "1.17", currency: "USD", source: "FRANKFURTER" }),
+    ]);
+    expect(prices[0].timestamp).toEqual(new Date("2026-08-24T00:00:00.000Z"));
+  });
+
+  it("supports the reverse fiat direction", async () => {
+    const usd = { ...eur, id: "usd-id", symbol: "USD", currency: "USD" };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      date: "2026-08-24",
+      base: "USD",
+      quote: "EUR",
+      rate: 0.8547,
+    })));
+
+    await expect(new FrankfurterMarketDataProvider(fetcher as typeof fetch).getCurrentPrices({
+      assets: [usd],
+      baseCurrency: "EUR",
+    })).resolves.toEqual([
+      expect.objectContaining({ assetId: usd.id, price: "0.8547", currency: "EUR" }),
+    ]);
+  });
+
+  it("rejects failed, malformed, and mismatched Frankfurter responses", async () => {
+    const failed = new FrankfurterMarketDataProvider(vi.fn(async () => new Response("unavailable", { status: 503 })) as typeof fetch);
+    await expect(failed.getCurrentPrices({ assets: [eur], baseCurrency: "USD" })).rejects.toThrow("status 503");
+
+    const malformed = new FrankfurterMarketDataProvider(vi.fn(async () => new Response(JSON.stringify({ rate: "1.17" }))) as typeof fetch);
+    await expect(malformed.getCurrentPrices({ assets: [eur], baseCurrency: "USD" })).rejects.toThrow();
+
+    const mismatched = new FrankfurterMarketDataProvider(vi.fn(async () => new Response(JSON.stringify({
+      date: "2026-08-24",
+      base: "GBP",
+      quote: "USD",
+      rate: 1.3,
+    }))) as typeof fetch);
+    await expect(mismatched.getCurrentPrices({ assets: [eur], baseCurrency: "USD" })).rejects.toThrow("different FX pair");
+  });
+
   it("rejects incompatible manual units", () => {
     expect(() => normalizeManualPrice(AssetType.ETF, "100", MarketPriceUnit.TROY_OUNCE)).toThrow("per asset unit");
     expect(() => normalizeManualPrice(AssetType.PHYSICAL_GOLD, "100", MarketPriceUnit.ASSET_UNIT)).toThrow("per gram or troy ounce");
@@ -311,6 +378,67 @@ describe("market data providers", () => {
 });
 
 describe("market data cache service", () => {
+  it("caches a fiat rate for the UTC day and refreshes it when forced", async () => {
+    const store = new FakeStore([]);
+    const provider: MarketDataProvider = {
+      name: "FRANKFURTER",
+      getCurrentPrices: vi.fn(async () => [{
+        assetId: eur.id,
+        symbol: eur.symbol,
+        price: "1.17",
+        currency: "USD",
+        timestamp: new Date("2026-08-24T00:00:00.000Z"),
+        source: "FRANKFURTER",
+      }]),
+    };
+    const service = new MarketDataService(store, [provider]);
+
+    const first = await service.getCurrentPrices({ assets: [eur], baseCurrency: "USD", now });
+    const cached = await service.getCurrentPrices({
+      assets: [eur],
+      baseCurrency: "USD",
+      now: new Date("2026-08-24T22:00:00.000Z"),
+    });
+    await service.getCurrentPrices({
+      assets: [eur],
+      baseCurrency: "USD",
+      now: new Date("2026-08-24T23:00:00.000Z"),
+      forceRefresh: true,
+    });
+
+    expect(first.prices).toEqual([expect.objectContaining({ assetId: eur.id, price: "1.17", isStale: false })]);
+    expect(cached.prices).toEqual([expect.objectContaining({ assetId: eur.id, isStale: false })]);
+    expect(provider.getCurrentPrices).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to a manual fiat rate when Frankfurter is unavailable", async () => {
+    const store = new FakeStore([]);
+    const failure: MarketDataProvider = {
+      name: "FRANKFURTER",
+      getCurrentPrices: vi.fn(async () => { throw new Error("Unavailable"); }),
+    };
+    const manual: MarketDataProvider = {
+      name: "MANUAL",
+      getCurrentPrices: vi.fn(async () => [{
+        assetId: eur.id,
+        symbol: eur.symbol,
+        price: "1.16",
+        currency: "USD",
+        timestamp: now,
+        source: "MANUAL",
+      }]),
+    };
+
+    const snapshot = await new MarketDataService(store, [failure, manual]).getCurrentPrices({
+      assets: [eur],
+      baseCurrency: "USD",
+      now,
+    });
+
+    expect(snapshot.prices).toEqual([expect.objectContaining({ assetId: eur.id, price: "1.16", source: "MANUAL" })]);
+    expect(snapshot.warning).toContain("FRANKFURTER");
+  });
+
   it("uses fresh persisted cache without calling a provider", async () => {
     const store = new FakeStore([cachedPrice({ fetchedAt: new Date(now.getTime() - 1_000), timestamp: now })]);
     const provider = providerReturning([]);
@@ -463,6 +591,14 @@ describe("market data cache service", () => {
     expect(shouldRefreshAlphaVantageCache(morningCache, new Date("2026-08-24T22:00:00.000Z"))).toBe(true);
     expect(shouldRefreshAlphaVantageCache(eveningCache, new Date("2026-08-24T23:55:00.000Z"))).toBe(false);
     expect(shouldRefreshAlphaVantageCache(eveningCache, new Date("2026-08-24T23:55:00.000Z"), true)).toBe(true);
+  });
+
+  it("refreshes Frankfurter cache once per UTC day unless forced", () => {
+    const cache = cachedPrice({ source: "FRANKFURTER", fetchedAt: now, assetId: eur.id, price: "1.17" });
+    expect(shouldRefreshFrankfurterCache(undefined, now)).toBe(true);
+    expect(shouldRefreshFrankfurterCache(cache, new Date("2026-08-24T23:59:59.000Z"))).toBe(false);
+    expect(shouldRefreshFrankfurterCache(cache, new Date("2026-08-25T00:00:00.000Z"))).toBe(true);
+    expect(shouldRefreshFrankfurterCache(cache, now, true)).toBe(true);
   });
 
   it("keeps the latest Alpha trading-day close fresh after a successful weekend check", async () => {

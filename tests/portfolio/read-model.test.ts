@@ -108,8 +108,8 @@ describe("priced portfolio read models", () => {
     const empty = await testDb.prisma.account.findUniqueOrThrow({ where: { name: "Empty" } });
     const btc = await testDb.prisma.asset.findUniqueOrThrow({ where: { symbol: "BTC" } });
     const eur = await testDb.prisma.asset.findUniqueOrThrow({ where: { symbol: "EUR" } });
-    await createTransferMutation({ assetId: btc.id, fromAccountId: main.id, toAccountId: empty.id, quantity: "0.1", currency: "EUR", executedAt: new Date("2026-08-06") }, testDb.prisma);
-    await createTradeMutation({ sourceAccountId: main.id, sourceAssetId: btc.id, sourceQuantity: "0.1", sourceTotalAmount: "5000", destinationAccountId: empty.id, destinationAssetId: eur.id, destinationQuantity: "5000", fee: "1", currency: "EUR", executedAt: new Date("2026-08-07") }, testDb.prisma);
+    await createTransferMutation({ assetId: btc.id, fromAccountId: main.id, toAccountId: empty.id, quantity: "0.1", currency: "EUR", executedAt: new Date("2026-08-06") }, new PortfolioRepository(testDb.prisma));
+    await createTradeMutation({ sourceAccountId: main.id, sourceAssetId: btc.id, sourceQuantity: "0.1", sourceTotalAmount: "5000", destinationAccountId: empty.id, destinationAssetId: eur.id, destinationQuantity: "5000", fee: "1", currency: "EUR", executedAt: new Date("2026-08-07") }, new PortfolioRepository(testDb.prisma));
     const groups = await testDb.prisma.transactionGroup.findMany({ where: { transactions: { some: { accountId: main.id, executedAt: { gte: new Date("2026-08-06") } } } } });
     try {
       resetMarketDataRuntimeCacheForTests();
@@ -124,7 +124,7 @@ describe("priced portfolio read models", () => {
       expect(grouped.map((row) => row.operationKind).sort()).toEqual(["TRADE", "TRANSFER"]);
       expect(grouped.every((row) => row.destination)).toBe(true);
     } finally {
-      for (const group of groups.reverse()) await deleteTransactionGroupMutation(group.id, testDb.prisma);
+      for (const group of groups.reverse()) await deleteTransactionGroupMutation(group.id, new PortfolioRepository(testDb.prisma));
     }
   });
 

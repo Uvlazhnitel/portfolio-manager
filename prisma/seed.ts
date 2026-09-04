@@ -10,6 +10,7 @@ import {
 import { PrismaPg } from "@prisma/adapter-pg";
 import { validateStrategyAllocations } from "../src/features/strategy/validation";
 import { backfillStrategyAssetAllocations } from "../src/features/strategy/asset-target-backfill";
+import { StrategyRepository } from "../src/features/strategy/repository";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -230,7 +231,7 @@ async function main() {
     });
   }
 
-  await backfillStrategyAssetAllocations(prisma);
+  await backfillStrategyAssetAllocations(new StrategyRepository(prisma));
 }
 
 function metadataImageUrl(metadata: unknown) {

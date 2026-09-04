@@ -14,6 +14,74 @@ const allocations = [
 ];
 
 describe("portfolio home read model edge states", () => {
+  it("fully values an EUR cash holding when the USD FX quote is available", async () => {
+    const now = new Date("2026-09-05T08:00:00Z");
+    const account = { id: "account", name: "Bybit", type: AccountType.EXCHANGE, description: null, custodianId: null, custodian: null, createdAt: now, updatedAt: now };
+    const eur = {
+      id: "eur",
+      symbol: "EUR",
+      name: "Euro",
+      assetClass: AssetClass.CASH,
+      assetType: AssetType.FIAT,
+      currency: "EUR",
+      externalId: null,
+      quoteProvider: null,
+      quoteSymbol: null,
+      quoteMicCode: null,
+      metadata: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const transaction = {
+      id: "eur-trade-leg",
+      assetId: eur.id,
+      accountId: account.id,
+      groupId: null,
+      transactionGroupId: null,
+      type: TransactionType.BUY,
+      basisMethod: null,
+      quantity: new Prisma.Decimal("100"),
+      pricePerUnit: new Prisma.Decimal("1.16"),
+      fee: null,
+      currency: "USD",
+      executedAt: now,
+      note: null,
+      createdAt: now,
+      updatedAt: now,
+      asset: eur,
+      account,
+      transactionGroup: null,
+    };
+
+    const portfolio = await getPortfolioReadModel({
+      repository: fakePortfolio([eur], [account], [transaction]),
+      strategyRepository: fakeStrategy("USD"),
+      contributionPlanRepository: fakePlan(),
+      marketDataService: fakeMarketData([{
+        assetId: eur.id,
+        symbol: eur.symbol,
+        price: "1.17",
+        currency: "USD",
+        timestamp: now,
+        fetchedAt: now,
+        source: "FRANKFURTER",
+        isStale: false,
+      }]),
+    });
+
+    expect(portfolio.valuation).toEqual(expect.objectContaining({
+      totalValue: "117.00",
+      isPartial: false,
+      missingPriceSymbols: [],
+    }));
+    expect(portfolio.holdings[0]).toEqual(expect.objectContaining({
+      symbol: "EUR",
+      currentPrice: "1.17",
+      currentValue: "117.00",
+      portfolioWeight: "100.00",
+    }));
+  });
+
   it("preserves partial account value without allocation, risk, or contribution decisions", async () => {
     const now = new Date("2026-08-25T08:00:00Z");
     const account = { id: "account", name: "Mixed", type: AccountType.OTHER, description: null, custodianId: null, custodian: null, createdAt: now, updatedAt: now };
@@ -133,13 +201,13 @@ function fakePortfolio(assets: unknown[], accounts: unknown[], transactions: unk
   } as unknown as PortfolioRepository;
 }
 
-function fakeStrategy() {
+function fakeStrategy(baseCurrency = "EUR") {
   return {
     findActiveStrategy: async () => ({
       id: "strategy",
       name: "Test strategy",
       objective: "Growth",
-      baseCurrency: "EUR",
+      baseCurrency,
       createdAt: new Date(),
       updatedAt: new Date(),
       allocations: allocations.map((allocation, index) => ({ id: `allocation-${index}`, strategyId: "strategy", ...allocation, assetAllocations: [] })),

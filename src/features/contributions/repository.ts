@@ -1,8 +1,9 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
+import type { DbClient } from "@/lib/db/types";
 
 export class ContributionPlanRepository {
-  constructor(private readonly db: PrismaClient = prisma) {}
+  constructor(private readonly db: DbClient = prisma) {}
 
   findByStrategyId(strategyId: string) {
     return this.db.contributionPlan.findUnique({ where: { strategyId } });
@@ -12,13 +13,13 @@ export class ContributionPlanRepository {
     strategyId: string;
     contributionAmount: string;
     currency: string;
-    allocations: Prisma.InputJsonValue;
+    allocations: Array<{ assetClass: string; amount: string }>;
     isCustomized: boolean;
   }) {
     const data = {
       contributionAmount: input.contributionAmount,
       currency: input.currency,
-      allocations: input.allocations,
+      allocations: input.allocations as Prisma.InputJsonValue,
       isCustomized: input.isCustomized,
     };
     return this.db.contributionPlan.upsert({

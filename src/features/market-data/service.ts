@@ -6,6 +6,10 @@ import {
   PHYSICAL_GOLD_MARKET_SOURCE,
 } from "@/features/market-data/providers/coingecko";
 import { ManualMarketDataProvider } from "@/features/market-data/providers/manual";
+import {
+  FrankfurterMarketDataProvider,
+  FRANKFURTER_MARKET_SOURCE,
+} from "@/features/market-data/providers/frankfurter";
 import { AlphaVantageMarketDataProvider } from "@/features/market-data/providers/alpha-vantage";
 import { TwelveDataMarketDataProvider } from "@/features/market-data/providers/twelve-data";
 import { goldPricePerGram } from "@/features/market-data/gold";
@@ -42,6 +46,7 @@ export class MarketDataService {
     this.providers = providers ?? [
       new BaseCurrencyMarketDataProvider(),
       new CoinGeckoMarketDataProvider(),
+      new FrankfurterMarketDataProvider(),
       new AlphaVantageMarketDataProvider(),
       new TwelveDataMarketDataProvider(),
       new ManualMarketDataProvider(async (currency) => {
@@ -72,6 +77,9 @@ export class MarketDataService {
       const cached = cacheByAsset.get(asset.id);
       if (asset.quoteProvider === AssetQuoteProvider.ALPHA_VANTAGE) {
         return shouldRefreshAlphaVantageCache(cached, now, Boolean(input.forceRefresh));
+      }
+      if (cached?.source === FRANKFURTER_MARKET_SOURCE) {
+        return shouldRefreshFrankfurterCache(cached, now, Boolean(input.forceRefresh));
       }
       if (!cached) return true;
       if (input.forceRefresh) return true;
@@ -201,6 +209,11 @@ export function shouldRefreshAlphaVantageCache(cached: CachedPriceRecord | undef
     && cached.fetchedAt.getUTCHours() < ALPHA_VANTAGE_EOD_REFRESH_UTC_HOUR;
 }
 
+export function shouldRefreshFrankfurterCache(cached: CachedPriceRecord | undefined, now: Date, forceRefresh = false) {
+  if (!cached || forceRefresh) return true;
+  return !isSameUtcDay(cached.fetchedAt, now);
+}
+
 function buildSnapshot(
   assets: MarketDataAsset[],
   cachedPrices: CachedPriceRecord[],
@@ -256,7 +269,7 @@ function buildSnapshot(
 function isCachedPriceStale(cached: CachedPriceRecord, now: Date) {
   const source = cached.source.toUpperCase();
 
-  if (source === "ALPHA_VANTAGE") {
+  if (source === "ALPHA_VANTAGE" || source === FRANKFURTER_MARKET_SOURCE) {
     return !isSameUtcDay(cached.fetchedAt, now);
   }
 

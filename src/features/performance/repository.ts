@@ -1,5 +1,6 @@
 import type { DailyMarketPrice, PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
+import type { DbClient } from "@/lib/db/types";
 
 export type DailyPriceWrite = {
   assetId: string;
@@ -18,13 +19,12 @@ export interface DailyMarketPriceStore {
 }
 
 export class DailyMarketPriceRepository implements DailyMarketPriceStore {
-  constructor(private readonly db: PrismaClient = prisma) {}
+  constructor(private readonly db: DbClient = prisma) {}
 
   async saveDailyPrices(prices: DailyPriceWrite[]) {
     if (prices.length === 0) return;
 
-    await this.db.$transaction(
-      prices.map((price) => this.db.dailyMarketPrice.upsert({
+    const save = (price: DailyPriceWrite) => this.db.dailyMarketPrice.upsert({
         where: {
           assetId_currency_date: {
             assetId: price.assetId,
@@ -40,8 +40,12 @@ export class DailyMarketPriceRepository implements DailyMarketPriceStore {
           isStaleAtCapture: price.isStaleAtCapture,
         },
         create: price,
-      })),
-    );
+      });
+    if (typeof (this.db as PrismaClient).$transaction === "function") {
+      await (this.db as PrismaClient).$transaction(prices.map(save));
+      return;
+    }
+    for (const price of prices) await save(price);
   }
 
   listDailyPrices(currency: string) {

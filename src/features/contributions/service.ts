@@ -1,4 +1,4 @@
-import { AssetClass, type Prisma } from "@prisma/client";
+import { AssetClass } from "@/lib/domain/enums";
 import { ContributionPlanRepository } from "@/features/contributions/repository";
 import { parseSaveInput, validateContributionAllocations, type SaveContributionPlanInput } from "@/features/contributions/validation";
 import { StrategyRepository } from "@/features/strategy/repository";
@@ -32,7 +32,7 @@ export class ContributionPlanService {
       strategyId: parsed.strategyId,
       contributionAmount: parsed.contributionAmount,
       currency: parsed.currency,
-      allocations: allocations as Prisma.InputJsonValue,
+      allocations,
       isCustomized: parsed.isCustomized,
     });
   }

@@ -1,4 +1,4 @@
-import { AssetClass, type Prisma } from "@prisma/client";
+import { AssetClass } from "@/lib/domain/enums";
 import {
   buildContributionProjection,
   projectCustomContribution,
@@ -10,7 +10,7 @@ import {
 import { serializeDecimal } from "@/lib/db/decimal";
 
 export type SavedContributionPlanInput = {
-  contributionAmount: Prisma.Decimal;
+  contributionAmount: { toString(): string };
   allocations: unknown;
   isCustomized: boolean;
 };

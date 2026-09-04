@@ -1,4 +1,3 @@
-import type { Transaction } from "@prisma/client";
 import { calculateHoldings } from "@/features/portfolio-engine";
 import { PortfolioRepository } from "@/features/portfolio/repository";
 import { serializeDecimal, serializeNullableDecimal } from "@/lib/db/decimal";
@@ -8,6 +7,8 @@ export type DerivedHolding = {
   accountId: string;
   quantity: string;
 };
+
+type PortfolioTransactionRecord = Awaited<ReturnType<PortfolioRepository["listTransactions"]>>[number];
 
 export class PortfolioService {
   constructor(private readonly repository = new PortfolioRepository()) {}
@@ -26,11 +27,11 @@ export class PortfolioService {
   }
 }
 
-export function deriveHoldingsFromTransactions(transactions: Transaction[]): DerivedHolding[] {
+export function deriveHoldingsFromTransactions(transactions: PortfolioTransactionRecord[]): DerivedHolding[] {
   return calculateHoldings(transactions);
 }
 
-export function serializeTransaction(transaction: Transaction) {
+export function serializeTransaction(transaction: PortfolioTransactionRecord) {
   return {
     ...transaction,
     quantity: serializeDecimal(transaction.quantity),

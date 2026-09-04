@@ -1,6 +1,7 @@
 import { AssetClass, AssetType, MarketPriceUnit } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { saveManualMarketPriceMutation } from "@/features/market-data/mutations";
+import { MarketDataRepository } from "@/features/market-data/repository";
 import { createTestDatabase, type TestDatabase } from "../helpers/test-db";
 
 let testDb: TestDatabase;
@@ -30,7 +31,7 @@ describe("manual market price mutation", () => {
       price: "3110.34768",
       currency: "EUR",
       unit: MarketPriceUnit.TROY_OUNCE,
-    }, testDb.prisma);
+    }, new MarketDataRepository(testDb.prisma));
 
     const manual = await testDb.prisma.manualMarketPrice.findFirstOrThrow({ where: { assetId: gold.id } });
     const cached = await testDb.prisma.cachedMarketPrice.findFirstOrThrow({ where: { assetId: gold.id } });
@@ -50,13 +51,13 @@ describe("manual market price mutation", () => {
       price: "0",
       currency: "EUR",
       unit: MarketPriceUnit.ASSET_UNIT,
-    }, testDb.prisma)).rejects.toThrow();
+    }, new MarketDataRepository(testDb.prisma))).rejects.toThrow();
 
     await expect(saveManualMarketPriceMutation({
       assetId: etf.id,
       price: "100",
       currency: "EUR",
       unit: MarketPriceUnit.GRAM,
-    }, testDb.prisma)).rejects.toThrow("per asset unit");
+    }, new MarketDataRepository(testDb.prisma))).rejects.toThrow("per asset unit");
   });
 });

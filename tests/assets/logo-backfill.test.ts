@@ -1,6 +1,7 @@
 import { AssetClass, AssetType } from "@prisma/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backfillCoinGeckoLogos } from "@/features/assets/coingecko-logo-backfill";
+import { AssetRepository } from "@/features/assets/repository";
 import type { MarketDataService } from "@/features/market-data/service";
 import { getPortfolioReadModel } from "@/features/portfolio/read-model";
 import { PortfolioRepository } from "@/features/portfolio/repository";
@@ -43,7 +44,7 @@ describe("CoinGecko logo backfill", () => {
       { id: "ethereum", image: "https://coin-images.coingecko.com/coins/images/279/large/ethereum.png" },
     ])));
 
-    const result = await backfillCoinGeckoLogos({ db: testDb.prisma, fetcher, apiKey: "" });
+    const result = await backfillCoinGeckoLogos({ repository: new AssetRepository(testDb.prisma), fetcher, apiKey: "" });
 
     expect(result).toEqual({ scanned: 2, updated: 1, skipped: 1, missing: [], warnings: [] });
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -70,7 +71,7 @@ describe("CoinGecko logo backfill", () => {
       { id: "tether-gold", image: "https://coin-images.coingecko.com/coins/images/10481/large/tether-gold.png" },
     ])));
 
-    const result = await backfillCoinGeckoLogos({ db: testDb.prisma, fetcher, apiKey: "" });
+    const result = await backfillCoinGeckoLogos({ repository: new AssetRepository(testDb.prisma), fetcher, apiKey: "" });
     const portfolio = await getPortfolioReadModel({
       repository: new PortfolioRepository(testDb.prisma),
       strategyRepository: new StrategyRepository(testDb.prisma),
