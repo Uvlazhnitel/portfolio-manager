@@ -354,14 +354,18 @@ describe("assistant portfolio context and tools", () => {
     expect(classOnly.assetRecommendations).toEqual([]);
   });
 
-  it("passes Daily Brief, Risk, Performance, partial, and stale states through authoritative tools", async () => {
+  it("passes Portfolio Review signals, Risk, Performance, partial, and stale states through authoritative tools", async () => {
     const services = deterministicToolServices();
-    const daily = await executeAssistantTool("get_daily_brief", "{}", runtime, services) as unknown as { status: string; dailyGain: string; reasonCodes: string[]; dataQuality: { isStale: boolean } };
+    const daily = await executeAssistantTool("get_daily_brief", "{}", runtime, services) as unknown as { state: string; signals: Array<{ lifecycle: string; primaryCause: { type: string } }>; dataQuality: { state: string; stale: boolean } };
     const risk = await executeAssistantTool("get_risk_snapshot", "{}", runtime, services) as unknown as { risk: { state: string }; dataQuality: { state: string } };
     const performance = await executeAssistantTool("get_performance_summary", "{}", runtime, services) as unknown as { metrics: { xirr: { unavailableReason: string }; periodPnl: { "1D": { amount: string } } }; dataQuality: { isPartial: boolean; staleDates: number } };
 
-    expect(daily).toEqual(expect.objectContaining({ status: "NO_ACTION", dailyGain: "12.34", reasonCodes: ["NO_MEANINGFUL_STRATEGY_CHANGE"] }));
-    expect(daily.dataQuality.isStale).toBe(true);
+    expect(daily).toEqual(expect.objectContaining({ state: "WATCH" }));
+    expect(daily.signals[0]).toEqual(expect.objectContaining({
+      lifecycle: "ONGOING",
+      primaryCause: expect.objectContaining({ type: "DATA_PRICE_UPDATE" }),
+    }));
+    expect(daily.dataQuality).toEqual(expect.objectContaining({ state: "STALE", stale: true }));
     expect(risk.risk).toBe(runtime.context.risk);
     expect(risk.dataQuality.state).toBe("PARTIAL");
     expect(performance.metrics.xirr.unavailableReason).toBe("XIRR_PERIOD_TOO_SHORT");
@@ -462,30 +466,19 @@ function deterministicToolServices(): AssistantToolServices {
     getDailyBrief: async () => ({
       currency: "EUR",
       lastUpdated: "2026-08-02T12:00:00.000Z",
-      marketDataWarning: "Stale prices present.",
-      brief: {
-        status: "NO_ACTION",
-        summary: "No meaningful strategy change.",
-        reasonCodes: ["NO_MEANINGFUL_STRATEGY_CHANGE"],
-        currentDate: "2026-08-02",
-        previousDate: "2026-08-01",
-        currentValue: "1012.34",
-        previousValue: "1000.00",
-        portfolioValueChange: "12.34",
-        dailyGain: "12.34",
-        dailyReturnPercent: "1.23",
-        externalContributions: "0.00",
-        externalWithdrawals: "0.00",
-        unavailableReason: null,
-        isStale: true,
-        missingPriceSymbols: [],
-        positiveContributors: [],
-        negativeContributors: [],
-        allocationChanges: [],
-        newViolations: [],
-        resolvedViolations: [],
-        currentViolations: [],
-        risk: runtime.context.risk,
+      review: {
+        state: "WATCH",
+        summary: "Price observations should be watched.",
+        period: { kind: "PREVIOUS_DAILY_OBSERVATION", previousAsOf: "2026-08-01T23:59:59.999Z", currentAsOf: "2026-08-02T12:00:00.000Z" },
+        signals: [{
+          id: "DATA_QUALITY:STALE_PRICES", category: "DATA_QUALITY", state: "WATCH", lifecycle: "ONGOING",
+          title: "Price observations are stale", subject: { kind: "MARKET_DATA", id: "STALE_PRICES", name: "Portfolio data" }, value: null,
+          primaryCause: { type: "DATA_PRICE_UPDATE", description: "Recorded price freshness changed.", subject: null, impact: null },
+          causes: [{ type: "DATA_PRICE_UPDATE", description: "Recorded price freshness changed.", subject: null, impact: null }],
+          affectedRule: null, evidence: [{ label: "Data", value: "Stale" }], reviewPosture: "Treat the comparison as provisional.",
+          dataQuality: { state: "STALE", reasons: ["STALE_CURRENT_PRICES"] },
+        }],
+        dataQuality: { state: "STALE", reasons: ["STALE_CURRENT_PRICES"], missingPriceSymbols: [], stale: true, messages: ["At least one current price is stale."] },
       },
     }),
     getPerformance: async () => ({

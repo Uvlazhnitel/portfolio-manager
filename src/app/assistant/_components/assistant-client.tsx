@@ -185,7 +185,7 @@ function ErrorNotice({ message }: { message: string }) { return <div className="
 function toolLabel(name: string) {
   if (name === "simulate_scenario") return "Running the deterministic scenario…";
   if (name === "explain_contribution_plan") return "Running the contribution planner…";
-  if (name === "get_daily_brief") return "Reading the daily brief…";
+  if (name === "get_daily_brief") return "Reading the portfolio review…";
   if (name === "get_risk_snapshot") return "Reading the risk snapshot…";
   if (name === "get_performance_summary") return "Reading performance calculations…";
   if (name === "get_strategy") return "Reading your strategy…";

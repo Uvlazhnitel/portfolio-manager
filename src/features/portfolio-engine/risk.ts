@@ -38,7 +38,16 @@ export function calculatePortfolioRisk(input: CalculatePortfolioRiskInput): Port
     if (metric.state !== "WARNING" || !metric.valuePercent || !metric.limitPercent) return [];
     const code = metric.reasonCodes.find((reason) => reason.endsWith("LIMIT_EXCEEDED"));
     if (!code) return [];
-    return [{ code, metric: ["largestAsset", "largestCustodian"][index], currentPercent: metric.valuePercent, limitPercent: metric.limitPercent, excessPercent: toDecimalString(decimal(metric.valuePercent).minus(metric.limitPercent)) }];
+    if (!metric.subjectId || !metric.subjectName) return [];
+    return [{
+      code,
+      metric: ["largestAsset", "largestCustodian"][index],
+      subjectId: metric.subjectId,
+      subjectName: metric.subjectName,
+      currentPercent: metric.valuePercent,
+      limitPercent: metric.limitPercent,
+      excessPercent: toDecimalString(decimal(metric.valuePercent).minus(metric.limitPercent)),
+    }];
   });
   const strategyViolations = input.strategy && baseState === "OK" ? evaluateStrategyCompliance(input.portfolio, input.strategy) : [];
   const exposures = (values: Map<string, ReturnType<typeof decimal>>): RiskExposure[] => [...values].sort(([a], [b]) => a.localeCompare(b)).map(([category, value]) => baseState === "OK" ? { category, valuePercent: toDecimalString(value.div(total).mul(ONE_HUNDRED)), state: "OK", reasonCodes: input.hasStalePrices ? ["STALE_PRICE_DATA"] : [] } : { category, valuePercent: null, state: baseState, reasonCodes: [...baseReasons] });

@@ -12,7 +12,7 @@ import { explainContributionPlanToolSchema, simulateScenarioToolSchema } from "@
 export const assistantToolDefinitions: Responses.Tool[] = [
   tool("get_portfolio_summary", "Return deterministic current portfolio value, allocation, price coverage, holdings, accounts, and strategy violations. Use it for current portfolio facts."),
   tool("get_strategy", "Return the saved long-term strategy, allocation targets, ranges, and portfolio rules."),
-  tool("get_daily_brief", "Return the existing deterministic Daily Brief. Use it for questions about what changed since the previous complete daily observation."),
+  tool("get_daily_brief", "Return the deterministic Portfolio Review signals. Use it for what changed, why it matters, and whether a configured rule needs review."),
   tool("get_risk_snapshot", "Return the shared deterministic Risk Engine snapshot. Use it for every portfolio risk, concentration, custody, or crypto exposure question."),
   tool("get_performance_summary", "Return deterministic Performance metrics and compact benchmark results. Use it for P&L, cashflow-adjusted return, XIRR, YTD, 1Y, drawdown, or benchmark questions."),
   {
@@ -205,14 +205,7 @@ function compactDailyBrief(model: Awaited<ReturnType<AssistantToolServices["getD
   return {
     currency: model.currency,
     lastUpdated: model.lastUpdated,
-    marketDataWarning: model.marketDataWarning,
-    ...model.brief,
-    dataQuality: {
-      unavailableReason: model.brief.unavailableReason,
-      isStale: model.brief.isStale,
-      missingPriceSymbols: model.brief.missingPriceSymbols,
-      riskState: model.brief.risk.state,
-    },
+    ...model.review,
   };
 }
 
