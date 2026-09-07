@@ -26,6 +26,17 @@ export function formatDecimalPercent(value: string, places = 2) {
   return `${negative ? "−" : ""}${grouped}${places > 0 ? `.${fraction}` : ""}%`;
 }
 
+export function formatDecimalQuantity(value: string, places = 2) {
+  const fixed = normalizeFixedDecimal(value, places);
+  if (!fixed) return "—";
+  if (isPositiveBelowDisplayThreshold(value, places)) {
+    return `<${decimalThreshold(places)}`;
+  }
+  const { negative, whole, fraction } = splitFixed(fixed);
+  const grouped = new Intl.NumberFormat("en-IE", { maximumFractionDigits: 0 }).format(BigInt(whole));
+  return `${negative ? "−" : ""}${grouped}${places > 0 ? `.${fraction}` : ""}`;
+}
+
 export function decimalSign(value: string) {
   const fixed = normalizeFixedDecimal(value, 8);
   if (!fixed) return null;
@@ -54,4 +65,17 @@ function splitFixed(value: string) {
   const negative = value.startsWith("-");
   const [whole, fraction = ""] = (negative ? value.slice(1) : value).split(".");
   return { negative, whole, fraction };
+}
+
+function isPositiveBelowDisplayThreshold(value: string, places: number) {
+  if (places <= 0) return false;
+  const match = value.trim().match(/^(-)?(\d+)(?:\.(\d+))?$/);
+  if (!match || match[1]) return false;
+  const whole = match[2] ?? "0";
+  const fraction = match[3] ?? "";
+  return /^0+$/.test(whole) && /[1-9]/.test(fraction) && /^0+$/.test(fraction.slice(0, places).padEnd(places, "0"));
+}
+
+function decimalThreshold(places: number) {
+  return `0.${"0".repeat(places - 1)}1`;
 }

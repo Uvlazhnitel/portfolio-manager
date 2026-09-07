@@ -163,7 +163,7 @@ describe("priced portfolio read models", () => {
       portfolioWeight: "98.04",
     }));
     expect(gold).toEqual(expect.objectContaining({
-      quantityLabel: "0.3215 oz",
+      quantityLabel: "0.32 oz",
       currentPrice: "3110.35",
       displayPriceUnit: "troy oz",
       averageAcquisitionPrice: "2488.278144",

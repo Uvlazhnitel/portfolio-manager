@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decimalSign, formatDecimalCurrency, formatDecimalPercent } from "@/lib/format/decimal";
+import { decimalSign, formatDecimalCurrency, formatDecimalPercent, formatDecimalQuantity } from "@/lib/format/decimal";
 import { formatUtcDate, formatUtcTimestamp } from "@/lib/format/date";
 
 describe("Decimal-safe presentation", () => {
@@ -17,6 +17,15 @@ describe("Decimal-safe presentation", () => {
   it("returns a dash for malformed values", () => {
     expect(formatDecimalCurrency("NaN", "EUR")).toBe("—");
     expect(formatDecimalPercent("Infinity")).toBe("—");
+  });
+
+  it("formats holding quantities with two decimals without losing decimal precision", () => {
+    expect(formatDecimalQuantity("221.05614")).toBe("221.06");
+    expect(formatDecimalQuantity("999.999")).toBe("1,000.00");
+    expect(formatDecimalQuantity("9007199254740993.014")).toBe("9,007,199,254,740,993.01");
+    expect(formatDecimalQuantity("0")).toBe("0.00");
+    expect(formatDecimalQuantity("0.00534045")).toBe("<0.01");
+    expect(formatDecimalQuantity("NaN")).toBe("—");
   });
 });
 
