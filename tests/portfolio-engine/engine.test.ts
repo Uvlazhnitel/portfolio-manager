@@ -966,6 +966,28 @@ describe("portfolio engine asset net cost basis", () => {
     );
   });
 
+  it("treats the quantity difference in a grouped transfer as an asset fee", () => {
+    const group = { id: "transfer-fee", kind: TransactionGroupKind.TRANSFER };
+    const transactions: EngineTransaction[] = [
+      { assetId: "btc", accountId: "bybit", type: TransactionType.BUY, quantity: "1", pricePerUnit: "100", currency: "EUR" },
+      { assetId: "btc", accountId: "bybit", type: TransactionType.TRANSFER_OUT, quantity: "0.41", currency: "EUR", transactionGroupId: group.id, transactionGroup: group },
+      { assetId: "btc", accountId: "ledger", type: TransactionType.TRANSFER_IN, quantity: "0.4", currency: "EUR", transactionGroupId: group.id, transactionGroup: group },
+    ];
+    const portfolio = calculatePortfolio({ assets, transactions, marketPrices: prices });
+    const basis = calculateHoldingCostBasis({ portfolio, assets, transactions, baseCurrency: "EUR" });
+
+    expect(portfolio.holdings).toEqual(expect.arrayContaining([
+      { accountId: "bybit", assetId: "btc", quantity: "0.59" },
+      { accountId: "ledger", assetId: "btc", quantity: "0.4" },
+    ]));
+    expect(basis).toEqual(expect.arrayContaining([
+      expect.objectContaining({ accountId: "ledger", assetId: "btc", status: "AVAILABLE", totalCost: "40.00" }),
+    ]));
+    expect(calculateAssetNetCostBasis({ portfolio, assets, transactions, baseCurrency: "EUR" })).toContainEqual(
+      expect.objectContaining({ assetId: "btc", status: "AVAILABLE", netCost: "100.00" }),
+    );
+  });
+
   it("uses durable group identity when carrying transfer cost between accounts", () => {
     const grouped = (id: string) => ({ id, kind: TransactionGroupKind.TRANSFER });
     const transactions: EngineTransaction[] = [

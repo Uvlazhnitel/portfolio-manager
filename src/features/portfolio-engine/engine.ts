@@ -1483,15 +1483,28 @@ function calculateAssetInvestmentFlow(
 ) {
   let netInvested = ZERO;
   let transferQuantity = ZERO;
+  const groupedTransfers = new Map<string, { incoming: Prisma.Decimal; outgoing: Prisma.Decimal }>();
 
   for (const transaction of transactions) {
     const quantity = decimal(transaction.quantity);
     if (transaction.type === TransactionType.TRANSFER_IN) {
-      transferQuantity = transferQuantity.plus(quantity);
+      if (transaction.transactionGroupId && transaction.transactionGroup?.kind === TransactionGroupKind.TRANSFER) {
+        const grouped = groupedTransfers.get(transaction.transactionGroupId) ?? { incoming: ZERO, outgoing: ZERO };
+        grouped.incoming = grouped.incoming.plus(quantity);
+        groupedTransfers.set(transaction.transactionGroupId, grouped);
+      } else {
+        transferQuantity = transferQuantity.plus(quantity);
+      }
       continue;
     }
     if (transaction.type === TransactionType.TRANSFER_OUT) {
-      transferQuantity = transferQuantity.minus(quantity);
+      if (transaction.transactionGroupId && transaction.transactionGroup?.kind === TransactionGroupKind.TRANSFER) {
+        const grouped = groupedTransfers.get(transaction.transactionGroupId) ?? { incoming: ZERO, outgoing: ZERO };
+        grouped.outgoing = grouped.outgoing.plus(quantity);
+        groupedTransfers.set(transaction.transactionGroupId, grouped);
+      } else {
+        transferQuantity = transferQuantity.minus(quantity);
+      }
       continue;
     }
 
@@ -1504,7 +1517,10 @@ function calculateAssetInvestmentFlow(
     }
   }
 
-  return transferQuantity.equals(ZERO) ? netInvested : null;
+  const groupedTransfersAreValid = [...groupedTransfers.values()].every(({ incoming, outgoing }) =>
+    incoming.greaterThan(ZERO) && outgoing.greaterThanOrEqualTo(incoming),
+  );
+  return transferQuantity.equals(ZERO) && groupedTransfersAreValid ? netInvested : null;
 }
 
 export function calculateTransactionCashValue(

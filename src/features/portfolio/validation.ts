@@ -22,6 +22,7 @@ const moneyDecimalStringSchema = decimalInputSchema({ integerDigits: 20, decimal
 export const positiveDecimalStringSchema = quantityDecimalStringSchema.refine((value) => new Prisma.Decimal(value).greaterThan(0), {
   message: "Must be greater than 0.",
 });
+export const nonNegativeQuantityStringSchema = quantityDecimalStringSchema;
 
 export const nonNegativeDecimalStringSchema = moneyDecimalStringSchema;
 export const positiveMarketPriceStringSchema = moneyDecimalStringSchema.refine(

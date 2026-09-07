@@ -17,6 +17,7 @@ import {
   assetQuoteLinkSchema,
   assetInputSchema,
   nonNegativeDecimalStringSchema,
+  nonNegativeQuantityStringSchema,
   positiveDecimalStringSchema,
   positiveMarketPriceStringSchema,
 } from "@/features/portfolio/validation";
@@ -91,6 +92,7 @@ export const transferMutationSchema = z.object({
   toAccountId: z.string().min(1),
   quantity: positiveDecimalStringSchema.optional(),
   physicalGoldWeightTroyOunces: positiveDecimalStringSchema.optional(),
+  feeQuantity: nonNegativeQuantityStringSchema.optional(),
   currency: z.string().trim().min(3).max(12).default(DEFAULT_BASE_CURRENCY).transform((value) => value.toUpperCase()),
   executedAt: z.coerce.date(),
   note: z.string().trim().optional(),
@@ -246,7 +248,7 @@ export async function createTransferMutation(
       repository,
       accountId: fromAccount.id,
       assetId: asset.id,
-      quantity: normalized.quantity,
+      quantity: normalized.outgoingQuantity,
       executedAt: parsed.executedAt,
     });
 
@@ -257,7 +259,7 @@ export async function createTransferMutation(
           assetId: asset.id,
           accountId: fromAccount.id,
           type: TransactionType.TRANSFER_OUT,
-          quantity: normalized.quantity,
+          quantity: normalized.outgoingQuantity,
           pricePerUnit: null,
           fee: null,
           currency: parsed.currency,
@@ -269,7 +271,7 @@ export async function createTransferMutation(
           assetId: asset.id,
           accountId: toAccount.id,
           type: TransactionType.TRANSFER_IN,
-          quantity: normalized.quantity,
+          quantity: normalized.incomingQuantity,
           pricePerUnit: null,
           fee: null,
           currency: parsed.currency,
@@ -286,8 +288,8 @@ export async function createTransferMutation(
       fromAccountName: fromAccount.name,
       toAccountName: toAccount.name,
       quantityLabel: asset.assetType === AssetType.PHYSICAL_GOLD
-        ? formatPhysicalGoldQuantity(normalized.quantity)
-        : `${normalized.quantity} ${asset.symbol}`,
+        ? formatPhysicalGoldQuantity(normalized.incomingQuantity)
+        : `${normalized.incomingQuantity} ${asset.symbol}`,
     };
   });
 
@@ -430,18 +432,19 @@ export async function updateTransferMutation(
       repository,
       accountId: fromAccount.id,
       assetId: asset.id,
-      quantity: normalized.quantity,
+      quantity: normalized.outgoingQuantity,
       executedAt: parsed.executedAt,
       excludedGroupId: group.id,
     });
     const outgoing = group.transactions.find((leg) => leg.type === TransactionType.TRANSFER_OUT);
     const incoming = group.transactions.find((leg) => leg.type === TransactionType.TRANSFER_IN);
     if (!outgoing || !incoming) throw new PortfolioMutationError("Transfer group is incomplete.");
-    const shared = { assetId: asset.id, quantity: normalized.quantity, currency: parsed.currency, executedAt: parsed.executedAt, note: parsed.note || null };
+    const shared = { assetId: asset.id, currency: parsed.currency, executedAt: parsed.executedAt, note: parsed.note || null };
     const replacementGroup = await repository.createTransactionGroup(TransactionGroupKind.TRANSFER);
     await repository.createTransactions([
       {
         ...shared,
+        quantity: normalized.outgoingQuantity,
         transactionGroupId: replacementGroup.id,
         accountId: fromAccount.id,
         type: TransactionType.TRANSFER_OUT,
@@ -451,6 +454,7 @@ export async function updateTransferMutation(
       },
       {
         ...shared,
+        quantity: normalized.incomingQuantity,
         transactionGroupId: replacementGroup.id,
         accountId: toAccount.id,
         type: TransactionType.TRANSFER_IN,
@@ -733,10 +737,18 @@ function normalizeTransfer(parsed: z.infer<typeof transferMutationSchema>, asset
     throw new PortfolioMutationError(isPhysicalGold ? "Weight in troy ounces is required." : "Quantity is required.");
   }
 
+  const incomingQuantity = isPhysicalGold
+    ? troyOuncesToGrams(inputQuantity).toDecimalPlaces(18)
+    : decimal(inputQuantity);
+  const feeQuantity = parsed.feeQuantity
+    ? isPhysicalGold
+      ? troyOuncesToGrams(parsed.feeQuantity).toDecimalPlaces(18)
+      : decimal(parsed.feeQuantity)
+    : ZERO;
+
   return {
-    quantity: isPhysicalGold
-      ? troyOuncesToGrams(inputQuantity).toDecimalPlaces(18).toString()
-      : inputQuantity,
+    incomingQuantity: incomingQuantity.toString(),
+    outgoingQuantity: incomingQuantity.plus(feeQuantity).toDecimalPlaces(18).toString(),
   };
 }
 

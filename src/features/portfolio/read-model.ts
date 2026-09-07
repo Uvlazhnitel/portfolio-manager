@@ -74,6 +74,9 @@ export type PortfolioTransactionRow = {
   displayPricePerUnit: string | null;
   displayPriceUnit: "unit" | "troy oz";
   fee: string | null;
+  feeQuantity: string | null;
+  inputFeeQuantity: string | null;
+  feeQuantityLabel: string | null;
   currency: string;
   executedAt: string;
   note: string | null;
@@ -437,6 +440,9 @@ export function serializeTransactionRow(transaction: TransactionWithRelations): 
       : null,
     displayPriceUnit: isPhysicalGold ? "troy oz" : "unit",
     fee: serializeNullableDecimal(transaction.fee),
+    feeQuantity: null,
+    inputFeeQuantity: null,
+    feeQuantityLabel: null,
     currency: transaction.currency,
     executedAt: transaction.executedAt.toISOString(),
     note: transaction.note,
@@ -463,16 +469,34 @@ function buildTransactionRows(transactions: TransactionWithRelations[]): Portfol
       rows.push(...legs.map(serializeTransactionRow));
       continue;
     }
+    const sourceRow = serializeTransactionRow(source);
+    const transferFee = transaction.transactionGroup.kind === "TRANSFER"
+      ? serializeTransferFee(source, destination)
+      : null;
     rows.push({
-      ...serializeTransactionRow(source),
+      ...sourceRow,
       id: transaction.transactionGroupId,
       type: transaction.transactionGroup.kind,
       operationKind: transaction.transactionGroup.kind,
       fee: serializeNullableDecimal(destination.fee),
+      feeQuantity: transferFee?.quantity ?? null,
+      inputFeeQuantity: transferFee?.inputQuantity ?? null,
+      feeQuantityLabel: transferFee?.quantityLabel ?? null,
       destination: serializeOperationLeg(destination),
     });
   }
   return rows;
+}
+
+function serializeTransferFee(source: TransactionWithRelations, destination: TransactionWithRelations) {
+  const quantity = decimal(source.quantity).minus(destination.quantity);
+  if (!quantity.greaterThan(ZERO)) return null;
+  const isPhysicalGold = source.asset.assetType === AssetType.PHYSICAL_GOLD;
+  return {
+    quantity: quantity.toString(),
+    inputQuantity: isPhysicalGold ? gramsToTroyOunces(quantity).toString() : quantity.toString(),
+    quantityLabel: isPhysicalGold ? formatPhysicalGoldQuantity(quantity) : `${quantity.toString()} ${source.asset.symbol}`,
+  };
 }
 
 function serializeOperationLeg(transaction: TransactionWithRelations): PortfolioOperationLeg {
