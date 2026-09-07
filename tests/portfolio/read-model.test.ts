@@ -151,6 +151,7 @@ describe("priced portfolio read models", () => {
     expect(model.valuation.isPartial).toBe(false);
     expect(model.strategyStatus?.totalCount).toBe(4);
     expect(btc).toEqual(expect.objectContaining({
+      quantityLabel: "1",
       currentPrice: "50000.00",
       displayPriceUnit: "unit",
       currentValue: "50000.00",

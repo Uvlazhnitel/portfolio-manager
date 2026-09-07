@@ -37,6 +37,12 @@ export function formatDecimalQuantity(value: string, places = 2) {
   return `${negative ? "−" : ""}${grouped}${places > 0 ? `.${fraction}` : ""}`;
 }
 
+export function formatCompactDecimalQuantity(value: string, places = 8) {
+  const formatted = formatDecimalQuantity(value, places);
+  if (formatted === "—" || formatted.startsWith("<")) return formatted;
+  return formatted.replace(/\.0+$/, "").replace(/(\.\d*?[1-9])0+$/, "$1");
+}
+
 export function decimalSign(value: string) {
   const fixed = normalizeFixedDecimal(value, 8);
   if (!fixed) return null;

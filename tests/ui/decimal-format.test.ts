@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decimalSign, formatDecimalCurrency, formatDecimalPercent, formatDecimalQuantity } from "@/lib/format/decimal";
+import { decimalSign, formatCompactDecimalQuantity, formatDecimalCurrency, formatDecimalPercent, formatDecimalQuantity } from "@/lib/format/decimal";
 import { formatUtcDate, formatUtcTimestamp } from "@/lib/format/date";
 
 describe("Decimal-safe presentation", () => {
@@ -26,6 +26,14 @@ describe("Decimal-safe presentation", () => {
     expect(formatDecimalQuantity("0")).toBe("0.00");
     expect(formatDecimalQuantity("0.00534045")).toBe("<0.01");
     expect(formatDecimalQuantity("NaN")).toBe("—");
+  });
+
+  it("formats crypto quantities compactly with up to eight decimals", () => {
+    expect(formatCompactDecimalQuantity("0.00534045")).toBe("0.00534045");
+    expect(formatCompactDecimalQuantity("0.12102410")).toBe("0.1210241");
+    expect(formatCompactDecimalQuantity("0.123456789")).toBe("0.12345679");
+    expect(formatCompactDecimalQuantity("1.00000000")).toBe("1");
+    expect(formatCompactDecimalQuantity("0.000000001")).toBe("<0.00000001");
   });
 });
 

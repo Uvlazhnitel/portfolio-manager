@@ -20,7 +20,7 @@ import { riskThresholdsFromRules } from "@/features/risk/config";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { serializeDecimal, serializeNullableDecimal, type DecimalValue } from "@/lib/db/decimal";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
-import { formatDecimalQuantity } from "@/lib/format/decimal";
+import { formatCompactDecimalQuantity, formatDecimalQuantity } from "@/lib/format/decimal";
 import {
   formatPhysicalGoldQuantity,
   gramsToTroyOunces,
@@ -394,7 +394,9 @@ function buildHoldingRows(
       portfolioWeight: null,
       quantityLabel: isPhysicalGold
         ? `${formatDecimalQuantity(gramsToTroyOunces(holding.quantity).toString())} oz`
-        : formatDecimalQuantity(holding.quantity),
+        : asset?.assetType === AssetType.CRYPTO
+          ? formatCompactDecimalQuantity(holding.quantity)
+          : formatDecimalQuantity(holding.quantity),
       imageUrl: imageUrlFromMetadata(asset?.metadata),
     };
   });
