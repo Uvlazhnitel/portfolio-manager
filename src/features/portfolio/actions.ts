@@ -59,7 +59,7 @@ export async function createTransactionAction(
     return await withPortfolioRevalidation(
       createTransactionMutation({
         type: transactionType,
-        basisMethod: nullableString(formData.get("basisMethod")) as BasisMethod | undefined,
+        basisMethod: (nullableString(formData.get("basisMethod")) as BasisMethod | null) ?? undefined,
         accountId: String(formData.get("accountId") ?? ""),
         assetMode: assetMode === "new" ? "new" : "existing",
         assetId: nullableString(formData.get("assetId")) ?? undefined,
@@ -162,7 +162,7 @@ export async function createPositionAction(
     return await withPortfolioRevalidation(
       createTransactionMutation({
         type: transactionType,
-        basisMethod: nullableString(formData.get("basisMethod")) as BasisMethod | undefined,
+        basisMethod: (nullableString(formData.get("basisMethod")) as BasisMethod | null) ?? undefined,
         accountId: String(formData.get("accountId") ?? ""),
         assetMode: existingAssetId ? "existing" : "new",
         assetId: existingAssetId ?? undefined,
@@ -305,7 +305,7 @@ export async function updateTransactionAction(
   try {
     return await withPortfolioRevalidation(updateTransactionMutation({
       id: String(formData.get("id") ?? ""),
-      basisMethod: nullableString(formData.get("basisMethod")) as BasisMethod | undefined,
+      basisMethod: (nullableString(formData.get("basisMethod")) as BasisMethod | null) ?? undefined,
       quantity: nullableString(formData.get("quantity")) ?? undefined,
       physicalGoldWeightTroyOunces: nullableString(formData.get("physicalGoldWeightTroyOunces")) ?? undefined,
       pricePerUnit: nullableString(formData.get("pricePerUnit")) ?? undefined,
