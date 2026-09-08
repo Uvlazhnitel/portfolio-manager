@@ -548,6 +548,7 @@ function PositionForm({
   const isCash = (asset?.assetClass ?? assetClass) === "CASH";
   const [type, setType] = useState<TransactionOperation>("BUY");
   const [basisMethod, setBasisMethod] = useState("UNKNOWN");
+  const [transactionCurrency, setTransactionCurrency] = useState(() => defaultTransactionCurrency(asset, currency));
   const [state, action, isSaving] = useActionState(createPositionAction, { ok: false, message: "" });
   const [transferState, transferAction, isTransferSaving] = useActionState(createTransferAction, { ok: false, message: "" });
   const [linkState, linkAction, isLinking] = useActionState(linkAssetQuoteAction, { ok: false, message: "" });
@@ -578,7 +579,6 @@ function PositionForm({
 
       <input type="hidden" name="existingAssetId" value={asset?.existingAssetId ?? ""} />
       <input type="hidden" name="type" value={type === "TRANSFER" ? "TRANSFER_OUT" : type} />
-      <input type="hidden" name="currency" value={currency} />
       <input type="hidden" name="newAssetExternalId" value={asset?.externalId ?? ""} />
       <input type="hidden" name="newAssetImageUrl" value={asset?.imageUrl ?? ""} />
       <input type="hidden" name="newAssetQuoteProvider" value={asset?.quoteProvider ?? ""} />
@@ -613,6 +613,8 @@ function PositionForm({
         </div>
       ) : null}
       {linkState.message ? <ActionMessage state={linkState} /> : null}
+
+      {!isTransfer ? <div className="grid gap-4 sm:grid-cols-2"><TransactionCurrencyFields currency={transactionCurrency} baseCurrency={currency} onCurrencyChange={setTransactionCurrency} /></div> : <input type="hidden" name="currency" value={currency} />}
 
       {isCustom ? (
         <div className="grid gap-4 sm:grid-cols-2">
@@ -685,12 +687,12 @@ function PositionForm({
             <Field label={isTransfer ? `Amount received${asset?.symbol ? ` (${asset.symbol})` : ""}` : type === "DEPOSIT" || type === "WITHDRAWAL" ? "Cash amount" : `How much do you own${asset?.symbol ? ` (${asset.symbol})` : ""}?`}><input name="quantity" required className={inputClassName} inputMode="decimal" placeholder="0.25" /></Field>
           )}
           {isTransfer ? <Field label={isPhysicalGold ? "Fee (troy oz, optional)" : `Fee${asset?.symbol ? ` (${asset.symbol}, optional)` : " (optional)"}`}><input name="feeQuantity" className={inputClassName} inputMode="decimal" placeholder="0" /></Field> : null}
-          {!isTransfer && !(type === "INITIAL_BALANCE" && basisMethod === "UNKNOWN") && !(type === "GIFT" && basisMethod === "ZERO_COST") ? <Field label={type === "INITIAL_BALANCE" ? "Known total acquisition cost" : type === "GIFT" ? "Fair value at receipt" : type === "BUY" || type === "DEPOSIT" ? "Total spent" : "Total received"}>
-            <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">{currency === "USD" ? "$" : currency}</span><input name="totalAmount" className={cn(inputClassName, "pl-8")} inputMode="decimal" placeholder="12000.00" /></div>
+          {!isTransfer && !(type === "INITIAL_BALANCE" && basisMethod === "UNKNOWN") && !(type === "GIFT" && basisMethod === "ZERO_COST") ? <Field label={`${type === "INITIAL_BALANCE" ? "Known total acquisition cost" : type === "GIFT" ? "Fair value at receipt" : type === "BUY" || type === "DEPOSIT" ? "Total spent" : "Total received"} (${transactionCurrency})`}>
+            <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">{transactionCurrency === "USD" ? "$" : transactionCurrency}</span><input name="totalAmount" className={cn(inputClassName, "pl-8")} inputMode="decimal" placeholder="12000.00" /></div>
           </Field> : null}
           <Field label={type === "INITIAL_BALANCE" ? "Balance date" : "Transaction date"}><input name="executedAt" required type="date" className={inputClassName} defaultValue={today()} /></Field>
-          {type !== "INITIAL_BALANCE" && type !== "GIFT" && !isTransfer ? <Field label={isPhysicalGold ? "Price per troy ounce (alternative)" : "Price per unit (alternative)"}><input name="pricePerUnit" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
-          {type !== "INITIAL_BALANCE" && type !== "GIFT" && !isTransfer && type !== "DEPOSIT" && type !== "WITHDRAWAL" ? <Field label="Fee (optional)"><input name="fee" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
+          {type !== "INITIAL_BALANCE" && type !== "GIFT" && !isTransfer ? <Field label={`${isPhysicalGold ? "Price per troy ounce" : "Price per unit"} (${transactionCurrency}, alternative)`}><input name="pricePerUnit" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
+          {type !== "INITIAL_BALANCE" && type !== "GIFT" && !isTransfer && type !== "DEPOSIT" && type !== "WITHDRAWAL" ? <Field label={`Fee (${transactionCurrency}, optional)`}><input name="fee" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
         </div>
       )}
 
@@ -733,6 +735,7 @@ function AddTransactionDialog({ portfolio, initialAssetId, initialAccountId, onC
   const [type, setType] = useState<TransactionOperation>("BUY");
   const [basisMethod, setBasisMethod] = useState("UNKNOWN");
   const [assetId, setAssetId] = useState(initialAssetId ?? portfolio.assets[0]?.id ?? "");
+  const [transactionCurrency, setTransactionCurrency] = useState(() => defaultTransactionCurrency(portfolio.assets.find((candidate) => candidate.id === (initialAssetId ?? portfolio.assets[0]?.id)), portfolio.valuation.currency));
   const [accountId, setAccountId] = useState(initialAccountId ?? portfolio.accounts[0]?.id ?? "");
   const [state, action, isPending] = useActionState(createTransactionAction, { ok: false, message: "" });
   const [transferState, transferAction, isTransferPending] = useActionState(createTransferAction, { ok: false, message: "" });
@@ -762,7 +765,7 @@ function AddTransactionDialog({ portfolio, initialAssetId, initialAccountId, onC
         <form action={isTransfer ? transferAction : action} className="space-y-5">
           <input type="hidden" name="type" value={type === "TRANSFER" ? "TRANSFER_OUT" : type} />
           <input type="hidden" name="assetMode" value="existing" />
-          <input type="hidden" name="currency" value={portfolio.valuation.currency} />
+          {isTransfer ? <input type="hidden" name="currency" value={portfolio.valuation.currency} /> : null}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {operationChoices.map(([choice, label]) => <Button key={choice} type="button" variant={type === choice ? "primary" : "secondary"} disabled={(choice === "DEPOSIT" || choice === "WITHDRAWAL") && !isCash} onClick={() => { setType(choice); setBasisMethod(choice === "GIFT" ? "ZERO_COST" : "UNKNOWN"); }}>{label}</Button>)}
           </div>
@@ -770,13 +773,14 @@ function AddTransactionDialog({ portfolio, initialAssetId, initialAccountId, onC
           <div className="grid gap-4 sm:grid-cols-2">
             {type === "INITIAL_BALANCE" ? <Field label="Opening acquisition basis"><select name="basisMethod" className={inputClassName} value={basisMethod} onChange={(event) => setBasisMethod(event.target.value)}><option value="UNKNOWN">Unknown</option><option value="KNOWN_COST">Known cost</option></select></Field> : null}
             {type === "GIFT" ? <Field label="Gift tracking basis"><select name="basisMethod" className={inputClassName} value={basisMethod} onChange={(event) => setBasisMethod(event.target.value)}><option value="ZERO_COST">Zero cost</option><option value="FAIR_VALUE">Fair value at receipt</option></select></Field> : null}
-            <Field label="Asset"><select name="assetId" required className={inputClassName} value={assetId} onChange={(event) => setAssetId(event.target.value)}>{portfolio.assets.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.symbol})</option>)}</select></Field>
+            {!isTransfer ? <TransactionCurrencyFields currency={transactionCurrency} baseCurrency={portfolio.valuation.currency} onCurrencyChange={setTransactionCurrency} /> : null}
+            <Field label="Asset"><select name="assetId" required className={inputClassName} value={assetId} onChange={(event) => { const nextId = event.target.value; setAssetId(nextId); setTransactionCurrency(defaultTransactionCurrency(portfolio.assets.find((item) => item.id === nextId), portfolio.valuation.currency)); }}>{portfolio.assets.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.symbol})</option>)}</select></Field>
             <Field label={isTransfer ? "From account" : "Account"}><select name={isTransfer ? "fromAccountId" : "accountId"} required className={inputClassName} value={accountId} onChange={(event) => setAccountId(event.target.value)}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
             {isTransfer ? <Field label="To account"><select name="toAccountId" required className={inputClassName} defaultValue={portfolio.accounts.find((account) => account.id !== accountId)?.id ?? ""}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field> : null}
             {isPhysicalGold ? <Field label={isTransfer ? "Received weight (troy oz)" : "Weight (troy oz)"}><input name="physicalGoldWeightTroyOunces" required className={inputClassName} inputMode="decimal" placeholder="0.1743" /></Field> : <Field label={isTransfer ? `Amount received${asset?.symbol ? ` (${asset.symbol})` : ""}` : type === "DEPOSIT" || type === "WITHDRAWAL" ? "Cash amount" : "Quantity"}><input name="quantity" required className={inputClassName} inputMode="decimal" placeholder="0.25" /></Field>}
             {isTransfer ? <Field label={isPhysicalGold ? "Fee (troy oz, optional)" : `Fee${asset?.symbol ? ` (${asset.symbol}, optional)` : " (optional)"}`}><input name="feeQuantity" className={inputClassName} inputMode="decimal" placeholder="0" /></Field> : null}
-            {!isTransfer && !(type === "INITIAL_BALANCE" && basisMethod === "UNKNOWN") && !(type === "GIFT" && basisMethod === "ZERO_COST") ? <Field label={type === "INITIAL_BALANCE" ? "Known unit basis" : type === "GIFT" ? "Fair value per unit" : isPhysicalGold ? "Price per troy ounce" : "Price per unit"}><input name="pricePerUnit" required={type === "BUY" || type === "SELL" || basisMethod === "KNOWN_COST" || basisMethod === "FAIR_VALUE"} className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
-            {type === "BUY" || type === "SELL" ? <Field label="Fee (optional)"><input name="fee" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
+            {!isTransfer && !(type === "INITIAL_BALANCE" && basisMethod === "UNKNOWN") && !(type === "GIFT" && basisMethod === "ZERO_COST") ? <Field label={`${type === "INITIAL_BALANCE" ? "Known unit basis" : type === "GIFT" ? "Fair value per unit" : isPhysicalGold ? "Price per troy ounce" : "Price per unit"} (${transactionCurrency})`}><input name="pricePerUnit" required={type === "BUY" || type === "SELL" || basisMethod === "KNOWN_COST" || basisMethod === "FAIR_VALUE"} className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
+            {type === "BUY" || type === "SELL" ? <Field label={`Fee (${transactionCurrency}, optional)`}><input name="fee" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
             <Field label="Date"><input name="executedAt" required type="date" className={inputClassName} defaultValue={today()} /></Field>
           </div>
           {isTransfer ? <p className="text-xs text-muted">The destination receives the entered amount. The fee is deducted additionally from the source in the same asset; the transfer does not create a sale.</p> : null}
@@ -800,10 +804,12 @@ function TradeForm({ portfolio, onDone, initialSourceAssetId, initialSourceAccou
   const [sourceAccountId, setSourceAccountId] = useState(initialAccountId);
   const [destinationAccountId, setDestinationAccountId] = useState(initialAccountId);
   const [destinationAssetId, setDestinationAssetId] = useState(portfolio.assets.find((asset) => asset.id !== sourceAssetId)?.id ?? "");
+  const [transactionCurrency, setTransactionCurrency] = useState(portfolio.valuation.currency);
   if (state.ok) return <div className="space-y-4"><ActionMessage state={state} /><Button type="button" onClick={onDone} className="w-full">Done</Button></div>;
   return (
     <form action={action} className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2">
+        <TransactionCurrencyFields currency={transactionCurrency} baseCurrency={portfolio.valuation.currency} onCurrencyChange={setTransactionCurrency} />
         <Field label="Source account"><select name="sourceAccountId" required className={inputClassName} value={sourceAccountId} onChange={(event) => setSourceAccountId(event.target.value)}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
         <Field label="Source asset"><select name="sourceAssetId" required className={inputClassName} value={sourceAssetId} onChange={(event) => {
           const value = event.target.value;
@@ -813,12 +819,12 @@ function TradeForm({ portfolio, onDone, initialSourceAssetId, initialSourceAccou
           if (value === destinationAssetId) setDestinationAssetId(portfolio.assets.find((asset) => asset.id !== value)?.id ?? "");
         }}>{portfolio.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field>
         <Field label="Source quantity"><input name="sourceQuantity" required className={inputClassName} inputMode="decimal" placeholder="500" /></Field>
-        <Field label="Source execution price"><input name="sourcePricePerUnit" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
-        <Field label="Gross source proceeds (alternative)"><input name="sourceTotalAmount" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
+        <Field label={`Source execution price (${transactionCurrency})`}><input name="sourcePricePerUnit" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
+        <Field label={`Gross source proceeds (${transactionCurrency}, alternative)`}><input name="sourceTotalAmount" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
         <Field label="Destination account"><select name="destinationAccountId" required className={inputClassName} value={destinationAccountId} onChange={(event) => setDestinationAccountId(event.target.value)}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
         <Field label="Destination asset"><select name="destinationAssetId" required className={inputClassName} value={destinationAssetId} onChange={(event) => setDestinationAssetId(event.target.value)}>{portfolio.assets.filter((asset) => asset.id !== sourceAssetId).map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field>
         <Field label="Destination quantity"><input name="destinationQuantity" required className={inputClassName} inputMode="decimal" placeholder="0.0045" /></Field>
-        <Field label={`Fee in ${portfolio.valuation.currency} (optional)`}><input name="fee" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
+        <Field label={`Fee (${transactionCurrency}, optional)`}><input name="fee" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field>
         <Field label="Date"><input name="executedAt" required type="date" className={inputClassName} defaultValue={today()} /></Field>
       </div>
       <p className="text-xs text-muted">Use the actual execution price or gross proceeds for the source sale. Cost basis is calculated separately from ledger history; if the source basis is unknown, gain/return stay partial until you correct it. This is an internal reallocation, not a contribution or withdrawal.</p>
@@ -840,13 +846,14 @@ function EditTransactionDialog({ portfolio, transactionId, onClose }: PortfolioC
   if (transaction.operationKind === "TRANSFER" || transaction.operationKind === "TRADE") {
     return <EditGroupedOperationDialog portfolio={portfolio} transaction={transaction} onClose={onClose} />;
   }
-  return <EditStandaloneTransactionDialog transaction={transaction} onClose={onClose} />;
+  return <EditStandaloneTransactionDialog transaction={transaction} baseCurrency={portfolio.valuation.currency} onClose={onClose} />;
 }
 
-function EditStandaloneTransactionDialog({ transaction, onClose }: { transaction: PortfolioReadModel["transactions"][number]; onClose: () => void }) {
+function EditStandaloneTransactionDialog({ transaction, baseCurrency, onClose }: { transaction: PortfolioReadModel["transactions"][number]; baseCurrency: string; onClose: () => void }) {
   const [state, action, isPending] = useActionState(updateTransactionAction, { ok: false, message: "" });
   const isPhysicalGold = transaction.displayPriceUnit === "troy oz";
   const [basisMethod, setBasisMethod] = useState(transaction.basisMethod ?? "");
+  const [transactionCurrency, setTransactionCurrency] = useState(transaction.currency);
   const hasBasisChoice = transaction.type === "INITIAL_BALANCE" || transaction.type === "GIFT";
   const basisHasValue = basisMethod === "KNOWN_COST" || basisMethod === "FAIR_VALUE";
 
@@ -858,15 +865,16 @@ function EditStandaloneTransactionDialog({ transaction, onClose }: { transaction
         <form action={action} className="space-y-5">
           <input type="hidden" name="id" value={transaction.id} />
           <div className="grid gap-4 sm:grid-cols-2">
+            <TransactionCurrencyFields currency={transactionCurrency} baseCurrency={baseCurrency} onCurrencyChange={setTransactionCurrency} defaultManualRate={transaction.fxRateSource === "MANUAL" ? transaction.fxRateToBase ?? undefined : undefined} />
             {transaction.type === "INITIAL_BALANCE" ? <Field label="Opening acquisition basis"><select name="basisMethod" className={inputClassName} value={basisMethod} onChange={(event) => setBasisMethod(event.target.value)}><option value="UNKNOWN">Unknown</option><option value="KNOWN_COST">Known cost</option></select></Field> : null}
             {transaction.type === "GIFT" ? <Field label="Gift tracking basis"><select name="basisMethod" className={inputClassName} value={basisMethod} onChange={(event) => setBasisMethod(event.target.value)}><option value="ZERO_COST">Zero cost</option><option value="FAIR_VALUE">Fair value at receipt</option></select></Field> : null}
             <Field label={isPhysicalGold ? "Weight (troy oz)" : "Quantity"}><input name={isPhysicalGold ? "physicalGoldWeightTroyOunces" : "quantity"} required className={inputClassName} inputMode="decimal" defaultValue={transaction.inputQuantity} /></Field>
-            {!hasBasisChoice || basisHasValue ? <Field label={isPhysicalGold ? "Price per troy ounce" : "Price per unit"}><input name="pricePerUnit" className={inputClassName} inputMode="decimal" defaultValue={transaction.displayPricePerUnit ?? ""} placeholder="0.00" /></Field> : null}
-            {!hasBasisChoice || basisHasValue ? <Field label="Total amount (alternative)"><input name="totalAmount" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
-            {transaction.type !== "GIFT" && basisMethod !== "UNKNOWN" ? <Field label="Fee"><input name="fee" className={inputClassName} inputMode="decimal" defaultValue={transaction.fee ?? ""} placeholder="0.00" /></Field> : null}
+            {!hasBasisChoice || basisHasValue ? <Field label={`${isPhysicalGold ? "Price per troy ounce" : "Price per unit"} (${transactionCurrency})`}><input name="pricePerUnit" className={inputClassName} inputMode="decimal" defaultValue={transaction.displayPricePerUnit ?? ""} placeholder="0.00" /></Field> : null}
+            {!hasBasisChoice || basisHasValue ? <Field label={`Total amount (${transactionCurrency}, alternative)`}><input name="totalAmount" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
+            {transaction.type !== "GIFT" && basisMethod !== "UNKNOWN" ? <Field label={`Fee (${transactionCurrency})`}><input name="fee" className={inputClassName} inputMode="decimal" defaultValue={transaction.fee ?? ""} placeholder="0.00" /></Field> : null}
             <Field label="Date"><input name="executedAt" required type="date" className={inputClassName} defaultValue={transaction.executedAt.slice(0, 10)} /></Field>
           </div>
-          <p className="text-xs text-muted">Saving creates an auditable correction. The original financial row is kept as replaced history. Asset, account, currency, and operation type stay unchanged.</p>
+          <p className="text-xs text-muted">Saving creates an auditable correction. The original financial row is kept as replaced history. Asset, account, and operation type stay unchanged.</p>
           <Field label="Note (optional)"><textarea name="note" className={textareaClassName} rows={3} defaultValue={transaction.note ?? ""} /></Field>
           <Field label="Correction reason (optional)"><textarea name="auditReason" className={textareaClassName} rows={2} placeholder="Example: fixed quantity from broker statement" /></Field>
           <ActionMessage state={state} />
@@ -881,6 +889,7 @@ function EditGroupedOperationDialog({ portfolio, transaction, onClose }: Portfol
   const isTrade = transaction.operationKind === "TRADE";
   const destination = transaction.destination;
   const [sourceAssetId, setSourceAssetId] = useState(transaction.assetId);
+  const [transactionCurrency, setTransactionCurrency] = useState(transaction.currency);
   const isPhysicalTransfer = !isTrade && portfolio.assets.find((asset) => asset.id === sourceAssetId)?.assetType === "PHYSICAL_GOLD";
   const [tradeState, tradeAction, isTradePending] = useActionState(updateTradeAction, { ok: false, message: "" });
   const [transferState, transferAction, isTransferPending] = useActionState(updateTransferAction, { ok: false, message: "" });
@@ -892,16 +901,18 @@ function EditGroupedOperationDialog({ portfolio, transaction, onClose }: Portfol
       {state.ok ? <div className="space-y-4"><ActionMessage state={state} /><Button type="button" onClick={onClose} className="w-full">Done</Button></div> : (
         <form action={action} className="space-y-5">
           <input type="hidden" name="groupId" value={transaction.groupId ?? ""} />
+          {!isTrade ? <input type="hidden" name="currency" value={portfolio.valuation.currency} /> : null}
           <div className="grid gap-4 sm:grid-cols-2">
+            {isTrade ? <TransactionCurrencyFields currency={transactionCurrency} baseCurrency={portfolio.valuation.currency} onCurrencyChange={setTransactionCurrency} defaultManualRate={transaction.fxRateSource === "MANUAL" ? transaction.fxRateToBase ?? undefined : undefined} /> : null}
             <Field label="Source account"><select name={isTrade ? "sourceAccountId" : "fromAccountId"} required className={inputClassName} defaultValue={transaction.accountId}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
             <Field label="Source asset"><select name={isTrade ? "sourceAssetId" : "assetId"} required className={inputClassName} value={sourceAssetId} onChange={(event) => setSourceAssetId(event.target.value)}>{portfolio.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field>
             <Field label={isTrade ? "Source quantity" : isPhysicalTransfer ? "Received weight (troy oz)" : "Amount received"}><input name={isTrade ? "sourceQuantity" : isPhysicalTransfer ? "physicalGoldWeightTroyOunces" : "quantity"} required className={inputClassName} inputMode="decimal" defaultValue={isTrade ? transaction.inputQuantity : destination.inputQuantity} /></Field>
-            {isTrade ? <Field label="Source execution price"><input name="sourcePricePerUnit" className={inputClassName} inputMode="decimal" defaultValue={transaction.displayPricePerUnit ?? ""} placeholder="0.00" /></Field> : null}
-            {isTrade ? <Field label="Gross source proceeds (alternative)"><input name="sourceTotalAmount" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
+            {isTrade ? <Field label={`Source execution price (${transactionCurrency})`}><input name="sourcePricePerUnit" className={inputClassName} inputMode="decimal" defaultValue={transaction.displayPricePerUnit ?? ""} placeholder="0.00" /></Field> : null}
+            {isTrade ? <Field label={`Gross source proceeds (${transactionCurrency}, alternative)`}><input name="sourceTotalAmount" className={inputClassName} inputMode="decimal" placeholder="0.00" /></Field> : null}
             <Field label="Destination account"><select name={isTrade ? "destinationAccountId" : "toAccountId"} required className={inputClassName} defaultValue={destination.accountId}>{portfolio.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
             {isTrade ? <Field label="Destination asset"><select name="destinationAssetId" required className={inputClassName} defaultValue={destination.assetId}>{portfolio.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.symbol})</option>)}</select></Field> : null}
             {isTrade ? <Field label="Destination quantity"><input name="destinationQuantity" required className={inputClassName} inputMode="decimal" defaultValue={destination.inputQuantity} /></Field> : null}
-            {isTrade ? <Field label={`Fee in ${portfolio.valuation.currency} (optional)`}><input name="fee" className={inputClassName} inputMode="decimal" defaultValue={transaction.fee ?? ""} /></Field> : null}
+            {isTrade ? <Field label={`Fee (${transactionCurrency}, optional)`}><input name="fee" className={inputClassName} inputMode="decimal" defaultValue={transaction.fee ?? ""} /></Field> : null}
             {!isTrade ? <Field label={isPhysicalTransfer ? "Fee (troy oz, optional)" : `Fee (${transaction.symbol}, optional)`}><input name="feeQuantity" className={inputClassName} inputMode="decimal" defaultValue={transaction.inputFeeQuantity ?? ""} placeholder="0" /></Field> : null}
             <Field label="Date"><input name="executedAt" required type="date" className={inputClassName} defaultValue={transaction.executedAt.slice(0, 10)} /></Field>
           </div>
@@ -1341,9 +1352,15 @@ function holdingTransactionPanelId(holding: PortfolioReadModel["holdings"][numbe
 }
 
 function holdingTransactionPriceText(transaction: PortfolioReadModel["transactions"][number]) {
-  if (transaction.operationKind === "TRADE") return transaction.fee ? `Fee ${formatDecimalCurrency(transaction.fee, transaction.currency)}` : "Internal";
-  if (transaction.operationKind === "TRANSFER") return transaction.feeQuantityLabel ? `Fee ${transaction.feeQuantityLabel}` : "Internal";
-  return transaction.displayPricePerUnit ? `${formatDecimalCurrency(transaction.displayPricePerUnit, transaction.currency)} / ${transaction.displayPriceUnit}` : "No price";
+  const price = transaction.operationKind === "TRADE"
+    ? transaction.fee ? `Fee ${formatDecimalCurrency(transaction.fee, transaction.currency)}` : "Internal"
+    : transaction.operationKind === "TRANSFER"
+      ? transaction.feeQuantityLabel ? `Fee ${transaction.feeQuantityLabel}` : "Internal"
+      : transaction.displayPricePerUnit ? `${formatDecimalCurrency(transaction.displayPricePerUnit, transaction.currency)} / ${transaction.displayPriceUnit}` : "No price";
+  const fx = transaction.fxRateToBase && transaction.fxRateSource !== "IDENTITY"
+    ? `FX 1 ${transaction.currency} = ${transaction.fxRateToBase} USD · ${formatType(transaction.fxRateSource ?? "")}${transaction.fxRateDate ? ` · ${transaction.fxRateDate}` : ""}`
+    : null;
+  return fx ? `${price} · ${fx}` : price;
 }
 
 function moneyTone(value: string | null): "default" | "positive" | "negative" {
@@ -1360,6 +1377,32 @@ function formatMoneyWithSign(value: string, currency: string) {
 }
 
 function today() { return new Date().toISOString().slice(0, 10); }
+function TransactionCurrencyFields({ currency, baseCurrency, onCurrencyChange, defaultManualRate }: { currency: string; baseCurrency: string; onCurrencyChange: (currency: string) => void; defaultManualRate?: string }) {
+  const [initialCurrency] = useState(currency);
+  const normalizedCurrency = currency.toUpperCase();
+  return (
+    <>
+      <Field label="Transaction currency">
+        <input name="currency" required list="transaction-currency-options" maxLength={3} pattern="[A-Za-z]{3}" className={inputClassName} value={currency} onChange={(event) => onCurrencyChange(event.target.value.toUpperCase())} placeholder={baseCurrency} />
+        <datalist id="transaction-currency-options"><option value="USD" /><option value="EUR" /><option value="GBP" /><option value="CHF" /></datalist>
+      </Field>
+      {normalizedCurrency !== baseCurrency.toUpperCase() ? (
+        <Field label={`FX rate: 1 ${normalizedCurrency || "currency"} in ${baseCurrency} (optional)`}>
+          <input key={normalizedCurrency} name="manualFxRate" className={inputClassName} inputMode="decimal" defaultValue={normalizedCurrency === initialCurrency.toUpperCase() ? defaultManualRate : ""} placeholder="Automatic historical rate" />
+          <span className="mt-2 block text-xs text-muted">Leave blank to use the historical Frankfurter rate for the transaction date.</span>
+        </Field>
+      ) : null}
+    </>
+  );
+}
+
+function defaultTransactionCurrency(asset: Pick<PortfolioReadModel["assets"][number], "assetType" | "currency"> | AssetCatalogResult | null | undefined, baseCurrency: string) {
+  const candidate = asset?.currency?.trim().toUpperCase();
+  return candidate && /^[A-Z]{3}$/.test(candidate) && (asset?.assetType === "ETF" || asset?.assetType === "FIAT" || asset?.assetType === "STABLECOIN")
+    ? candidate
+    : baseCurrency.toUpperCase();
+}
+
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block text-sm"><span className="mb-2 block font-medium text-muted">{label}</span>{children}</label>; }
 function Info({ label, value }: { label: string; value: ReactNode }) { return <div><dt className="text-xs text-muted">{label}</dt><dd className="mt-1 break-words text-foreground">{value}</dd></div>; }
 function ActionMessage({ state }: { state: { ok: boolean; message: string } }) { return state.message ? <p className={cn("rounded-lg border p-3 text-sm", state.ok ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/10 text-destructive")}>{state.message}</p> : null; }

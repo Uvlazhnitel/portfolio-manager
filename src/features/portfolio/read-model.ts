@@ -79,6 +79,9 @@ export type PortfolioTransactionRow = {
   inputFeeQuantity: string | null;
   feeQuantityLabel: string | null;
   currency: string;
+  fxRateToBase: string | null;
+  fxRateSource: string | null;
+  fxRateDate: string | null;
   executedAt: string;
   note: string | null;
   destination: PortfolioOperationLeg | null;
@@ -449,6 +452,9 @@ export function serializeTransactionRow(transaction: TransactionWithRelations): 
     inputFeeQuantity: null,
     feeQuantityLabel: null,
     currency: transaction.currency,
+    fxRateToBase: serializeNullableDecimal(transaction.fxRateToBase),
+    fxRateSource: transaction.fxRateSource,
+    fxRateDate: transaction.fxRateDate?.toISOString().slice(0, 10) ?? null,
     executedAt: transaction.executedAt.toISOString(),
     note: transaction.note,
     destination: null,

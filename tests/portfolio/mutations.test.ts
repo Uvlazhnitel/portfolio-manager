@@ -1,4 +1,4 @@
-import { AccountType, AssetClass, AssetQuoteProvider, AssetType, BasisMethod, PortfolioRuleType, TransactionGroupKind, TransactionStatus, TransactionType } from "@prisma/client";
+import { AccountType, AssetClass, AssetQuoteProvider, AssetType, BasisMethod, FxRateSource, PortfolioRuleType, TransactionGroupKind, TransactionStatus, TransactionType } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { calculateHoldings } from "@/features/portfolio-engine";
 import { getTransactionAuditReadModel, getTransactionGroupAuditReadModel } from "@/features/portfolio/audit-read-model";
@@ -80,6 +80,33 @@ describe("portfolio mutations", () => {
 
     const transactions = await testDb.prisma.transaction.findMany({ where: { accountId: account.id, assetId: btc.id } });
     expect(calculateHoldings(transactions)).toEqual([{ accountId: account.id, assetId: btc.id, quantity: "1.25" }]);
+  });
+
+  it("stores an EUR VGLA purchase with its historical USD conversion", async () => {
+    const account = await testDb.prisma.account.create({ data: { name: "EUR Broker", type: AccountType.BROKER } });
+    const vgla = await testDb.prisma.asset.create({ data: { symbol: "VGLA", name: "Vanguard Global Aggregate Bond", assetClass: AssetClass.ETF, assetType: AssetType.ETF, currency: "EUR" } });
+
+    await createTransactionMutation({
+      type: TransactionType.BUY,
+      accountId: account.id,
+      assetMode: "existing",
+      assetId: vgla.id,
+      quantity: "10",
+      pricePerUnit: "25.5",
+      fee: "1.25",
+      currency: "EUR",
+      fxRateToBase: "1.1624",
+      fxRateSource: FxRateSource.FRANKFURTER,
+      fxRateDate: new Date("2026-09-07"),
+      executedAt: new Date("2026-09-07"),
+    }, new PortfolioRepository(testDb.prisma));
+
+    const saved = await testDb.prisma.transaction.findFirstOrThrow({ where: { assetId: vgla.id, status: TransactionStatus.ACTIVE } });
+    expect(saved.currency).toBe("EUR");
+    expect(saved.pricePerUnit?.toString()).toBe("25.5");
+    expect(saved.fxRateToBase?.toString()).toBe("1.1624");
+    expect(saved.fxRateSource).toBe(FxRateSource.FRANKFURTER);
+    expect(saved.fxRateDate?.toISOString().slice(0, 10)).toBe("2026-09-07");
   });
 
   it("normalizes total invested to an average acquisition price", async () => {
@@ -358,7 +385,7 @@ describe("portfolio mutations", () => {
       new PortfolioRepository(testDb.prisma),
     );
 
-    const transaction = await testDb.prisma.transaction.findFirstOrThrow({ where: { type: TransactionType.BUY } });
+    const transaction = await testDb.prisma.transaction.findFirstOrThrow({ where: { type: TransactionType.BUY, accountId: account.id, assetId: btc.id } });
     expect(transaction.pricePerUnit?.toString()).toBe("12000");
     expect(transaction.fee?.toString()).toBe("3");
   });
@@ -978,6 +1005,7 @@ describe("portfolio mutations", () => {
 
     const immutable = await testDb.prisma.transaction.findFirstOrThrow({ where: { accountId: account.id, assetId: btc.id } });
     await expect(testDb.prisma.transaction.update({ where: { id: immutable.id }, data: { quantity: "999" } })).rejects.toThrow();
+    await expect(testDb.prisma.transaction.update({ where: { id: immutable.id }, data: { fxRateToBase: "1.1" } })).rejects.toThrow();
     await expect(testDb.prisma.transaction.delete({ where: { id: immutable.id } })).rejects.toThrow();
 
     const disposable = await testDb.prisma.asset.create({

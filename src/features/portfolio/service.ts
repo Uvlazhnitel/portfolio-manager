@@ -37,5 +37,6 @@ export function serializeTransaction(transaction: PortfolioTransactionRecord) {
     quantity: serializeDecimal(transaction.quantity),
     pricePerUnit: serializeNullableDecimal(transaction.pricePerUnit),
     fee: serializeNullableDecimal(transaction.fee),
+    fxRateToBase: serializeNullableDecimal(transaction.fxRateToBase),
   };
 }

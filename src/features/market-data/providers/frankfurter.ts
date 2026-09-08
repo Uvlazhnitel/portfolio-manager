@@ -48,8 +48,13 @@ export class FrankfurterMarketDataProvider implements MarketDataProvider {
     });
   }
 
-  private async fetchRate(baseCurrency: string, quoteCurrency: string) {
+  getHistoricalRate(baseCurrency: string, quoteCurrency: string, date: string) {
+    return this.fetchRate(normalizeRequiredCurrency(baseCurrency), normalizeRequiredCurrency(quoteCurrency), date);
+  }
+
+  private async fetchRate(baseCurrency: string, quoteCurrency: string, date?: string) {
     const url = new URL(`https://api.frankfurter.dev/v2/rate/${baseCurrency}/${quoteCurrency}`);
+    if (date) url.searchParams.set("date", date);
     const response = await this.fetcher(url, {
       headers: { Accept: "application/json" },
       cache: "no-store",
@@ -63,6 +68,12 @@ export class FrankfurterMarketDataProvider implements MarketDataProvider {
     }
     return rate;
   }
+}
+
+function normalizeRequiredCurrency(value: string) {
+  const normalized = normalizeCurrency(value);
+  if (!normalized) throw new Error("Currency must be a three-letter fiat code.");
+  return normalized;
 }
 
 function normalizeCurrency(value: string) {

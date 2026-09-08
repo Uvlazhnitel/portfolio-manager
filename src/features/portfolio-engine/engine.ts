@@ -1079,8 +1079,9 @@ function calculateCostPools(
       asset.currency?.toUpperCase() === input.baseCurrency.toUpperCase() &&
       (transaction.pricePerUnit === null || transaction.pricePerUnit === undefined);
     const pricePerUnit = implicitBaseCashPrice ? decimal(1) : transaction.pricePerUnit === null || transaction.pricePerUnit === undefined ? null : decimal(transaction.pricePerUnit);
-    const transactionCost = pricePerUnit
-      ? quantity.mul(pricePerUnit).plus(transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee))
+    const fxRate = transactionFxRate(transaction, input.baseCurrency);
+    const transactionCost = pricePerUnit && fxRate
+      ? quantity.mul(pricePerUnit).plus(transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee)).mul(fxRate)
       : ZERO;
 
     if (
@@ -1093,7 +1094,7 @@ function calculateCostPools(
         pool.reason = "MISSING_ACQUISITION_PRICE";
         continue;
       }
-      if (transaction.currency?.toUpperCase() !== input.baseCurrency.toUpperCase()) {
+      if (!fxRate) {
         pool.reason = "UNSUPPORTED_TRANSACTION_CURRENCY";
         continue;
       }
@@ -1297,7 +1298,7 @@ function calculatePerformanceSummary(
     component.issues.set(assetId, reasons);
   };
   const missingValueReason = (transaction: EngineTransaction): PerformanceExclusionReason =>
-    transaction.currency?.toUpperCase() !== input.baseCurrency.toUpperCase()
+    !transactionFxRate(transaction, input.baseCurrency)
       ? "UNSUPPORTED_TRANSACTION_CURRENCY"
       : "MISSING_ACQUISITION_PRICE";
 
@@ -1318,7 +1319,8 @@ function calculatePerformanceSummary(
 
     if (internalTrade) {
       if (transaction.type === TransactionType.BUY) {
-        const fee = transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee);
+        const fxRate = transactionFxRate(transaction, input.baseCurrency);
+        const fee = transaction.fee === null || transaction.fee === undefined || !fxRate ? ZERO : decimal(transaction.fee).mul(fxRate);
         internalTradeFees = internalTradeFees.plus(fee);
         component.basisFlow = component.basisFlow.plus(fee);
       }
@@ -1530,7 +1532,8 @@ export function calculateTransactionCashValue(
 ) {
   if (transaction.type === TransactionType.INITIAL_BALANCE &&
     (transaction.basisMethod === BasisMethod.UNKNOWN || transaction.pricePerUnit === null || transaction.pricePerUnit === undefined)) return null;
-  if (transaction.currency?.toUpperCase() !== baseCurrency.toUpperCase()) return null;
+  const fxRate = transactionFxRate(transaction, baseCurrency);
+  if (!fxRate) return null;
   const price = transaction.pricePerUnit === null || transaction.pricePerUnit === undefined
     ? asset.assetType === "FIAT" && asset.currency?.toUpperCase() === baseCurrency.toUpperCase()
       ? decimal(1)
@@ -1538,9 +1541,16 @@ export function calculateTransactionCashValue(
     : decimal(transaction.pricePerUnit);
   if (!price) return null;
   return {
-    gross: decimal(transaction.quantity).mul(price),
-    fee: transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee),
+    gross: decimal(transaction.quantity).mul(price).mul(fxRate),
+    fee: transaction.fee === null || transaction.fee === undefined ? ZERO : decimal(transaction.fee).mul(fxRate),
   };
+}
+
+function transactionFxRate(transaction: EngineTransaction, baseCurrency: string) {
+  if (transaction.currency?.toUpperCase() === baseCurrency.toUpperCase()) return decimal(1);
+  if (transaction.fxRateToBase === null || transaction.fxRateToBase === undefined) return null;
+  const rate = decimal(transaction.fxRateToBase);
+  return rate.greaterThan(ZERO) ? rate : null;
 }
 
 function transactionsThrough(transactions: EngineTransaction[], timestamp: number) {

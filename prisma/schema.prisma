@@ -60,6 +60,12 @@ enum BasisMethod {
   FAIR_VALUE
 }
 
+enum FxRateSource {
+  IDENTITY
+  FRANKFURTER
+  MANUAL
+}
+
 enum TransactionGroupKind {
   TRANSFER
   TRADE
@@ -221,6 +227,9 @@ model Transaction {
   pricePerUnit          Decimal?          @db.Decimal(28, 8)
   fee                   Decimal?          @db.Decimal(28, 8)
   currency              String
+  fxRateToBase          Decimal?          @db.Decimal(28, 12)
+  fxRateSource          FxRateSource?
+  fxRateDate            DateTime?         @db.Date
   executedAt            DateTime
   note                  String?
   transactionGroupId    String?

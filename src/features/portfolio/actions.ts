@@ -18,6 +18,7 @@ import {
 import { publicErrorMessage } from "@/lib/public-error";
 import { StrategyRepository } from "@/features/strategy/repository";
 import { DEFAULT_BASE_CURRENCY } from "@/lib/domain/currency";
+import { HistoricalFxRateService } from "@/features/market-data/historical-fx";
 
 export type PortfolioActionState = PortfolioMutationResult;
 
@@ -55,6 +56,9 @@ export async function createTransactionAction(
     const transactionType = parseImplementedTransactionType(rawTransactionType);
     const strategy = await new StrategyRepository().findActiveStrategy();
     const baseCurrency = strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
+    const currency = String(formData.get("currency") ?? baseCurrency).trim().toUpperCase();
+    const executedAt = String(formData.get("executedAt") ?? "");
+    const fx = await resolveFormFx(formData, currency, baseCurrency, executedAt);
 
     return await withPortfolioRevalidation(
       createTransactionMutation({
@@ -82,8 +86,9 @@ export async function createTransactionAction(
         totalAmount: nullableString(formData.get("totalAmount")) ?? undefined,
         totalPurchaseCost: nullableString(formData.get("totalPurchaseCost")) ?? undefined,
         fee: nullableString(formData.get("fee")) ?? undefined,
-        currency: String(formData.get("currency") ?? baseCurrency),
-        executedAt: String(formData.get("executedAt") ?? ""),
+        currency,
+        ...fx,
+        executedAt,
         note: nullableString(formData.get("note")) ?? undefined,
       }),
     );
@@ -128,6 +133,9 @@ export async function createTradeAction(
   try {
     const strategy = await new StrategyRepository().findActiveStrategy();
     const baseCurrency = strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
+    const currency = String(formData.get("currency") ?? baseCurrency).trim().toUpperCase();
+    const executedAt = String(formData.get("executedAt") ?? "");
+    const fx = await resolveFormFx(formData, currency, baseCurrency, executedAt);
     return await withPortfolioRevalidation(createTradeMutation({
       sourceAccountId: String(formData.get("sourceAccountId") ?? ""),
       sourceAssetId: String(formData.get("sourceAssetId") ?? ""),
@@ -138,8 +146,9 @@ export async function createTradeAction(
       destinationAssetId: String(formData.get("destinationAssetId") ?? ""),
       destinationQuantity: String(formData.get("destinationQuantity") ?? ""),
       fee: nullableString(formData.get("fee")) ?? undefined,
-      currency: baseCurrency,
-      executedAt: String(formData.get("executedAt") ?? ""),
+      currency,
+      ...fx,
+      executedAt,
       note: nullableString(formData.get("note")) ?? undefined,
     }));
   } catch (error) {
@@ -159,6 +168,9 @@ export async function createPositionAction(
     const strategy = await new StrategyRepository().findActiveStrategy();
     const baseCurrency = strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
     const transactionType = parseImplementedTransactionType(String(formData.get("type") ?? TransactionType.INITIAL_BALANCE));
+    const currency = String(formData.get("currency") ?? baseCurrency).trim().toUpperCase();
+    const executedAt = String(formData.get("executedAt") ?? "");
+    const fx = await resolveFormFx(formData, currency, baseCurrency, executedAt);
     return await withPortfolioRevalidation(
       createTransactionMutation({
         type: transactionType,
@@ -185,8 +197,9 @@ export async function createPositionAction(
         pricePerUnit: nullableString(formData.get("pricePerUnit")) ?? undefined,
         totalAmount: nullableString(formData.get("totalAmount")) ?? nullableString(formData.get("totalPurchaseCost")) ?? undefined,
         fee: nullableString(formData.get("fee")) ?? undefined,
-        currency: baseCurrency,
-        executedAt: String(formData.get("executedAt") ?? ""),
+        currency,
+        ...fx,
+        executedAt,
         note: nullableString(formData.get("note")) ?? undefined,
       }),
     );
@@ -276,6 +289,9 @@ export async function updateTradeAction(
   try {
     const strategy = await new StrategyRepository().findActiveStrategy();
     const baseCurrency = strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
+    const currency = String(formData.get("currency") ?? baseCurrency).trim().toUpperCase();
+    const executedAt = String(formData.get("executedAt") ?? "");
+    const fx = await resolveFormFx(formData, currency, baseCurrency, executedAt);
     return await withPortfolioRevalidation(updateTradeMutation({
       groupId: String(formData.get("groupId") ?? ""),
       sourceAccountId: String(formData.get("sourceAccountId") ?? ""),
@@ -287,8 +303,9 @@ export async function updateTradeAction(
       destinationAssetId: String(formData.get("destinationAssetId") ?? ""),
       destinationQuantity: String(formData.get("destinationQuantity") ?? ""),
       fee: nullableString(formData.get("fee")) ?? undefined,
-      currency: baseCurrency,
-      executedAt: String(formData.get("executedAt") ?? ""),
+      currency,
+      ...fx,
+      executedAt,
       note: nullableString(formData.get("note")) ?? undefined,
       auditReason: nullableString(formData.get("auditReason")) ?? undefined,
     }));
@@ -303,6 +320,11 @@ export async function updateTransactionAction(
 ): Promise<PortfolioActionState> {
   void previousState;
   try {
+    const strategy = await new StrategyRepository().findActiveStrategy();
+    const baseCurrency = strategy?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
+    const currency = String(formData.get("currency") ?? baseCurrency).trim().toUpperCase();
+    const executedAt = String(formData.get("executedAt") ?? "");
+    const fx = await resolveFormFx(formData, currency, baseCurrency, executedAt);
     return await withPortfolioRevalidation(updateTransactionMutation({
       id: String(formData.get("id") ?? ""),
       basisMethod: (nullableString(formData.get("basisMethod")) as BasisMethod | null) ?? undefined,
@@ -311,13 +333,29 @@ export async function updateTransactionAction(
       pricePerUnit: nullableString(formData.get("pricePerUnit")) ?? undefined,
       totalAmount: nullableString(formData.get("totalAmount")) ?? undefined,
       fee: nullableString(formData.get("fee")) ?? undefined,
-      executedAt: String(formData.get("executedAt") ?? ""),
+      currency,
+      ...fx,
+      executedAt,
       note: nullableString(formData.get("note")) ?? undefined,
       auditReason: nullableString(formData.get("auditReason")) ?? undefined,
     }));
   } catch (error) {
     return toActionError(error);
   }
+}
+
+async function resolveFormFx(formData: FormData, currency: string, baseCurrency: string, executedAt: string) {
+  const resolved = await new HistoricalFxRateService().resolve({
+    fromCurrency: currency,
+    toCurrency: baseCurrency,
+    executedAt,
+    manualRate: nullableString(formData.get("manualFxRate")) ?? undefined,
+  });
+  return resolved ? {
+    fxRateToBase: resolved.rate,
+    fxRateSource: resolved.source,
+    fxRateDate: resolved.date,
+  } : {};
 }
 
 function nullableString(value: FormDataEntryValue | null) {

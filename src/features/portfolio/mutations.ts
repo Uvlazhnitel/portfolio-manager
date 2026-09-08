@@ -2,6 +2,7 @@ import {
   AssetClass,
   AssetType,
   BasisMethod,
+  FxRateSource,
   MarketPriceUnit,
   TransactionStatus,
   TransactionGroupKind,
@@ -67,6 +68,9 @@ export const transactionMutationSchema = z.object({
   totalPurchaseCost: nonNegativeDecimalStringSchema.optional(),
   fee: nonNegativeDecimalStringSchema.optional(),
   currency: z.string().trim().min(3).max(12).default(DEFAULT_BASE_CURRENCY).transform((value) => value.toUpperCase()),
+  fxRateToBase: positiveDecimalStringSchema.optional(),
+  fxRateSource: z.enum(FxRateSource).optional(),
+  fxRateDate: z.coerce.date().optional(),
   executedAt: z.coerce.date(),
   note: z.string().trim().optional(),
 });
@@ -80,9 +84,17 @@ export const updateTransactionSchema = transactionMutationSchema.pick({
   pricePerUnit: true,
   totalAmount: true,
   fee: true,
+  currency: true,
+  fxRateToBase: true,
+  fxRateSource: true,
+  fxRateDate: true,
   executedAt: true,
   note: true,
-}).extend({ id: z.string().min(1), auditReason: auditReasonSchema });
+}).extend({
+  id: z.string().min(1),
+  currency: z.string().trim().min(3).max(12).transform((value) => value.toUpperCase()).optional(),
+  auditReason: auditReasonSchema,
+});
 
 export type UpdateTransactionInput = z.input<typeof updateTransactionSchema>;
 
@@ -114,6 +126,9 @@ export const tradeMutationSchema = z.object({
   destinationQuantity: positiveDecimalStringSchema,
   fee: nonNegativeDecimalStringSchema.optional(),
   currency: z.string().trim().min(3).max(12).default(DEFAULT_BASE_CURRENCY).transform((value) => value.toUpperCase()),
+  fxRateToBase: positiveDecimalStringSchema.optional(),
+  fxRateSource: z.enum(FxRateSource).optional(),
+  fxRateDate: z.coerce.date().optional(),
   executedAt: z.coerce.date(),
   note: z.string().trim().optional(),
 });
@@ -204,6 +219,7 @@ export async function createTransactionMutation(
       pricePerUnit: normalized.pricePerUnit,
       fee: normalized.fee,
       currency: parsed.currency,
+      ...transactionFxData(parsed),
       executedAt: parsed.executedAt,
       note: parsed.note || null,
     });
@@ -338,6 +354,7 @@ export async function createTradeMutation(
         pricePerUnit: tradeExecution.sourcePricePerUnit,
         fee: null,
         currency: parsed.currency,
+        ...transactionFxData(parsed),
         executedAt: parsed.executedAt,
         note: parsed.note || null,
       },
@@ -350,6 +367,7 @@ export async function createTradeMutation(
         pricePerUnit: tradeExecution.destinationPricePerUnit,
         fee: parsed.fee ?? null,
         currency: parsed.currency,
+        ...transactionFxData(parsed),
         executedAt: parsed.executedAt,
         note: parsed.note || null,
       },
@@ -496,7 +514,7 @@ export async function updateTradeMutation(
     const sell = group.transactions.find((leg) => leg.type === TransactionType.SELL);
     const buy = group.transactions.find((leg) => leg.type === TransactionType.BUY);
     if (!sell || !buy) throw new PortfolioMutationError("Trade group is incomplete.");
-    const shared = { currency: parsed.currency, executedAt: parsed.executedAt, note: parsed.note || null };
+    const shared = { currency: parsed.currency, executedAt: parsed.executedAt, note: parsed.note || null, ...transactionFxData(parsed) };
     const replacementGroup = await repository.createTransactionGroup(TransactionGroupKind.TRADE);
     await repository.createTransactions([
       {
@@ -544,6 +562,7 @@ export async function updateTransactionMutation(
     assertActiveTransaction(target, "correct");
     if (target.transactionGroupId) throw new PortfolioMutationError("Grouped operations must be edited as one operation.");
     if (target.type === TransactionType.TRANSFER_IN || target.type === TransactionType.TRANSFER_OUT) throw new PortfolioMutationError("Legacy ungrouped transfer rows are read-only.");
+    const currency = parsed.currency ?? target.currency;
 
     const normalized = normalizeTransaction({
       ...parsed,
@@ -558,7 +577,7 @@ export async function updateTransactionMutation(
       accountId: target.accountId,
       assetMode: "existing",
       assetId: target.assetId,
-      currency: target.currency,
+      currency,
     }, target.asset);
 
     await repository.createTransaction({
@@ -569,7 +588,12 @@ export async function updateTransactionMutation(
         quantity: normalized.quantity,
         pricePerUnit: normalized.pricePerUnit,
         fee: normalized.fee,
-        currency: target.currency,
+        currency,
+        ...(parsed.fxRateToBase !== undefined
+          ? transactionFxData(parsed)
+          : currency === target.currency
+            ? { fxRateToBase: target.fxRateToBase, fxRateSource: target.fxRateSource, fxRateDate: target.fxRateDate }
+            : { fxRateToBase: null, fxRateSource: null, fxRateDate: null }),
         executedAt: parsed.executedAt,
         note: parsed.note || null,
         replacesTransactionId: target.id,
@@ -579,6 +603,18 @@ export async function updateTransactionMutation(
   });
 
   return { ok: true, message: "Transaction corrected." };
+}
+
+function transactionFxData(parsed: {
+  fxRateToBase?: string;
+  fxRateSource?: FxRateSource;
+  fxRateDate?: Date;
+}) {
+  return {
+    fxRateToBase: parsed.fxRateToBase ?? null,
+    fxRateSource: parsed.fxRateSource ?? null,
+    fxRateDate: parsed.fxRateDate ?? null,
+  };
 }
 
 async function resolveAsset(parsed: z.infer<typeof transactionMutationSchema>, repository: AssetRepository) {
