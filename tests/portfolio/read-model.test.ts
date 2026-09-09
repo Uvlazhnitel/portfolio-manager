@@ -91,6 +91,64 @@ afterAll(async () => {
 });
 
 describe("priced portfolio read models", () => {
+  it("calculates VGLA P&L from exact EUR cost and USD market value before rounding", async () => {
+    const precisionDb = await createTestDatabase();
+    try {
+      const account = await precisionDb.prisma.account.create({
+        data: { name: "Lightyear", type: AccountType.BROKER },
+      });
+      const vgla = await precisionDb.prisma.asset.create({
+        data: {
+          symbol: "VGLA",
+          name: "Vanguard FTSE Global All-Cap UCITS ETF USD Acc",
+          assetClass: AssetClass.ETF,
+          assetType: AssetType.ETF,
+          currency: "EUR",
+        },
+      });
+      await precisionDb.prisma.transaction.create({
+        data: {
+          accountId: account.id,
+          assetId: vgla.id,
+          type: TransactionType.BUY,
+          quantity: "30.329076055",
+          pricePerUnit: "4.34566486",
+          fee: "0",
+          currency: "EUR",
+          fxRateToBase: "1.1622",
+          fxRateSource: "FRANKFURTER",
+          fxRateDate: new Date("2026-09-07T00:00:00.000Z"),
+          executedAt: new Date("2026-09-07T18:48:00.000Z"),
+        },
+      });
+      const now = new Date();
+      const precisionMarketData = new MarketDataService(new ReadModelPriceStore([
+        makeCachedPrice(vgla.id, "5.03815442", now, "ALPHA_VANTAGE", "USD"),
+      ]), []);
+
+      resetMarketDataRuntimeCacheForTests();
+      const model = await getPortfolioReadModel({
+        repository: new PortfolioRepository(precisionDb.prisma),
+        strategyRepository: new StrategyRepository(precisionDb.prisma),
+        contributionPlanRepository: new ContributionPlanRepository(precisionDb.prisma),
+        marketDataService: precisionMarketData,
+        baseCurrency: "USD",
+      });
+
+      expect(model.holdings).toContainEqual(expect.objectContaining({
+        symbol: "VGLA",
+        quantity: "30.329076055",
+        currentPrice: "5.04",
+        currentValue: "152.80",
+        netCost: "153.18",
+        pnl: "-0.38",
+        netPnl: "-0.38",
+      }));
+    } finally {
+      await precisionDb.cleanup();
+    }
+  });
+
   it("exposes explicit basis methods in transaction history", async () => {
     resetMarketDataRuntimeCacheForTests();
     const model = await getPortfolioReadModel({
@@ -260,11 +318,17 @@ class ReadModelPriceStore implements MarketDataStore {
   async saveCachedPrices() {}
 }
 
-function makeCachedPrice(assetId: string, price: string, timestamp: Date, source: string): CachedMarketPrice {
+function makeCachedPrice(
+  assetId: string,
+  price: string,
+  timestamp: Date,
+  source: string,
+  currency = "EUR",
+): CachedMarketPrice {
   return {
     id: `price-${assetId}`,
     assetId,
-    currency: "EUR",
+    currency,
     price: new Prisma.Decimal(price),
     timestamp,
     fetchedAt: timestamp,

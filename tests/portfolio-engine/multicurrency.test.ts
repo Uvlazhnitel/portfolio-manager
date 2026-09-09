@@ -31,7 +31,13 @@ describe("multi-currency transaction accounting", () => {
 
   it("keeps cost basis and portfolio analytics available for an EUR VGLA purchase", () => {
     const basis = calculateHoldingCostBasis({ portfolio: { holdings: [{ assetId: vgla.id, accountId: "broker", quantity: "10" }], valuedHoldings: [], totalValue: "0", allocation: [], missingPriceSymbols: [] }, assets: [vgla], transactions: [eurBuy], baseCurrency: "USD" });
-    expect(basis).toContainEqual(expect.objectContaining({ assetId: vgla.id, accountId: "broker", totalCost: "1202.40" }));
+    expect(basis).toContainEqual(expect.objectContaining({
+      assetId: vgla.id,
+      accountId: "broker",
+      exactTotalCost: "1202.4",
+      exactAverageAcquisitionPrice: "120.24",
+      totalCost: "1202.40",
+    }));
 
     const analytics = calculatePortfolioAnalytics({
       portfolio: { holdings: [{ assetId: vgla.id, accountId: "broker", quantity: "10" }], valuedHoldings: [{ assetId: vgla.id, accountId: "broker", quantity: "10", symbol: "VGLA", assetClass: AssetClass.ETF, assetType: AssetType.ETF, price: "130", value: "1300" }], totalValue: "1300", allocation: [{ assetClass: AssetClass.ETF, value: "1300", percentage: "100" }], missingPriceSymbols: [] },

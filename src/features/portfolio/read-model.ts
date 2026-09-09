@@ -331,6 +331,13 @@ function buildHoldingRows(
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
   const accountsById = new Map(accounts.map((account) => [account.id, account]));
   const holdings = portfolio.holdings;
+  const totalQuantityByAsset = new Map<string, ReturnType<typeof decimal>>();
+  for (const holding of holdings) {
+    totalQuantityByAsset.set(
+      holding.assetId,
+      (totalQuantityByAsset.get(holding.assetId) ?? ZERO).plus(holding.quantity),
+    );
+  }
   const costBasisByHolding = new Map(
     calculateHoldingCostBasis({ portfolio, assets, transactions, baseCurrency }).map((basis) => [
       holdingKey(basis.accountId, basis.assetId),
@@ -357,14 +364,22 @@ function buildHoldingRows(
     const marketPrice = pricesByAsset.get(holding.assetId);
     const isPhysicalGold = asset?.assetType === AssetType.PHYSICAL_GOLD;
     const displayPriceUnit: PortfolioHoldingRow["displayPriceUnit"] = isPhysicalGold ? "troy oz" : "unit";
-    const averageAcquisitionPrice = costBasis?.status === "AVAILABLE" && costBasis.averageAcquisitionPrice !== null
-      ? displayUnitPrice(costBasis.averageAcquisitionPrice, isPhysicalGold).toString()
+    const averageAcquisitionPrice = costBasis?.status === "AVAILABLE" && costBasis.exactAverageAcquisitionPrice !== null
+      ? displayUnitPrice(costBasis.exactAverageAcquisitionPrice, isPhysicalGold).toString()
       : null;
-    const averageNetCost = netCostBasis?.status === "AVAILABLE" && netCostBasis.averageNetCost !== null
-      ? displayUnitPrice(netCostBasis.averageNetCost, isPhysicalGold).toString()
+    const averageNetCost = netCostBasis?.status === "AVAILABLE" && netCostBasis.exactAverageNetCost !== null
+      ? displayUnitPrice(netCostBasis.exactAverageNetCost, isPhysicalGold).toString()
       : null;
-    const rowNetCost = netCostBasis?.status === "AVAILABLE" && netCostBasis.averageNetCost !== null
-      ? decimal(netCostBasis.averageNetCost).mul(holding.quantity)
+    const totalAssetQuantity = totalQuantityByAsset.get(holding.assetId);
+    const rowNetCost = netCostBasis?.status === "AVAILABLE"
+      && netCostBasis.exactNetCost !== null
+      && totalAssetQuantity?.greaterThan(ZERO)
+      ? totalAssetQuantity.equals(holding.quantity)
+        ? decimal(netCostBasis.exactNetCost)
+        : decimal(netCostBasis.exactNetCost).mul(holding.quantity).div(totalAssetQuantity)
+      : null;
+    const exactCurrentValue = marketPrice && valuedHolding
+      ? decimal(holding.quantity).mul(marketPrice.price)
       : null;
 
     return {
@@ -374,7 +389,7 @@ function buildHoldingRows(
       symbol: asset?.symbol ?? "UNKNOWN",
       accountName: account?.name ?? "Unknown account",
       quantity: holding.quantity,
-      currentValue: marketPrice && valuedHolding ? decimal(valuedHolding.value).toFixed(2) : null,
+      currentValue: exactCurrentValue?.toFixed(2) ?? null,
       currentPrice: marketPrice ? displayUnitPrice(marketPrice.price, isPhysicalGold).toFixed(2) : null,
       priceSource: marketPrice?.source ?? null,
       priceTimestamp: marketPrice?.timestamp.toISOString() ?? null,
@@ -385,12 +400,12 @@ function buildHoldingRows(
       netCost: rowNetCost ? rowNetCost.toFixed(2) : null,
       displayPriceUnit,
       pnl:
-        marketPrice && valuedHolding && costBasis?.status === "AVAILABLE" && costBasis.totalCost !== null
-          ? decimal(valuedHolding.value).minus(costBasis.totalCost).toFixed(2)
+        exactCurrentValue && costBasis?.status === "AVAILABLE" && costBasis.exactTotalCost !== null
+          ? exactCurrentValue.minus(costBasis.exactTotalCost).toFixed(2)
           : null,
       netPnl:
-        marketPrice && valuedHolding && rowNetCost
-          ? decimal(valuedHolding.value).minus(rowNetCost).toFixed(2)
+        exactCurrentValue && rowNetCost
+          ? exactCurrentValue.minus(rowNetCost).toFixed(2)
           : null,
       assetClass: asset?.assetClass ?? "OTHER",
       assetType: asset?.assetType ?? "OTHER",

@@ -878,6 +878,8 @@ describe("portfolio engine holding cost basis", () => {
       accountId: "bybit",
       assetId: "btc",
       status: "AVAILABLE",
+      exactTotalCost: "151.5",
+      exactAverageAcquisitionPrice: "101",
       totalCost: "151.50",
       averageAcquisitionPrice: "101.00",
       reason: null,
@@ -924,6 +926,8 @@ describe("portfolio engine asset net cost basis", () => {
     expect(calculateAssetNetCostBasis({ portfolio, assets, transactions, baseCurrency: "EUR" })).toContainEqual({
       assetId: "btc",
       status: "AVAILABLE",
+      exactNetCost: "127",
+      exactAverageNetCost: "84.666666666666666667",
       netCost: "127.00",
       averageNetCost: "84.67",
       reason: null,

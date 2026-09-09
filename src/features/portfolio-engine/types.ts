@@ -380,6 +380,8 @@ export type HoldingCostBasis = {
   accountId: string;
   assetId: string;
   status: "AVAILABLE" | "UNAVAILABLE";
+  exactTotalCost: string | null;
+  exactAverageAcquisitionPrice: string | null;
   totalCost: string | null;
   averageAcquisitionPrice: string | null;
   reason: HoldingCostBasisReason | null;
@@ -388,6 +390,8 @@ export type HoldingCostBasis = {
 export type AssetNetCostBasis = {
   assetId: string;
   status: "AVAILABLE" | "UNAVAILABLE";
+  exactNetCost: string | null;
+  exactAverageNetCost: string | null;
   netCost: string | null;
   averageNetCost: string | null;
   reason: HoldingCostBasisReason | null;
