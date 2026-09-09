@@ -1,11 +1,12 @@
 import { decimal, ONE_HUNDRED, toDecimalString, ZERO } from "@/features/portfolio-engine/decimal";
 import { evaluateStrategyCompliance, getPortfolioValuationAvailability } from "@/features/portfolio-engine/engine";
+import { exactAllocationValue, exactHoldingValue, exactPortfolioValue } from "@/features/portfolio-engine/valuation";
 import type { CalculatePortfolioRiskInput, EngineCustodianCategory, PortfolioRiskSnapshot, RiskExposure, RiskMetric, RiskReasonCode, RiskViolation } from "@/features/portfolio-engine/types";
 
 export function calculatePortfolioRisk(input: CalculatePortfolioRiskInput): PortfolioRiskSnapshot {
   const valuation = getPortfolioValuationAvailability(input.portfolio);
   const missing = valuation.missingPriceSymbols;
-  const total = decimal(input.portfolio.totalValue);
+  const total = exactPortfolioValue(input.portfolio);
   const noValue = total.lessThanOrEqualTo(ZERO);
   const incomplete = valuation.state === "PARTIAL";
   const baseState = noValue ? "UNAVAILABLE" as const : incomplete ? "PARTIAL" as const : "OK" as const;
@@ -13,8 +14,8 @@ export function calculatePortfolioRisk(input: CalculatePortfolioRiskInput): Port
   if (input.hasStalePrices) baseReasons.push("STALE_PRICE_DATA");
   const accountById = new Map(input.accounts.map((account) => [account.id, account]));
   const assetById = new Map(input.assets.map((asset) => [asset.id, asset]));
-  const assetValues = sumBy(input.portfolio.valuedHoldings.map((holding) => [holding.assetId, holding.value]));
-  const accountValues = sumBy(input.portfolio.valuedHoldings.map((holding) => [holding.accountId, holding.value]));
+  const assetValues = sumBy(input.portfolio.valuedHoldings.map((holding) => [holding.assetId, exactHoldingValue(holding).toString()]));
+  const accountValues = sumBy(input.portfolio.valuedHoldings.map((holding) => [holding.accountId, exactHoldingValue(holding).toString()]));
   const accountTypeValues = sumBy([...accountValues].map(([id, value]) => [accountById.get(id)?.type ?? "OTHER", value.toString()]));
   const custodyValues = sumBy([...accountValues].map(([id, value]) => [custodyCategory(accountById.get(id)), value.toString()]));
   const custodianValues = sumBy([...accountValues].filter(([id]) => accountById.get(id)?.custodian).map(([id, value]) => [accountById.get(id)!.custodian!.id, value.toString()]));
@@ -30,8 +31,9 @@ export function calculatePortfolioRisk(input: CalculatePortfolioRiskInput): Port
   const largestCustodian = custodianPartial
     ? unavailableMetric("PARTIAL", ["UNASSIGNED_CUSTODIAN"])
     : concentrationMetric(largestCustodianEntry, total, baseState, baseReasons, input.thresholds.custodianMaxPercent, "CUSTODIAN_LIMIT_EXCEEDED", largestCustodianEntry ? input.accounts.find((account) => account.custodian?.id === largestCustodianEntry[0])?.custodian?.name ?? largestCustodianEntry[0] : null);
-  const cryptoValue = input.portfolio.allocation.find((item) => item.assetClass === "CRYPTO")?.value ?? "0";
-  const cryptoAllocation = concentrationMetric(["CRYPTO", decimal(cryptoValue)], total, baseState, baseReasons, null, null, "Crypto");
+  const cryptoAllocationRow = input.portfolio.allocation.find((item) => item.assetClass === "CRYPTO");
+  const cryptoValue = cryptoAllocationRow ? exactAllocationValue(cryptoAllocationRow) : ZERO;
+  const cryptoAllocation = concentrationMetric(["CRYPTO", cryptoValue], total, baseState, baseReasons, null, null, "Crypto");
   const staleReasons = input.hasStalePrices ? ["STALE_PRICE_DATA" as const] : [];
   const topThreeAssets = baseState === "OK" ? metricFromPercent(topThree.div(total).mul(ONE_HUNDRED), "OK", null, "Top 3 assets", null, staleReasons) : unavailableMetric(baseState, baseReasons);
   const violations = [largestAsset, largestCustodian].flatMap((metric, index): RiskViolation[] => {

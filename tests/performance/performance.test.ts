@@ -32,6 +32,27 @@ const transactions: EngineTransaction[] = [
 ];
 
 describe("historical performance engine", () => {
+  it("preserves exact fractional values for historical return calculations", () => {
+    const tinyBuys: EngineTransaction[] = [
+      { id: "tiny-first", assetId: "btc", accountId: "first", type: TransactionType.BUY, quantity: "1", pricePerUnit: "0.004", currency: "USD", executedAt: "2026-08-01T08:00:00Z" },
+      { id: "tiny-second", assetId: "btc", accountId: "second", type: TransactionType.BUY, quantity: "1", pricePerUnit: "0.004", currency: "USD", executedAt: "2026-08-01T08:00:00Z" },
+    ];
+    const history = calculateHistoricalPerformance({
+      assets,
+      transactions: tinyBuys,
+      baseCurrency: "USD",
+      snapshots: [snapshot("2026-08-01", "0.005")],
+    });
+
+    expect(history[0]).toEqual(expect.objectContaining({
+      exactPortfolioValue: "0.01",
+      portfolioValue: "0.01",
+      exactInvestmentGain: "0.002",
+      investmentGain: "0.00",
+      trackedCapitalReturnPercent: "25.00",
+    }));
+  });
+
   it("separates contributions from investment gain and ignores transfers", () => {
     const history = calculateHistoricalPerformance({
       assets,

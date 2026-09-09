@@ -1,6 +1,7 @@
 import { TransactionType, type Prisma } from "@prisma/client";
 import { decimal, toDecimalString, toQuantityString, ZERO } from "@/features/portfolio-engine/decimal";
 import { activeEngineTransactions } from "@/features/portfolio-engine/transactions";
+import { exactAllocationValue, exactPortfolioValue } from "@/features/portfolio-engine/valuation";
 import {
   calculatePortfolio,
   compareAllocationToStrategy,
@@ -304,8 +305,9 @@ function capByStrategyClassMax(
   const maxPercent = decimal(strategyAllocation.maxPercent);
   if (maxPercent.greaterThanOrEqualTo(100)) return candidate;
 
-  const currentClassValue = decimal(current.allocation.find((allocation) => allocation.assetClass === assetClass)?.value ?? 0);
-  const totalValue = decimal(current.totalValue);
+  const currentClassAllocation = current.allocation.find((allocation) => allocation.assetClass === assetClass);
+  const currentClassValue = currentClassAllocation ? exactAllocationValue(currentClassAllocation) : ZERO;
+  const totalValue = exactPortfolioValue(current);
   const maxFraction = maxPercent.div(100);
   const maximumAdditionalValue = maxFraction.mul(totalValue).minus(currentClassValue).div(decimal(1).minus(maxFraction));
   if (maximumAdditionalValue.lessThanOrEqualTo(ZERO)) return ZERO;

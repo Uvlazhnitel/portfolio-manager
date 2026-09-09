@@ -7,6 +7,7 @@ import {
 } from "@/features/portfolio-engine/engine";
 import { calculatePortfolioRisk } from "@/features/portfolio-engine/risk";
 import { activeEngineTransactions } from "@/features/portfolio-engine/transactions";
+import { exactHoldingValue, exactPortfolioValue } from "@/features/portfolio-engine/valuation";
 import type {
   CalculatePortfolioRiskInput,
   DecimalLike,
@@ -391,7 +392,7 @@ function buildDataQuality(input: CalculatePortfolioReviewInput, current: Portfol
     ...(previous?.missingPriceSymbols ?? []),
   ])].sort();
   const stale = input.currentHasStalePrices || Boolean(input.baseline?.hasStalePrices);
-  const unavailable = decimal(current.totalValue).lessThanOrEqualTo(ZERO) && current.holdings.length > 0;
+  const unavailable = exactPortfolioValue(current).lessThanOrEqualTo(ZERO) && current.holdings.length > 0;
   const state: PortfolioSignalDataQualityState = unavailable
     ? "UNAVAILABLE"
     : reasons.some((reason) => reason.includes("INCOMPLETE") || reason === "NO_COMPARISON_BASELINE" || reason === "UNASSIGNED_CUSTODIAN" || reason === "MARKET_DATA_WARNING")
@@ -540,13 +541,13 @@ function portfolioMetric(context: SignalContext, portfolio: PortfolioSnapshot, s
   if (subject.kind === "PORTFOLIO") {
     const unassigned = new Set(
       portfolio.valuedHoldings
-        .filter((holding) => decimal(holding.value).greaterThan(ZERO))
+        .filter((holding) => exactHoldingValue(holding).greaterThan(ZERO))
         .filter((holding) => !context.input.accounts.find((account) => account.id === holding.accountId)?.custodian)
         .map((holding) => holding.accountId),
     );
     return decimal(unassigned.size);
   }
-  const total = decimal(portfolio.totalValue);
+  const total = exactPortfolioValue(portfolio);
   if (total.lessThanOrEqualTo(ZERO)) return null;
   const value = portfolio.valuedHoldings.reduce((sum, holding) => {
     const asset = context.input.assets.find((candidate) => candidate.id === holding.assetId);
@@ -556,7 +557,7 @@ function portfolioMetric(context: SignalContext, portfolio: PortfolioSnapshot, s
       : subject.kind === "ASSET"
         ? holding.assetId === subject.id
         : account?.custodian?.id === subject.id;
-    return matches ? sum.plus(holding.value) : sum;
+    return matches ? sum.plus(exactHoldingValue(holding)) : sum;
   }, ZERO);
   return value.div(total).mul(100);
 }

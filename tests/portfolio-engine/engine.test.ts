@@ -654,6 +654,30 @@ describe("portfolio engine contribution planning and simulation", () => {
 });
 
 describe("portfolio engine dashboard analytics", () => {
+  it("sums exact fractional values before rounding portfolio analytics", () => {
+    const transactions: EngineTransaction[] = [
+      { assetId: "btc", accountId: "first", type: TransactionType.BUY, quantity: "1", pricePerUnit: "0.004", currency: "EUR" },
+      { assetId: "btc", accountId: "second", type: TransactionType.BUY, quantity: "1", pricePerUnit: "0.004", currency: "EUR" },
+    ];
+    const portfolio = calculatePortfolio({ assets, transactions, marketPrices: { BTC: "0.005" } });
+    const analytics = calculatePortfolioAnalytics({ portfolio, assets, transactions, baseCurrency: "EUR" });
+
+    expect(portfolio.valuedHoldings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ accountId: "first", exactPrice: "0.005", exactValue: "0.005", price: "0.01", value: "0.01" }),
+      expect.objectContaining({ accountId: "second", exactPrice: "0.005", exactValue: "0.005", price: "0.01", value: "0.01" }),
+    ]));
+    expect(portfolio).toEqual(expect.objectContaining({ exactTotalValue: "0.01", totalValue: "0.01" }));
+    expect(analytics).toEqual(expect.objectContaining({
+      exactTotalUnrealizedPnl: "0.002",
+      totalUnrealizedPnl: "0.00",
+      exactInvestmentGain: "0.002",
+      investmentGain: "0.00",
+      exactTrackedCapital: "0.008",
+      trackedCapital: "0.01",
+      trackedCapitalReturnPercent: "25.00",
+    }));
+  });
+
   it("calculates transparent alignment points and returns no score for an empty portfolio", () => {
     const portfolio = calculatePortfolio({ assets, transactions: [], marketPrices: prices });
     const comparisons = compareAllocationToStrategy(portfolio, strategy);

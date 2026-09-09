@@ -9,6 +9,12 @@ import {
   ZERO,
 } from "@/features/portfolio-engine/decimal";
 import { activeEngineTransactions } from "@/features/portfolio-engine/transactions";
+import {
+  exactAllocationPercentage,
+  exactAllocationValue,
+  exactHoldingValue,
+  exactPortfolioValue,
+} from "@/features/portfolio-engine/valuation";
 import type {
   AllocationComparison,
   AssetClassAllocation,
@@ -120,17 +126,20 @@ export function calculatePortfolio(input: CalculatePortfolioInput): PortfolioSna
       symbol: asset.symbol,
       assetClass: asset.assetClass,
       assetType: asset.assetType,
+      exactPrice: price.toString(),
+      exactValue: value.toString(),
       price: toDecimalString(price),
       value: toDecimalString(value),
     };
   });
 
-  const totalValue = valuedHoldings.reduce((total, holding) => total.plus(decimal(holding.value)), ZERO);
+  const totalValue = valuedHoldings.reduce((total, holding) => total.plus(exactHoldingValue(holding)), ZERO);
   const allocation = calculateAssetClassAllocation(valuedHoldings, totalValue);
 
   return {
     holdings,
     valuedHoldings,
+    exactTotalValue: totalValue.toString(),
     totalValue: toDecimalString(totalValue),
     allocation,
     missingPriceSymbols: Array.from(missingPriceSymbols).sort(),
@@ -186,7 +195,7 @@ export function calculatePortfolioAnalytics(input: CalculatePortfolioAnalyticsIn
       account.isPartial = true;
     } else {
       const valued = valuedByHolding.get(`${holding.accountId}:${holding.assetId}`);
-      account.value = account.value.plus(decimal(valued?.value ?? 0));
+      account.value = account.value.plus(valued ? exactHoldingValue(valued) : ZERO);
       pricedHoldings += 1;
     }
     accountValues.set(holding.accountId, account);
@@ -197,6 +206,12 @@ export function calculatePortfolioAnalytics(input: CalculatePortfolioAnalyticsIn
   const performance = calculatePerformanceSummary(activeInput, assetById);
 
   return {
+    exactTotalUnrealizedPnl: totalUnrealizedPnl?.toString() ?? null,
+    exactInvestmentGain: performance.exactInvestmentGain,
+    exactNetInvested: performance.exactNetInvested,
+    exactExternalContributions: performance.exactExternalContributions,
+    exactExternalWithdrawals: performance.exactExternalWithdrawals,
+    exactTrackedCapital: performance.exactTrackedCapital,
     totalUnrealizedPnl: totalUnrealizedPnl ? toDecimalString(totalUnrealizedPnl) : null,
     investmentGain: performance.investmentGain,
     netInvested: performance.netInvested,
@@ -252,10 +267,14 @@ export function calculateHistoricalPerformance(
         assetById,
       );
       const isComplete = portfolio.missingPriceSymbols.length === 0;
-      const portfolioValue = isComplete ? decimal(portfolio.totalValue) : null;
+      const portfolioValue = isComplete ? exactPortfolioValue(portfolio) : null;
 
       return {
         date: snapshot.date,
+        exactPortfolioValue: portfolioValue?.toString() ?? null,
+        exactInvestmentGain: performance.exactInvestmentGain,
+        exactExternalContributions: performance.exactExternalContributions,
+        exactExternalWithdrawals: performance.exactExternalWithdrawals,
         portfolioValue: portfolioValue ? toDecimalString(portfolioValue) : null,
         netInvested: performance.netInvested,
         externalContributions: performance.externalContributions,
@@ -319,7 +338,7 @@ export function calculateAssetClassAllocation(
 
   for (const holding of valuedHoldings) {
     const current = valuesByClass.get(holding.assetClass) ?? ZERO;
-    valuesByClass.set(holding.assetClass, current.plus(decimal(holding.value)));
+    valuesByClass.set(holding.assetClass, current.plus(exactHoldingValue(holding)));
   }
 
   const totalValue =
@@ -332,6 +351,8 @@ export function calculateAssetClassAllocation(
 
     return {
       assetClass,
+      exactValue: value.toString(),
+      exactPercentage: percentage.toString(),
       value: toDecimalString(value),
       percentage: toDecimalString(percentage),
     };
@@ -349,7 +370,7 @@ export function compareAllocationToStrategy(
 
   return strategy.map((strategyAllocation) => {
     const current = currentByClass.get(strategyAllocation.assetClass);
-    const currentPercent = decimal(current?.percentage ?? 0);
+    const currentPercent = current ? exactAllocationPercentage(current) : ZERO;
     const targetPercent = decimal(strategyAllocation.targetPercent);
     const minPercent = decimal(strategyAllocation.minPercent);
     const maxPercent = decimal(strategyAllocation.maxPercent);
@@ -626,10 +647,10 @@ function calculateContributionAmounts(
   strategy: EngineStrategyAllocation[],
   contributionAmount: Prisma.Decimal,
 ) {
-  const beforeTotal = decimal(portfolio.totalValue);
+  const beforeTotal = exactPortfolioValue(portfolio);
   const afterTotal = beforeTotal.plus(contributionAmount);
   const currentValueByClass = new Map(
-    portfolio.allocation.map((allocation) => [allocation.assetClass, decimal(allocation.value)]),
+    portfolio.allocation.map((allocation) => [allocation.assetClass, exactAllocationValue(allocation)]),
   );
 
   const deficits = strategy.map((allocation) => {
@@ -663,7 +684,7 @@ function calculateContributionAmounts(
   }
 
   const currentPercentByClass = new Map(
-    portfolio.allocation.map((allocation) => [allocation.assetClass, decimal(allocation.percentage)]),
+    portfolio.allocation.map((allocation) => [allocation.assetClass, exactAllocationPercentage(allocation)]),
   );
   const eligible = strategy.filter((allocation) => {
     const currentPercent = currentPercentByClass.get(allocation.assetClass) ?? ZERO;
@@ -767,7 +788,7 @@ function calculateAssetRecommendations({
   for (const holding of portfolio.valuedHoldings) {
     currentValueByAsset.set(
       holding.assetId,
-      (currentValueByAsset.get(holding.assetId) ?? ZERO).plus(decimal(holding.value)),
+      (currentValueByAsset.get(holding.assetId) ?? ZERO).plus(exactHoldingValue(holding)),
     );
   }
 
@@ -782,7 +803,7 @@ function calculateAssetRecommendations({
     const assetTargets = strategyAllocation.assetAllocations ?? [];
     const currentClassValue = portfolio.valuedHoldings
       .filter((holding) => holding.assetClass === classAllocation.assetClass)
-      .reduce((sum, holding) => sum.plus(decimal(holding.value)), ZERO);
+      .reduce((sum, holding) => sum.plus(exactHoldingValue(holding)), ZERO);
     const projectedClassValue = currentClassValue.plus(classAmount);
     const rawAmounts = new Map<string, Prisma.Decimal>();
 
@@ -886,7 +907,7 @@ function roundAssetRecommendationAmounts(rawAmounts: Map<string, Prisma.Decimal>
 }
 
 function projectContribution(portfolio: PortfolioSnapshot, allocations: ContributionAllocation[]): PortfolioSnapshot {
-  const valueByClass = new Map(portfolio.allocation.map((allocation) => [allocation.assetClass, decimal(allocation.value)]));
+  const valueByClass = new Map(portfolio.allocation.map((allocation) => [allocation.assetClass, exactAllocationValue(allocation)]));
 
   for (const allocation of allocations) {
     const current = valueByClass.get(allocation.assetClass) ?? ZERO;
@@ -894,13 +915,15 @@ function projectContribution(portfolio: PortfolioSnapshot, allocations: Contribu
   }
 
   const contributionTotal = allocations.reduce((total, allocation) => total.plus(decimal(allocation.amount)), ZERO);
-  const totalValue = decimal(portfolio.totalValue).plus(contributionTotal);
+  const totalValue = exactPortfolioValue(portfolio).plus(contributionTotal);
   const allocation = allocationClasses.map((assetClass) => {
     const value = valueByClass.get(assetClass) ?? ZERO;
     const percentage = totalValue.equals(ZERO) ? ZERO : value.div(totalValue).mul(ONE_HUNDRED);
 
     return {
       assetClass,
+      exactValue: value.toString(),
+      exactPercentage: percentage.toString(),
       value: toDecimalString(value),
       percentage: toDecimalString(percentage),
     };
@@ -908,6 +931,7 @@ function projectContribution(portfolio: PortfolioSnapshot, allocations: Contribu
 
   return {
     ...portfolio,
+    exactTotalValue: totalValue.toString(),
     totalValue: toDecimalString(totalValue),
     allocation,
   };
@@ -1214,7 +1238,7 @@ function calculateStrictUnrealizedPnl(
   for (const holding of input.portfolio.valuedHoldings) {
     currentValueByAsset.set(
       holding.assetId,
-      (currentValueByAsset.get(holding.assetId) ?? ZERO).plus(decimal(holding.value)),
+      (currentValueByAsset.get(holding.assetId) ?? ZERO).plus(exactHoldingValue(holding)),
     );
   }
 
@@ -1248,7 +1272,7 @@ function calculatePerformanceSummary(
   for (const holding of input.portfolio.valuedHoldings) {
     currentValueByAsset.set(
       holding.assetId,
-      (currentValueByAsset.get(holding.assetId) ?? ZERO).plus(decimal(holding.value)),
+      (currentValueByAsset.get(holding.assetId) ?? ZERO).plus(exactHoldingValue(holding)),
     );
   }
 
@@ -1455,6 +1479,11 @@ function calculatePerformanceSummary(
   const missingCostBasisSymbols = [...exclusions.keys()].sort();
 
   return {
+    exactNetInvested: netInvested.toString(),
+    exactExternalContributions: externalContributions.toString(),
+    exactExternalWithdrawals: externalWithdrawals.toString(),
+    exactTrackedCapital: coveredTrackedCapital.toString(),
+    exactInvestmentGain: investmentGain?.toString() ?? null,
     netInvested: toDecimalString(netInvested),
     netContributed: toDecimalString(externalContributions.minus(externalWithdrawals)),
     externalContributions: toDecimalString(externalContributions),

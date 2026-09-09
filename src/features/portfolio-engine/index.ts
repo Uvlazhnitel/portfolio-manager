@@ -4,3 +4,4 @@ export * from "@/features/portfolio-engine/portfolio-signals";
 export * from "@/features/portfolio-engine/risk";
 export * from "@/features/portfolio-engine/scenario";
 export * from "@/features/portfolio-engine/types";
+export * from "@/features/portfolio-engine/valuation";

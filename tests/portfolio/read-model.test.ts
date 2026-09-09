@@ -121,21 +121,21 @@ describe("priced portfolio read models", () => {
           executedAt: new Date("2026-09-07T18:48:00.000Z"),
         },
       });
-      const now = new Date();
-      const precisionMarketData = new MarketDataService(new ReadModelPriceStore([
-        makeCachedPrice(vgla.id, "5.03815442", now, "ALPHA_VANTAGE", "USD"),
-      ]), []);
+      const readModelAtPrice = async (price: string) => {
+        resetMarketDataRuntimeCacheForTests();
+        return getPortfolioReadModel({
+          repository: new PortfolioRepository(precisionDb.prisma),
+          strategyRepository: new StrategyRepository(precisionDb.prisma),
+          contributionPlanRepository: new ContributionPlanRepository(precisionDb.prisma),
+          marketDataService: new MarketDataService(new ReadModelPriceStore([
+            makeCachedPrice(vgla.id, price, new Date(), "ALPHA_VANTAGE", "USD"),
+          ]), []),
+          baseCurrency: "USD",
+        });
+      };
 
-      resetMarketDataRuntimeCacheForTests();
-      const model = await getPortfolioReadModel({
-        repository: new PortfolioRepository(precisionDb.prisma),
-        strategyRepository: new StrategyRepository(precisionDb.prisma),
-        contributionPlanRepository: new ContributionPlanRepository(precisionDb.prisma),
-        marketDataService: precisionMarketData,
-        baseCurrency: "USD",
-      });
-
-      expect(model.holdings).toContainEqual(expect.objectContaining({
+      const originalQuoteModel = await readModelAtPrice("5.03815442");
+      expect(originalQuoteModel.holdings).toContainEqual(expect.objectContaining({
         symbol: "VGLA",
         quantity: "30.329076055",
         currentPrice: "5.04",
@@ -144,6 +144,18 @@ describe("priced portfolio read models", () => {
         pnl: "-0.38",
         netPnl: "-0.38",
       }));
+      expect(originalQuoteModel.valuation.investmentGain).toBe("-0.38");
+
+      const currentQuoteModel = await readModelAtPrice("5.04484170");
+      expect(currentQuoteModel.holdings).toContainEqual(expect.objectContaining({
+        symbol: "VGLA",
+        currentPrice: "5.04",
+        currentValue: "153.01",
+        netCost: "153.18",
+        pnl: "-0.17",
+        netPnl: "-0.17",
+      }));
+      expect(currentQuoteModel.valuation.investmentGain).toBe("-0.17");
     } finally {
       await precisionDb.cleanup();
     }

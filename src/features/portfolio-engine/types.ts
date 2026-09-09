@@ -55,12 +55,16 @@ export type ValuedHolding = Holding & {
   symbol: string;
   assetClass: AssetClass;
   assetType: AssetType;
+  exactPrice?: string;
+  exactValue?: string;
   price: string;
   value: string;
 };
 
 export type AssetClassAllocation = {
   assetClass: AssetClass;
+  exactValue?: string;
+  exactPercentage?: string;
   value: string;
   percentage: string;
 };
@@ -108,6 +112,7 @@ export type StrategyWarning = {
 export type PortfolioSnapshot = {
   holdings: Holding[];
   valuedHoldings: ValuedHolding[];
+  exactTotalValue?: string;
   totalValue: string;
   allocation: AssetClassAllocation[];
   missingPriceSymbols: string[];
@@ -129,6 +134,12 @@ export type CalculatePortfolioInput = {
 };
 
 export type PortfolioAnalytics = {
+  exactTotalUnrealizedPnl: string | null;
+  exactInvestmentGain: string | null;
+  exactNetInvested: string;
+  exactExternalContributions: string | null;
+  exactExternalWithdrawals: string | null;
+  exactTrackedCapital: string;
   totalUnrealizedPnl: string | null;
   investmentGain: string | null;
   netInvested: string;
@@ -169,6 +180,10 @@ export type HistoricalMarketSnapshot = {
 
 export type PortfolioPerformancePoint = {
   date: string;
+  exactPortfolioValue?: string | null;
+  exactInvestmentGain?: string | null;
+  exactExternalContributions?: string | null;
+  exactExternalWithdrawals?: string | null;
   portfolioValue: string | null;
   netInvested: string;
   externalContributions: string | null;

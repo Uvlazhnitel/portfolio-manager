@@ -6,6 +6,8 @@ import {
   calculatePortfolioAnalytics,
   calculatePortfolioRisk,
   compareAllocationToStrategy,
+  exactHoldingValue,
+  exactPortfolioValue,
   getPortfolioValuationAvailability,
   type ContributionProjection,
   type PortfolioRiskSnapshot,
@@ -419,14 +421,17 @@ function buildHoldingRows(
     };
   });
 
-  const totalAvailableValue = decimal(portfolio.totalValue);
+  const totalAvailableValue = exactPortfolioValue(portfolio);
   const exactWeightsAvailable = getPortfolioValuationAvailability(portfolio).exactPercentagesAvailable;
 
   return rows.map((row) => ({
     ...row,
     portfolioWeight:
-      exactWeightsAvailable && row.currentValue && totalAvailableValue.greaterThan(ZERO)
-        ? decimal(row.currentValue).div(totalAvailableValue).mul(100).toFixed(2)
+      exactWeightsAvailable && totalAvailableValue.greaterThan(ZERO)
+        ? exactHoldingValue(valuedByHolding.get(holdingKey(row.accountId, row.assetId))!)
+          .div(totalAvailableValue)
+          .mul(100)
+          .toFixed(2)
         : null,
   }));
 }
