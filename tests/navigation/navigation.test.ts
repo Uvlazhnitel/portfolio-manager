@@ -46,13 +46,14 @@ describe("portfolio-first routing and navigation", () => {
     expect(offlinePage).not.toContain('href="/dashboard"');
   });
 
-  it("keeps portfolio as the combined app surface without duplicating dashboard strategy warnings", async () => {
+  it("keeps portfolio as the combined app surface without dashboard planning panels", async () => {
     const portfolioClient = await readFile(path.join(projectRoot, "src/app/portfolio/_components/portfolio-client.tsx"), "utf8");
 
     expect(portfolioClient).toContain('(["holdings", "accounts", "transactions"] as const)');
     expect(portfolioClient).toContain('href="/performance"');
-    expect(portfolioClient).toContain("const violations = risk.violations.slice(0, 3);");
-    expect(portfolioClient).not.toContain("risk.strategyViolations");
+    expect(portfolioClient).not.toContain("function StrategySummary");
+    expect(portfolioClient).not.toContain("function RiskSummary");
+    expect(portfolioClient).not.toContain("function NextContributionSummary");
   });
 
   it("keeps holding transaction cards inline and accessible", async () => {
