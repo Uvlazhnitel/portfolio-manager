@@ -14,6 +14,7 @@ The project is built around one idea: portfolio software should be deterministic
 - Preserves partial valuation semantics: if a held asset has no current price, the UI shows a known valued subtotal instead of pretending it knows the full portfolio value.
 - Supports custom contribution plans and keeps saved custom allocations as the source of truth across Portfolio and Assistant.
 - Provides a read-only AI Assistant powered by deterministic tools. The Assistant can explain, summarize, and simulate, but it cannot write transactions or execute trades.
+- Exposes an optional authenticated, versioned, read-only Personal CFO integration API for exact portfolio snapshots and explicit external-capital evidence.
 - Stores current market prices and daily observations for performance history and benchmark comparison.
 - Ships as an installable PWA with intentionally conservative offline behavior.
 
@@ -191,6 +192,8 @@ Open [http://localhost:3000](http://localhost:3000). The root route redirects to
 | `COINGECKO_API_KEY` | Optional | CoinGecko fallback credential. Public API is used when no key exists. |
 | `ALPHA_VANTAGE_API_KEY` | Optional | Alpha Vantage fallback for ETF search, daily quotes, and FX. |
 | `TWELVE_DATA_API_KEY` | Optional | Twelve Data fallback for ETF search, quotes, and FX. |
+| `PERSONAL_CFO_API_TOKEN` | Optional | Dedicated bearer token for the Personal CFO integration API; the API is disabled when absent. |
+| `PORTFOLIO_INTEGRATION_INSTANCE_ID` | Optional | Stable opaque ID for this Portfolio Manager installation; required when the Personal CFO API is enabled. |
 
 Never prefix server secrets with `NEXT_PUBLIC_`, and never commit `.env`.
 
@@ -249,7 +252,7 @@ pnpm start
 
 The history worker captures prices immediately on startup, retries transient failures, and then records one observation per UTC day.
 
-This application currently has no built-in authentication. Do not expose it directly to the public internet. Put it behind a trusted private network, VPN, reverse proxy with auth, or another access-control layer.
+The browser UI currently has no built-in authentication. The Personal CFO API has a dedicated bearer token, but the application should still not be exposed directly to the public internet. Put it behind a trusted private network, VPN, reverse proxy with auth, or another access-control layer. See [the Personal CFO integration contract](docs/PERSONAL_CFO_INTEGRATION.md).
 
 ## Backup and restore
 
